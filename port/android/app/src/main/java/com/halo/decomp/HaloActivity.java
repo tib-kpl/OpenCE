@@ -11,6 +11,26 @@ import org.libsdl.app.SDLActivity;
  * loads the game image from the APK's assets.
  */
 public class HaloActivity extends SDLActivity {
+    private static final int PR_SET_DUMPABLE = 4; // <linux/prctl.h>
+
+    /**
+     * Makes the process dumpable, as it is in a debuggable build. The host
+     * reads /proc/self/pagemap to tell whether ART's large object space over
+     * the game's fixed memory range is idle before taking it
+     * (host_memory.c, range_unused). Android starts the processes of
+     * non-debuggable apps non-dumpable, which gives their /proc/self files
+     * to root: pagemap cannot be read, the range is left to ART and a
+     * release build stops with "cannot load the game image". The process
+     * stays private to its own user.
+     */
+    static void makeDumpable() {
+        try {
+            android.system.Os.prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+        } catch (Exception e) {
+            android.util.Log.w("halo", "cannot make the process dumpable: " + e);
+        }
+    }
+
     @Override
     protected String[] getLibraries() {
         return new String[] { "SDL3", "main" };
@@ -18,6 +38,7 @@ public class HaloActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        makeDumpable();
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferHighestRefreshRate();

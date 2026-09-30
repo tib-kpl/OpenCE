@@ -125,6 +125,32 @@ final class XisoExtractor {
         return new XisoExtractor(image).extract(destination, language, progress);
     }
 
+    /**
+     * the languages of the image's maps folders, for extractMaps: "" for
+     * maps (English), then "de", "fr"... for maps_de, maps_fr...
+     */
+    static List<String> languages(FileChannel image) throws IOException {
+        return new XisoExtractor(image).findLanguages();
+    }
+
+    private List<String> findLanguages() throws IOException {
+        long[] root = findVolume();
+        ByteBuffer table = readDirectory(root[0], root[1], "The disc image's file system is damaged.");
+        List<Entry> directories = new ArrayList<>();
+        walk(table, 0, 0, true, directories, new int[1]);
+        List<String> languages = new ArrayList<>();
+        java.util.TreeSet<String> translated = new java.util.TreeSet<>();
+        for (Entry entry : directories) {
+            String name = entry.name.toLowerCase(java.util.Locale.ROOT);
+            if (name.equals("maps"))
+                languages.add("");
+            else if (name.length() == 7 && name.startsWith("maps_"))
+                translated.add(name.substring(5));
+        }
+        languages.addAll(translated);
+        return languages;
+    }
+
     private void readAt(long offset, ByteBuffer buffer) throws IOException {
         while (buffer.hasRemaining()) {
             int count = image.read(buffer, offset);

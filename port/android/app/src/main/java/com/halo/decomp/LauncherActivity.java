@@ -1,6 +1,10 @@
 package com.halo.decomp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
+import android.graphics.Typeface;
+import android.widget.ScrollView;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
@@ -47,6 +51,7 @@ public class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        HaloActivity.makeDumpable();
         dataRoot = getExternalFilesDir(null);
         // created by the app, so that files pushed into it with adb stay
         // readable (a directory adb creates there belongs to the shell user)
@@ -54,6 +59,8 @@ public class LauncherActivity extends Activity {
             new File(dataRoot, "maps").mkdirs();
         passOnInvite(getIntent());
         importRequested = getIntent() != null && getIntent().getBooleanExtra(EXTRA_IMPORT, false);
+        if (!importRequested && showFailedStart())
+            return;
         if (haveData() && !importRequested) {
             startGame();
             return;
@@ -89,6 +96,136 @@ public class LauncherActivity extends Activity {
 
     private String t(String french, String english) {
         return isFrench() ? french : english;
+    }
+
+    /**
+     * When the game stopped at start-up (host_fatal), the reason is only in
+     * the log, tag "halo" (for example "cannot load the game image"). An app
+     * reads its own log lines, also those of its previous process: the
+     * warnings and errors of a failed start not reported yet are shown here
+     * and written to halo_log.txt next to the maps folder.
+     */
+    private boolean showFailedStart() {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        try {
+            Process logcat = new ProcessBuilder("logcat", "-d", "-v", "epoch", "-s", "halo:V")
+                .redirectErrorStream(true).start();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(logcat.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null)
+                    lines.add(line);
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        /* "  1727700000.123  1234  5678 F halo    : message" */
+        String fatalPid = null;
+        double fatalTime = 0;
+        for (String line : lines) {
+            String[] fields = line.trim().split("\\s+", 5);
+            if (fields.length == 5 && fields[3].equals("F")) {
+                try {
+                    fatalTime = Double.parseDouble(fields[0]);
+                    fatalPid = fields[1];
+                } catch (NumberFormatException e) {
+                    // not a log line
+                }
+            }
+        }
+        SharedPreferences preferences = getSharedPreferences("launcher", MODE_PRIVATE);
+        if (fatalPid == null || fatalTime <= Double.parseDouble(preferences.getString("reported_failure", "0")))
+            return false;
+        preferences.edit().putString("reported_failure", Double.toString(fatalTime)).apply();
+
+        StringBuilder report = new StringBuilder();
+        for (String line : lines) {
+            String[] fields = line.trim().split("\\s+", 5);
+            if (fields.length == 5 && fields[1].equals(fatalPid) && "WEF".contains(fields[3]))
+                report.append(fields[3]).append(' ').append(fields[4].replaceFirst("^halo\\s*:\\s*", ""))
+                    .append('\n');
+        }
+        if (dataRoot != null) {
+            try (OutputStream out = new FileOutputStream(new File(dataRoot, "halo_log.txt"))) {
+                for (String line : lines)
+                    out.write((line + "\n").getBytes("UTF-8"));
+            } catch (java.io.IOException e) {
+                // shown on screen anyway
+            }
+        }
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(32), dp(16), dp(32), dp(16));
+        layout.setBackgroundColor(Color.rgb(12, 16, 20));
+        TextView title = new TextView(this);
+        title.setText(t("Le jeu s'est arrêté au démarrage", "The game stopped at start-up"));
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        layout.addView(title);
+        TextView where = new TextView(this);
+        where.setText(t("Journal complet : ", "Full log: ")
+            + (dataRoot != null ? new File(dataRoot, "halo_log.txt").getAbsolutePath() : "halo_log.txt"));
+        where.setTextColor(Color.rgb(200, 205, 210));
+        where.setPadding(0, dp(8), 0, dp(8));
+        layout.addView(where);
+        Button again = new Button(this);
+        again.setText(t("Relancer le jeu", "Start the game again"));
+        again.setOnClickListener(v -> {
+            if (haveData())
+                startGame();
+            else
+                buildInterface();
+        });
+        layout.addView(again, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView details = new TextView(this);
+        details.setText(report.length() > 0 ? report.toString() : t("(aucun détail)", "(no details)"));
+        details.setTextColor(Color.rgb(230, 180, 160));
+        details.setTypeface(Typeface.MONOSPACE);
+        details.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        details.setTextIsSelectable(true);
+        details.setPadding(0, dp(12), 0, 0);
+        layout.addView(details);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(layout);
+        setContentView(scroll);
+        again.requestFocus();
+        return true;
+    }
+
+    private static String languageName(String language) {
+        switch (language) {
+            case "": return "English (maps)";
+            case "fr": return "Français (maps_fr)";
+            case "de": return "Deutsch (maps_de)";
+            case "es": return "Español (maps_es)";
+            case "it": return "Italiano (maps_it)";
+            default: return "maps_" + language;
+        }
+    }
+
+    /** several languages on the image: the player picks one */
+    private void chooseLanguage(Uri image, java.util.List<String> languages) {
+        String[] names = new String[languages.size()];
+        int preferred = 0;
+        for (int index = 0; index < names.length; index++) {
+            names[index] = languageName(languages.get(index));
+            if (languages.get(index).equals(isFrench() ? "fr" : ""))
+                preferred = index;
+        }
+        final int[] chosen = { preferred };
+        new AlertDialog.Builder(this)
+            .setTitle(t("Langue du jeu", "Game language"))
+            .setSingleChoiceItems(names, preferred, (dialog, which) -> chosen[0] = which)
+            .setPositiveButton(t("Installer", "Install"), (dialog, which) -> {
+                status.setText(t("Lecture de l'image disque...", "Reading the disc image..."));
+                String language = languages.get(chosen[0]);
+                new Thread(() -> importImage(image, language)).start();
+            })
+            .setNegativeButton(t("Annuler", "Cancel"), (dialog, which) -> fail(t("Import annulé.", "Import cancelled.")))
+            .setOnCancelListener(dialog -> fail(t("Import annulé.", "Import cancelled.")))
+            .show();
     }
 
     /**
@@ -223,7 +360,23 @@ public class LauncherActivity extends Activity {
         pick.setEnabled(false);
         progress.setVisibility(View.VISIBLE);
         status.setText(t("Lecture de l'image disque...", "Reading the disc image..."));
-        new Thread(() -> importImage(image)).start();
+        new Thread(() -> {
+            java.util.List<String> languages;
+            try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(image, "r");
+                 FileInputStream in = new FileInputStream(descriptor.getFileDescriptor())) {
+                languages = XisoExtractor.languages(in.getChannel());
+            } catch (XisoExtractor.ExtractException exception) {
+                fail(exception.getMessage());
+                return;
+            } catch (Exception exception) {
+                fail(t("Lecture impossible : ", "Reading failed: ") + exception.getMessage());
+                return;
+            }
+            if (languages.size() > 1)
+                handler.post(() -> chooseLanguage(image, languages));
+            else
+                importImage(image, languages.isEmpty() ? null : languages.get(0));
+        }).start();
     }
 
     private void report(String text, int permille) {
@@ -243,14 +396,15 @@ public class LauncherActivity extends Activity {
         });
     }
 
-    private void importImage(Uri image) {
+    /** language: "" for maps (English), "fr" for maps_fr..., null to let the extractor choose */
+    private void importImage(Uri image, String language) {
         try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(image, "r")) {
             if (descriptor == null)
                 throw new java.io.IOException("the file could not be opened");
             try (FileInputStream in = new FileInputStream(descriptor.getFileDescriptor())) {
                 FileChannel channel = in.getChannel();
 
-                String installed = XisoExtractor.extractMaps(channel, dataRoot, isFrench() ? "fr" : null,
+                String installed = XisoExtractor.extractMaps(channel, dataRoot, language,
                     (file, done, total) -> report(t("Extraction de maps/", "Extracting maps/") + file + " ("
                         + (done >> 20) + t(" sur ", " of ") + (total >> 20) + t(" Mo)", " MB)"),
                         total > 0 ? (int) (done * 1000 / total) : 0));
