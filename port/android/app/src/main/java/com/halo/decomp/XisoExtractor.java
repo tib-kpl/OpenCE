@@ -111,9 +111,18 @@ final class XisoExtractor {
         this.image = image;
     }
 
-    /** copies the image's maps folder to destination/maps */
-    static void extractMaps(FileChannel image, File destination, Progress progress) throws IOException {
-        new XisoExtractor(image).extract(destination, progress);
+    /**
+     * copies the image's maps folder to destination/maps, and returns the
+     * language of the maps installed ("" for English).
+     *
+     * European discs may carry translated maps in maps_fr, maps_de, maps_es
+     * or maps_it, next to maps or instead of it. The folder of the wanted
+     * language (or the only one there is) is copied over maps, so the game
+     * reads it from d:\maps\ as usual.
+     */
+    static String extractMaps(FileChannel image, File destination, String language, Progress progress)
+        throws IOException {
+        return new XisoExtractor(image).extract(destination, language, progress);
     }
 
     private void readAt(long offset, ByteBuffer buffer) throws IOException {
@@ -198,25 +207,53 @@ final class XisoExtractor {
             walk(table, right, depth + 1, directories, out, visited);
     }
 
-    private void extract(File destination, Progress progress) throws IOException {
+    /** the files of a folder of the image */
+    private List<Entry> listFiles(Entry folder) throws IOException {
+        ByteBuffer table = readDirectory(folder.sector, folder.size,
+            "The disc image's " + folder.name + " folder is damaged.");
+        List<Entry> files = new ArrayList<>();
+        walk(table, 0, 0, false, files, new int[1]);
+        return files;
+    }
+
+    private String extract(File destination, String language, Progress progress) throws IOException {
         long[] root = findVolume();
 
-        /* the root's maps folder */
+        /* the root's maps folder, and its translated variants (maps_fr...) */
         ByteBuffer table = readDirectory(root[0], root[1], "The disc image's file system is damaged.");
         List<Entry> directories = new ArrayList<>();
         walk(table, 0, 0, true, directories, new int[1]);
         Entry maps = null;
+        java.util.Map<String, Entry> translated = new java.util.TreeMap<>();
         for (Entry entry : directories) {
-            if (entry.name.equalsIgnoreCase("maps"))
+            String name = entry.name.toLowerCase(java.util.Locale.ROOT);
+            if (name.equals("maps"))
                 maps = entry;
+            else if (name.length() == 7 && name.startsWith("maps_"))
+                translated.put(name.substring(5), entry);
         }
-        if (maps == null)
+        String installed = "";
+        Entry overlay = null;
+        if (language != null && translated.containsKey(language))
+            installed = language;
+        else if (maps == null && !translated.isEmpty())
+            installed = translated.containsKey("fr") ? "fr" : translated.keySet().iterator().next();
+        if (!installed.isEmpty())
+            overlay = translated.get(installed);
+        if (maps == null && overlay == null)
             throw new ExtractException("The disc image has no maps folder: it is not a Halo disc.");
 
-        /* its files */
-        table = readDirectory(maps.sector, maps.size, "The disc image's maps folder is damaged.");
-        List<Entry> files = new ArrayList<>();
-        walk(table, 0, 0, false, files, new int[1]);
+        /* its files: maps, then the translated folder's files over them */
+        java.util.Map<String, Entry> byName = new java.util.LinkedHashMap<>();
+        if (maps != null) {
+            for (Entry file : listFiles(maps))
+                byName.put(file.name.toLowerCase(java.util.Locale.ROOT), file);
+        }
+        if (overlay != null) {
+            for (Entry file : listFiles(overlay))
+                byName.put(file.name.toLowerCase(java.util.Locale.ROOT), file);
+        }
+        List<Entry> files = new ArrayList<>(byName.values());
         long total = 0;
         boolean hasUi = false;
         for (Entry file : files) {
@@ -271,5 +308,6 @@ final class XisoExtractor {
                 throw new ExtractException("Could not move " + file.name + " into " + finished + ".");
         }
         partial.delete();
+        return installed;
     }
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="import_disc_image"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_import">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.halo.decomp"
+            android:targetClass="com.halo.decomp.LauncherActivity">
+            <extra
+                android:name="com.halo.decomp.IMPORT"
+                android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>

@@ -34,6 +34,9 @@ import java.nio.channels.FileChannel;
  */
 public class LauncherActivity extends Activity {
     private static final int PICK_IMAGE = 1;
+    /** set by the "Import disc image" launcher shortcut: import even with data in place */
+    static final String EXTRA_IMPORT = "com.halo.decomp.IMPORT";
+    private boolean importRequested;
 
     private File dataRoot;
     private TextView status;
@@ -50,7 +53,8 @@ public class LauncherActivity extends Activity {
         if (dataRoot != null)
             new File(dataRoot, "maps").mkdirs();
         passOnInvite(getIntent());
-        if (haveData()) {
+        importRequested = getIntent() != null && getIntent().getBooleanExtra(EXTRA_IMPORT, false);
+        if (haveData() && !importRequested) {
             startGame();
             return;
         }
@@ -77,6 +81,56 @@ public class LauncherActivity extends Activity {
         return dataRoot != null && new File(dataRoot, "maps/ui.map").isFile();
     }
 
+    /** the app's language (Android 13+ per-app setting, else the device's) */
+    private boolean isFrench() {
+        java.util.Locale locale = getResources().getConfiguration().getLocales().get(0);
+        return locale != null && "fr".equals(locale.getLanguage());
+    }
+
+    private String t(String french, String english) {
+        return isFrench() ? french : english;
+    }
+
+    /**
+     * Sets game.language in config.toml (port/linux/src/port_config.c) to the
+     * language of the maps installed: the game then also picks its
+     * translated movies. The game adds the other settings to the file.
+     */
+    private void setGameLanguage(String language) {
+        File config = new File(dataRoot, "config.toml");
+        String setting = "language = \"" + language + "\"";
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        try {
+            if (config.isFile())
+                lines = new java.util.ArrayList<>(java.nio.file.Files.readAllLines(config.toPath(),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            int header = -1, existing = -1;
+            boolean inGame = false;
+            for (int index = 0; index < lines.size(); index++) {
+                String line = lines.get(index).trim();
+                if (line.startsWith("[")) {
+                    inGame = line.equals("[game]");
+                    if (inGame)
+                        header = index;
+                } else if (inGame && line.matches("language\\s*=.*")) {
+                    existing = index;
+                }
+            }
+            if (existing >= 0) {
+                lines.set(existing, setting);
+            } else if (header >= 0) {
+                lines.add(header + 1, setting);
+            } else {
+                lines.add("");
+                lines.add("[game]");
+                lines.add(setting);
+            }
+            java.nio.file.Files.write(config.toPath(), lines, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            // the game keeps its current language
+        }
+    }
+
     private void startGame() {
         startActivity(new Intent(this, HaloActivity.class));
         finish();
@@ -95,18 +149,26 @@ public class LauncherActivity extends Activity {
         layout.setBackgroundColor(Color.rgb(12, 16, 20));
 
         TextView title = new TextView(this);
-        title.setText("Halo needs its game data");
+        title.setText(importRequested && haveData()
+            ? t("Importer une image disque", "Import a disc image")
+            : t("Halo a besoin des données du jeu", "Halo needs its game data"));
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
         title.setGravity(Gravity.CENTER);
         layout.addView(title);
 
         TextView message = new TextView(this);
-        message.setText("Choose an Xbox disc image of Halo: Combat Evolved (an .iso or .xiso file, any "
+        String adb = "adb push <folder with maps>/. " + (dataRoot != null ? dataRoot.getAbsolutePath() : "") + "/";
+        message.setText(t("Choisissez une image disque Xbox de Halo: Combat Evolved (fichier .iso ou .xiso, "
+            + "toute version) sur cet appareil. Son dossier maps est copié dans le stockage de l'app (environ "
+            + "1,8 Go) ; vous pourrez ensuite supprimer l'image. Une image européenne avec un dossier maps_fr "
+            + "installe le jeu en français.\n\n"
+            + "Vous pouvez aussi copier un dossier maps depuis un ordinateur :\n" + adb,
+            "Choose an Xbox disc image of Halo: Combat Evolved (an .iso or .xiso file, any "
             + "version) on this device. Its maps folder is copied into the app's storage (about 1.8 GB), "
-            + "and you can delete the image afterwards.\n\n"
-            + "You can also copy a maps folder from a computer:\n"
-            + "adb push <folder with maps>/. " + (dataRoot != null ? dataRoot.getAbsolutePath() : "") + "/");
+            + "and you can delete the image afterwards. A European image with a maps_fr folder installs "
+            + "the game in French when the app's language is French.\n\n"
+            + "You can also copy a maps folder from a computer:\n" + adb));
         message.setTextColor(Color.rgb(200, 205, 210));
         message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         message.setGravity(Gravity.CENTER);
@@ -114,7 +176,7 @@ public class LauncherActivity extends Activity {
         layout.addView(message);
 
         pick = new Button(this);
-        pick.setText("Choose disc image");
+        pick.setText(t("Choisir l'image disque", "Choose disc image"));
         pick.setOnClickListener(v -> {
             // (disc images have no MIME type of their own: any file, checked
             // when it is read)
@@ -148,7 +210,7 @@ public class LauncherActivity extends Activity {
     protected void onResume() {
         super.onResume();
         // data pushed with adb while this screen was open
-        if (pick != null && pick.isEnabled() && haveData())
+        if (pick != null && pick.isEnabled() && haveData() && !importRequested)
             startGame();
     }
 
@@ -160,7 +222,7 @@ public class LauncherActivity extends Activity {
         Uri image = data.getData();
         pick.setEnabled(false);
         progress.setVisibility(View.VISIBLE);
-        status.setText("Reading the disc image...");
+        status.setText(t("Lecture de l'image disque...", "Reading the disc image..."));
         new Thread(() -> importImage(image)).start();
     }
 
@@ -188,9 +250,11 @@ public class LauncherActivity extends Activity {
             try (FileInputStream in = new FileInputStream(descriptor.getFileDescriptor())) {
                 FileChannel channel = in.getChannel();
 
-                XisoExtractor.extractMaps(channel, dataRoot, (file, done, total) ->
-                    report("Extracting maps/" + file + " (" + (done >> 20) + " of " + (total >> 20) + " MB)",
+                String installed = XisoExtractor.extractMaps(channel, dataRoot, isFrench() ? "fr" : null,
+                    (file, done, total) -> report(t("Extraction de maps/", "Extracting maps/") + file + " ("
+                        + (done >> 20) + t(" sur ", " of ") + (total >> 20) + t(" Mo)", " MB)"),
                         total > 0 ? (int) (done * 1000 / total) : 0));
+                setGameLanguage(installed);
             }
             handler.post(() -> {
                 if (haveData()) {

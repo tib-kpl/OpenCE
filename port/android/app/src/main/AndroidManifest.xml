@@ -25,7 +25,15 @@
         android:isGame="true"
         android:appCategory="game"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
-        android:hardwareAccelerated="true">
+        android:hardwareAccelerated="true"
+        android:vmSafeMode="true"
+        android:localeConfig="@xml/locales_config">
+        <!-- vmSafeMode: no ahead-of-time compiled code or app image for the
+             (small) Java part. An installed release build otherwise maps
+             its app image into the low 4 GB, where it can take the fixed
+             range the game image needs (host_memory.c): "cannot load the
+             game image" in release builds only, as debuggable builds have
+             no app image. -->
 
         <!-- a game, for the system (isGame and appCategory above; the game
              modes' configuration) and for launchers that look for this -->
@@ -51,6 +59,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- long press on the icon: import a disc image again -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- internet play invite links, halo://join/... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
