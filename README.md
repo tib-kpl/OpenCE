@@ -4,12 +4,12 @@
 > **Fork pour la version française (Android)** de [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
 > - L'app importe aussi les disques européens dont les cartes sont dans `maps_fr`, `maps_de`… (sans dossier `maps`), avec le choix de la langue à l'import.
 > - Corrige le démarrage des builds release (« cannot load the game image ») et affiche la cause d'un échec au lancement suivant (`halo_log.txt`).
-> - `tools/android_hide_silent_errors.py` retire de l'écran les messages de debug du jeu (ils restent dans `debug.txt`) ; à lancer sur `build/android/assets/halo_guest.elf` avant `ninja android_apk`.
+> - Les messages de debug du jeu à l'écran se règlent avec `game.console_log` dans `config.toml` (`"important"` par défaut, `"all"` pour tout voir) ; `debug.txt` reçoit toujours tout.
 > - Les liens de téléchargement plus bas mènent aux versions officielles, sans ces changements.
 >
 > **Fork for the French version (Android)** of [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
 > The app also imports European discs whose maps are in `maps_fr`, `maps_de`... (no `maps` folder), with a language choice;
-> release builds start again ("cannot load the game image"); `tools/android_hide_silent_errors.py` keeps the game's debug messages off the screen.
+> release builds start again ("cannot load the game image"), and a failed start is reported at the next start.
 > The download links below lead to the upstream builds, without these changes.
 
 [![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
