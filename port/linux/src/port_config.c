@@ -75,6 +75,9 @@ static const struct config_setting config_settings[] =
 		"Xbox's 4:3." },
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
+	{ "display.max_fps", _config_integer, "0", "HALO_MAX_FPS", _environment_value, _platform_desktop,
+		"With vsync off, the most frames a second: 0 for twice the display's\n"
+		"refresh rate, -1 for no limit (which can hang some Intel graphics)." },
 	{ "display.interpolation", _config_boolean, "true", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
@@ -95,8 +98,8 @@ static const struct config_setting config_settings[] =
 		"\"allies\", \"enemies\" or \"none\". An enemy's shows only while in sight\n"
 		"and not camouflaged." },
 	{ "display.player_name_scale", _config_real, "1.0", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
-		"How large the players' names are drawn: 1.0 the size of the HUD's text,\n"
-		"0.25 to 4." },
+		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
+		"the HUD's text, 0.25 to 4." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },
