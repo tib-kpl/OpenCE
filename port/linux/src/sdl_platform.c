@@ -880,14 +880,20 @@ static void platform_show_pending_message(void)
 /* ---------- events */
 
 /* quits as closing the window does, when the events are next read (the
-menus' Quit: port/linux/game/menu_functions.c) */
+menus' Quit: port/linux/game/menu_functions.c); on Android, where the game
+cannot push an event, it exits as its window closing does */
 void platform_request_quit(void)
 {
+#ifdef HALO_ANDROID
+	platform_log("quit requested");
+	exit(EXIT_SUCCESS);
+#else
 	SDL_Event event;
 
 	memset(&event, 0, sizeof(event));
 	event.type = SDL_EVENT_QUIT;
 	SDL_PushEvent(&event);
+#endif
 }
 
 void platform_scoreboard_scroll(int open, long *notches, long *pages)
