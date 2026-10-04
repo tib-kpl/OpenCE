@@ -30,28 +30,27 @@ the same picture, or for the profile settings the Xbox's picture for the same th
 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__2.png` | `ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options` frame 1 |
 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__7.png` | `ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_options` frame 3 |
 
-## Placeholders, to be redrawn
+## Illustrations instead of the PC version's pictures
 
-The Xbox's map has none of these (or other pictures under the name), so each frame is a placeholder
-until it is redrawn.
+The Xbox's map has none of these (or other pictures under the name), and the PC version's own
+(Bungie's art) is not shipped. Each frame is a plain illustration in the menus' blue, one per entry
+of the menu list it previews, drawn by `tools/menu_icons.py` (sources in `svg_icons/`):
 
-| File | Size | The PC version's picture |
-| --- | --- | --- |
-| `ce/shell/main_menu/multiplayer_type_select/mp_options__0.png` | 512x256 | `shell/main_menu/multiplayer_type_select/mp_options__0.png` |
-| `ce/shell/main_menu/multiplayer_type_select/mp_options__1.png` | 512x256 | `shell/main_menu/multiplayer_type_select/mp_options__1.png` |
-| `ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__0.png` | 512x256 | `shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__0.png` |
-| `ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__3.png` | 512x256 | `shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__3.png` |
-| `ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__4.png` | 512x256 | `shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__4.png` |
-| `ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__6.png` | 512x256 | `shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__6.png` |
-| `ce/shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__7.png` | 512x256 | `shell/main_menu/settings_select/multiplayer_setup/playlist_edit/gametype_options__7.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__1.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__1.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__3.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__3.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__4.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__4.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__5.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__5.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__6.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__6.png` |
-| `ce/shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__8.png` | 512x256 | `shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__8.png` |
-
-13 of 156 frames are placeholders.
+| File | Previews |
+| --- | --- |
+| `ce/shell/main_menu/multiplayer_type_select/mp_options__0.png` | the games to join or create |
+| `ce/shell/main_menu/multiplayer_type_select/mp_options__1.png` | the server browser |
+| `.../playlist_edit/gametype_options__0.png` | Change name |
+| `.../playlist_edit/gametype_options__3.png` | Item options |
+| `.../playlist_edit/gametype_options__4.png` | Indicator options |
+| `.../playlist_edit/gametype_options__6.png` | Vehicle options |
+| `.../playlist_edit/gametype_options__7.png` | Teamplay options |
+| `.../player_profile_edit/profile_options__1.png` | Controls setup |
+| `.../player_profile_edit/profile_options__3.png` | Mouse setup |
+| `.../player_profile_edit/profile_options__4.png` | Audio setup |
+| `.../player_profile_edit/profile_options__5.png` | Video setup |
+| `.../player_profile_edit/profile_options__6.png` | Change colour |
+| `.../player_profile_edit/profile_options__8.png` | Network setup |
 
 The PC version's `ui\gamespy` and `ui\ticker` fonts are drawn with `ui\small_ui`, which
 the Xbox's map has.
