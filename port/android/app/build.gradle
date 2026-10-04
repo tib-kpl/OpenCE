@@ -23,6 +23,50 @@ if (!(repository ==~ /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/))
 // debug key of the computer that builds
 def signingKey = System.getenv("HALO_ANDROID_KEYSTORE")
 
+// The menus in French: copies of the PC menus' XML files (port/assets/menus)
+// with the texts of port/assets/menus/lang/fr.json, made by
+// tools/translate_menus.py from the menus as this checkout has them, so that
+// they never fall behind them, and put in the app as assets/menus_fr. The app
+// puts them beside config.toml when the game's language is French
+// (MenuTranslation.java). Without Python the app has no French menus; the
+// build goes on.
+abstract class GenerateMenuTranslations extends DefaultTask {
+    @InputFiles
+    abstract ConfigurableFileCollection getSources()
+
+    @InputFile
+    abstract RegularFileProperty getTool()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutput()
+
+    @TaskAction
+    void generate() {
+        File out = output.get().asFile
+        out.deleteDir()
+        out.mkdirs()
+        for (String python : ["python3", "python", "py"]) {
+            try {
+                Process process = new ProcessBuilder(python, tool.get().asFile.absolutePath, "--lang", "fr",
+                    "--out", new File(out, "menus_fr").absolutePath).redirectErrorStream(true).start()
+                String text = process.inputStream.getText("UTF-8").trim()
+
+                if (process.waitFor() == 0) {
+                    logger.lifecycle(text)
+                    return
+                }
+                logger.warn("${python}: ${text}")
+            } catch (IOException ignored) {
+                // no such command: the next
+            }
+        }
+        logger.warn("no Python found: the app has no French menus")
+    }
+}
+
+def menusFolder = new File(rootDir, "../../port/assets/menus")
+def menusTool = new File(rootDir, "../../tools/translate_menus.py")
+
 android {
     namespace "com.halo.decomp"
     compileSdk 35
@@ -89,5 +133,18 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        def generate = tasks.register("generate${variant.name.capitalize()}MenuTranslations",
+                GenerateMenuTranslations) {
+            sources.from(fileTree(menusFolder) {
+                include "ce/*.xml", "lang/*.json"
+            })
+            tool.set(menusTool)
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(generate, GenerateMenuTranslations::getOutput)
     }
 }

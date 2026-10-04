@@ -4,11 +4,13 @@
 > **Fork pour la version française (Android)** de [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
 > - L'app importe aussi les disques européens dont les cartes sont dans `maps_fr`, `maps_de`… (sans dossier `maps`), avec le choix de la langue à l'import.
 > - Corrige le démarrage des builds release (« cannot load the game image ») et affiche la cause d'un échec au lancement suivant (`halo_log.txt`).
+> - Les menus PC sont traduits en français (`port/assets/menus/lang/fr.json`, installés à côté de `config.toml` quand la langue du jeu est `fr`) ; les anglais restent intacts.
 > - Les messages de debug du jeu à l'écran se règlent avec `game.console_log` dans `config.toml` (`"important"` par défaut, `"all"` pour tout voir) ; `debug.txt` reçoit toujours tout.
 > - Les liens de téléchargement plus bas mènent aux versions officielles, sans ces changements.
 >
 > **Fork for the French version (Android)** of [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
-> The app also imports European discs whose maps are in `maps_fr`, `maps_de`... (no `maps` folder), with a language choice;
+> The app also imports European discs whose maps are in `maps_fr`, `maps_de`... (no `maps` folder), with a language choice, and puts
+> the PC menus in French (`port/assets/menus/lang/fr.json`) when the game's language is French;
 > release builds start again ("cannot load the game image"), and a failed start is reported at the next start.
 > The download links below lead to the upstream builds, without these changes. This fork's own builds,
 > as a bare `.apk` (`halo-android-release.apk`), are at https://github.com/tib-kpl/halo-ce-universal/releases/latest

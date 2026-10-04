@@ -307,6 +307,8 @@ public class LauncherActivity extends Activity {
     }
 
     private void startGame() {
+        // the menus in French when the maps are (MenuTranslation)
+        MenuTranslation.sync(this, dataRoot);
         startActivity(new Intent(this, HaloActivity.class));
         finish();
     }
