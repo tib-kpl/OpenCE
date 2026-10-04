@@ -10,7 +10,8 @@
 > **Fork for the French version (Android)** of [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
 > The app also imports European discs whose maps are in `maps_fr`, `maps_de`... (no `maps` folder), with a language choice;
 > release builds start again ("cannot load the game image"), and a failed start is reported at the next start.
-> The download links below lead to the upstream builds, without these changes.
+> The download links below lead to the upstream builds, without these changes. This fork's own builds,
+> as a bare `.apk` (`halo-android-release.apk`), are at https://github.com/tib-kpl/halo-ce-universal/releases/latest
 
 [![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
 
