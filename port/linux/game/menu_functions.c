@@ -69,6 +69,7 @@ their handlers open opens.
 #include "main/main.h"
 #include "networking/network_game_manager.h"
 #include "saved games/player_profile.h"
+#include "saved games/saved_game_files.h"
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
@@ -483,7 +484,20 @@ boolean pc_menu_profile_edit_begin(void)
 	struct player_profile profile;
 
 	if (!campaign_profile(0, &profile))
-		return FALSE;
+	{
+		/* (none yet: make one, named as the game names an untitled one, as
+		the settings need it and the PC menus have no keyboard to ask a name) */
+		wchar_t name[128];
+		long created;
+
+		saved_game_file_get_useable_untitled_profile_name(name);
+		if (!name[0])
+			return FALSE;
+		created = player_profile_new(0, name);
+		if (created == NONE || !player_profile_get(created, &profile))
+			return FALSE;
+		player_ui_set_active_player_profile(0, created, &profile);
+	}
 	player_ui_begin_editing_profile(player_ui_get_active_player_profile_index(0));
 	return TRUE;
 }
