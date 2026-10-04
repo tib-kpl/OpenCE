@@ -47,7 +47,8 @@ import java.util.zip.ZipInputStream;
  * app must keep for Android to install a new version over it.
  */
 final class Updater {
-    private static final String REPOSITORY = "cybersecurity/halo-ce-universal";
+    // the repository the app was built from (app/build.gradle)
+    private static final String REPOSITORY = BuildConfig.HALO_REPOSITORY;
     private static final String USER_AGENT = "halo-ce-universal-updater";
     private static final int TIMEOUT_MILLISECONDS = 20000;
 

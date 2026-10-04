@@ -12,6 +12,12 @@ def staged = new File(rootDir, "../../build/android")
 def buildNumberText = System.getenv("HALO_BUILD_NUMBER") ?: "0"
 def buildNumber = buildNumberText.isInteger() ? buildNumberText.toInteger() : 0
 
+// the repository whose releases the self-updater looks at: the one being
+// built (GITHUB_REPOSITORY in GitHub Actions, so a fork updates from itself)
+def repository = System.getenv("GITHUB_REPOSITORY") ?: ""
+if (!(repository ==~ /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/))
+    repository = "cybersecurity/halo-ce-universal"
+
 // the workflow's signing key (.github/workflows/build.yml): every build of
 // main signed with it can install over the one before; without it, the
 // debug key of the computer that builds
@@ -28,6 +34,7 @@ android {
         versionCode Math.max(1, buildNumber)
         versionName buildNumber > 0 ? "build " + buildNumber : "1.0"
         buildConfigField "int", "HALO_BUILD_NUMBER", "${buildNumber}"
+        buildConfigField "String", "HALO_REPOSITORY", "\"${repository}\""
         ndk {
             abiFilters "arm64-v8a"
         }

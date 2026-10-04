@@ -138,11 +138,13 @@ jobs:
       - name: Debug
         env:
           HALO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HALO_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'halo' }}
         run: python3 tools/ci_build.py android debug
 
       - name: Release
         env:
           HALO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HALO_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'halo' }}
         run: python3 tools/ci_build.py android release
 
       - name: Compile cache

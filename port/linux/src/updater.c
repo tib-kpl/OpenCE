@@ -46,7 +46,12 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #define HALO_BUILD_FLAVOR "release"
 #endif
 
+/* the repository being built (tools/linux_build.py, windows_build.py) */
+#ifdef HALO_UPDATE_REPOSITORY
+#define UPDATE_REPOSITORY HALO_UPDATE_REPOSITORY
+#else
 #define UPDATE_REPOSITORY "cybersecurity/halo-ce-universal"
+#endif
 #ifdef _WIN32
 #define UPDATE_PLATFORM "windows"
 #define PATH_SEPARATOR "\\"
