@@ -1078,7 +1078,9 @@
   "unused controller error": "erreur de manette inutilisée ",
   "unused network error": "erreur de réseau inutilisé",
   "unused warning": "avertissement inutilisé",
-  "winning": "Je gagne !"
+  "winning": "Je gagne !",
+  "ADD PLAYER": "AJOUTER UN JOUEUR",
+  "The new player's profile.": "Le profil du nouveau joueur."
  },
  "strings": {
   "PUBLIC|PRIVATE": "PUBLIC|PRIVÉ",
