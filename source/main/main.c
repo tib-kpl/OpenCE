@@ -1074,6 +1074,14 @@ void main_menu_precache_resources(
 	return;
 }
 
+/* port: TRUE while the main menu's scenario (the menus' animated background)
+is what runs */
+boolean main_menu_scenario_is_loaded(
+	void)
+{
+	return main_globals.main_menu_scenario_loaded;
+}
+
 void main_menu_unload(
 	void)
 {

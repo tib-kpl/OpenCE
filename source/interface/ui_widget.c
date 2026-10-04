@@ -3697,7 +3697,11 @@ static void widget_instance_initialize(
 	widget->visible = TRUE;
 	widget->render_regardless_of_controller_index =
 		TEST_FLAG(definition->flags, _widget_render_regardless_of_controller_index_bit);
-	widget->pause_game_time = TEST_FLAG(definition->flags, _widget_pause_game_time_bit);
+	/* port: the PC menus' settings screens pause the game (they open from the
+	pause menu too); over the main menu that froze its animated background and
+	its music, so they do not pause it there */
+	widget->pause_game_time = TEST_FLAG(definition->flags, _widget_pause_game_time_bit) &&
+		!main_menu_scenario_is_loaded();
 	widget->creation_time = widget_globals.current_system_milliseconds;
 	widget->milliseconds_to_auto_close = MAX(definition->milliseconds_to_auto_close, 0);
 	widget->auto_close_fade_time = MAX(definition->auto_close_fade_time, 0);

@@ -100,6 +100,9 @@ void main_goto_main_menu(
 void main_menu_precache_resources(
 	void);
 
+boolean main_menu_scenario_is_loaded(
+	void);
+
 void main_menu_unload(
 	void);
 
