@@ -1393,6 +1393,23 @@ static void *pause_button(struct cache_file_tag_instance *instances, struct ui_w
 	return button;
 }
 
+/* the texts of the buttons the port adds to the pause menu, in the game's
+language (game.language; the map's own buttons are the map's language) */
+static char const *pause_text(int end_game)
+{
+	char const *language = config_string("game.language");
+
+	if (!strncmp(language, "fr", 2))
+		return end_game ? "TERMINER LA PARTIE" : "PARAMÃTRES";
+	if (!strncmp(language, "de", 2))
+		return end_game ? "SPIEL BEENDEN" : "EINSTELLUNGEN";
+	if (!strncmp(language, "es", 2))
+		return end_game ? "TERMINAR PARTIDA" : "AJUSTES";
+	if (!strncmp(language, "it", 2))
+		return end_game ? "TERMINA PARTITA" : "IMPOSTAZIONI";
+	return end_game ? "END GAME" : "SETTINGS";
+}
+
 /* the list's buttons: SETTINGS (and the host's END GAME) put before LEAVE
 GAME (quit); returns how many were added */
 static long pause_list_patch(struct cache_file_tag_instance *instances, struct ui_widget_definition *list, long quit,
@@ -1411,10 +1428,10 @@ static long pause_list_patch(struct cache_file_tag_instance *instances, struct u
 	if (!grown || settings_widget == NONE || spacing <= 0)
 		return 0;
 	tags[0] = next_tag();
-	buttons[0] = pause_button(instances, model, "pause/settings_button", "SETTINGS",
+	buttons[0] = pause_button(instances, model, "pause/settings_button", pause_text(0),
 		function_index("profile set edit begin", "pause", 0), build.widget_tags[settings_widget]);
 	tags[1] = host ? next_tag() : NONE;
-	buttons[1] = host ? pause_button(instances, model, "pause/end_game_button", "END GAME",
+	buttons[1] = host ? pause_button(instances, model, "pause/end_game_button", pause_text(1),
 		function_index("port pause end game", "pause", 0), NONE) : NULL;
 	if (!buttons[0] || (host && !buttons[1]))
 		return 0;
