@@ -1400,7 +1400,7 @@ static char const *pause_text(int end_game)
 	char const *language = config_string("game.language");
 
 	if (!strncmp(language, "fr", 2))
-		return end_game ? "TERMINER LA PARTIE" : "PARAMÃTRES";
+		return end_game ? "TERMINER LA PARTIE" : "PARAMÈTRES";
 	if (!strncmp(language, "de", 2))
 		return end_game ? "SPIEL BEENDEN" : "EINSTELLUNGEN";
 	if (!strncmp(language, "es", 2))
