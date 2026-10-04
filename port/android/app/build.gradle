@@ -141,7 +141,7 @@ androidComponents {
         def generate = tasks.register("generate${variant.name.capitalize()}MenuTranslations",
                 GenerateMenuTranslations) {
             sources.from(fileTree(menusFolder) {
-                include "ce/*.xml", "lang/*.json"
+                include "ce/*.xml", "lang/*.json", "lang/*/ce/**"
             })
             tool.set(menusTool)
         }

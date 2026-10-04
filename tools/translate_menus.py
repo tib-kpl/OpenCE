@@ -105,6 +105,15 @@ def main():
                 out.write(translated)
         written += 1
 
+    pictures = Path(__file__).resolve().parent.parent / "port/assets/menus/lang" / args.lang / FOLDER
+    if args.out and not args.check and pictures.is_dir():
+        # the language's pictures (tools/translate_menu_art.py) go beside the files
+        for picture in pictures.rglob("*"):
+            if picture.is_file():
+                target = Path(args.out) / FOLDER / picture.relative_to(pictures)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(picture.read_bytes())
+
     unused = [(kind, english) for kind in ("text", "strings") for english in table[kind]
               if (kind, english) not in seen]
     print(f"{args.lang}: {written} files translated, {len(missing)} texts left in English, "

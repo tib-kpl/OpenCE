@@ -33,4 +33,10 @@ the game takes a file of that folder in place of its built-in one
 (`port/linux/src/menu_files.c`). On a desktop port, copy the files there.
 
 The titles drawn as pictures (the screens' headers, the main menu's items) are
-the maps' own: the French maps have theirs in French.
+made from `art` (picture name -> text) with the English pictures' letters:
+
+    python tools/translate_menu_art.py --lang fr --rsvg "wsl.exe -d Ubuntu -u root -- rsvg-convert"
+
+The result is in `<language>/svg` and `<language>/ce` (PNGs, copied beside the
+translated XML files like them). Only the letters the English pictures have
+(and J, É, È, À) can be used.
