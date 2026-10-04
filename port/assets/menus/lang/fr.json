@@ -1051,7 +1051,7 @@
   "fifth place": "cinquième place",
   "first place": "première place",
   "fourth place": "quatrième place",
-  "losing": "Je perds !",
+  "losing": "Perdant",
   "new best lap time %.2f.": "nouveau meilleur temps au tour %.2f.",
   "second place": "deuxième place",
   "seventh place": "septième place",
@@ -1078,7 +1078,7 @@
   "unused controller error": "erreur de manette inutilisée ",
   "unused network error": "erreur de réseau inutilisé",
   "unused warning": "avertissement inutilisé",
-  "winning": "Je gagne !",
+  "winning": "Gagnant",
   "ADD PLAYER": "AJOUTER UN JOUEUR",
   "The new player's profile.": "Le profil du nouveau joueur."
  },
