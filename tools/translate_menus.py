@@ -89,6 +89,12 @@ def main():
     table = json.loads((MENUS / "lang" / f"{args.lang}.json").read_text(encoding="utf-8"))
     table.setdefault("text", {})
     table.setdefault("strings", {})
+    for section in ("text", "strings"):
+        for english, french in table[section].items():
+            # the menus write a line break as \n (a backslash and an n); a real
+            # line break in a text is drawn as nothing, joining the two lines
+            if "\n" in french or "\r" in french:
+                raise SystemExit(f"{args.lang}.json: a line break in {french!r} (write \\n)")
 
     seen, missing, written = set(), set(), 0
     for path in sorted((MENUS / FOLDER).glob("*.xml")):
