@@ -1999,6 +1999,8 @@ static void netgame_prejoin_players(
 	return;
 }
 
+int updater_build_number(void); /* port/linux/src/updater.c */
+
 static void set_textbox_to_build_number(
 	struct widget_instance *widget)
 {
@@ -2009,8 +2011,16 @@ static void set_textbox_to_build_number(
 
 	if (!build_number_string[0])
 	{
+		/* the port's release (build-N on GitHub), so that one can tell whether it is the latest;
+		   the PC version's number when this is not a release */
+		char text[32] = "01.01.14.2342";
+		int build = updater_build_number();
+		if (build > 0)
+		{
+			_snprintf(text, sizeof(text), "build %d", build);
+		}
 		ascii_to_wide(
-			"01.01.14.2342",
+			text,
 			build_number_string,
 			sizeof(build_number_string));
 	}

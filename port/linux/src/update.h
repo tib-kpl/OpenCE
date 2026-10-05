@@ -14,6 +14,9 @@ different structure layouts.
 #ifndef UPDATE_H
 #define UPDATE_H
 
+/* this build's number (the release it is: build-N), 0 when it is not a release (updater.c) */
+int updater_build_number(void);
+
 /* bytes received so far, of total (0 when the size is not known) */
 typedef void (*update_progress_proc)(void *context, unsigned long long received, unsigned long long total);
 

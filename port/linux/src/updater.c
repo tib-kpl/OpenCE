@@ -73,6 +73,11 @@ enum
 
 static SDL_AtomicInt updater_state;
 static long updater_latest_build;
+
+int updater_build_number(void)
+{
+	return HALO_BUILD_NUMBER;
+}
 static char updater_directory[1024];
 static char updater_executable[1024];
 

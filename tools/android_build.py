@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from .linux_build import (LINUX_PROFILE, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, XDK_INCLUDE,
                           compile_launcher, game_defines_and_includes, game_sources, miniupnpc_sources,
+                          updater_defines,
                           musl_math_sources, pgo_mode, pgo_profile,
                           profile_use_flags, xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
@@ -427,6 +428,10 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     guest_host_only = {"memory_watch.c"}  # replaced by guest_memory_watch.c
     for source in sorted((LINUX_DIR / "src").glob("*.c")):
         if source.name.startswith("posix_") or source.name in guest_host_only:
+            continue
+        if source.name == "updater.c":
+            # its build number, which the main menu shows (updater_build_number)
+            objects.append(guest_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}"))
             continue
         objects.append(guest_object(source, platform_cflags))
     # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
