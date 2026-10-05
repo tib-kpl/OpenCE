@@ -16,7 +16,7 @@ def buildNumber = buildNumberText.isInteger() ? buildNumberText.toInteger() : 0
 // built (GITHUB_REPOSITORY in GitHub Actions, so a fork updates from itself)
 def repository = System.getenv("GITHUB_REPOSITORY") ?: ""
 if (!(repository ==~ /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/))
-    repository = "cybersecurity/halo-ce-universal"
+    repository = "OpenCommunityEdition/OpenCE"
 
 // the workflow's signing key (.github/workflows/build.yml): every build of
 // main signed with it can install over the one before; without it, the

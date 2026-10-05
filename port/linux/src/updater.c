@@ -50,7 +50,7 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #ifdef HALO_UPDATE_REPOSITORY
 #define UPDATE_REPOSITORY HALO_UPDATE_REPOSITORY
 #else
-#define UPDATE_REPOSITORY "cybersecurity/halo-ce-universal"
+#define UPDATE_REPOSITORY "OpenCommunityEdition/OpenCE"
 #endif
 #ifdef _WIN32
 #define UPDATE_PLATFORM "windows"

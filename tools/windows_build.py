@@ -67,7 +67,7 @@ def updater_defines(release: bool) -> str:
     # (GITHUB_REPOSITORY in GitHub Actions, so a fork updates from itself)
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        repository = "cybersecurity/halo-ce-universal"
+        repository = "OpenCommunityEdition/OpenCE"
     return (f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\" '
             f'-DHALO_UPDATE_REPOSITORY=\\"{repository}\\"')
 
@@ -314,8 +314,14 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         # 32-bit address space
         "-Wl,/LARGEADDRESSAWARE",
         "-Wl,/STACK:0x800000",
-        "-Wl,/SUBSYSTEM:CONSOLE",
     ]
+    if getattr(sln, "port_release", False):
+        # no console window (the port's log goes to halo.log instead,
+        # win32_posix.c): under Wine (Proton, gamescope) the console window
+        # can hide the game's window
+        base_ldflags += ["-Wl,/SUBSYSTEM:WINDOWS", "-Wl,/ENTRY:mainCRTStartup"]
+    else:
+        base_ldflags += ["-Wl,/SUBSYSTEM:CONSOLE"]
 
     def emit(obj_dir: Path, output: Path, extra_cflags: List[str], extra_ldflags: List[str],
              extra_objects: List[Path], implicit_inputs: List[Path]) -> None:
@@ -483,5 +489,8 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
     emit(obj_dir, output, lto_cflags + profile_use_flags(profile),
          lto_cflags + [OPTIMISATION] if lto_cflags else [], [], [profile] if profile else [])
     n.build(outputs=sdl_dll, rule="windows_copy", inputs=SDL_DIR / "lib" / "x86" / "SDL3.dll")
-    n.build(outputs="windows", rule="phony", inputs=[output, sdl_dll])
+    # internet play's MQTT brokers, a file beside the game (network.brokers_file)
+    brokers = BUILD / "brokers.txt"
+    n.build(outputs=brokers, rule="windows_copy", inputs=Path("port/assets/network/brokers.txt"))
+    n.build(outputs="windows", rule="phony", inputs=[output, sdl_dll, brokers])
     n.newline()
