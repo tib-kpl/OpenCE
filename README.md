@@ -13,7 +13,6 @@
 > - L'app importe les disques européens dont les cartes sont dans `maps_fr`, `maps_de`… (sans dossier `maps`), avec le choix de la langue à l'import.
 >
 > **Menus et jeu**
-> - Des illustrations remplacent les images noires « Place Holder » des menus.
 > - « Paramètres » crée un profil s'il n'y en a aucun ; ouvert depuis le menu principal, il ne fige plus la vidéo ni la musique de fond.
 > - « Quitter » ferme vraiment le jeu sur Android.
 > - Le menu principal affiche le numéro de la release du port (« build N ») sous le numéro de version, pour savoir si l'on est à jour.
@@ -27,7 +26,7 @@
 > **Fork for the French version (Android)** of [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
 > It puts the PC menus in French when the game's language is French (the official French PC texts, French menu pictures,
 > the port's own pause buttons in the game's language), imports European discs whose maps are in `maps_fr`, `maps_de`...,
-> replaces the menus' black "Place Holder" pictures, makes a profile when Settings is opened without one, keeps the main
+> makes a profile when Settings is opened without one, keeps the main
 > menu's video and music running under Settings, quits for real on Android, shows the port's build number in the main menu,
 > starts release builds again and reports a failed start at the next one, and updates from its own releases.
 > The download links below lead to the upstream builds, without these changes. This fork's own builds,
