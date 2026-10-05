@@ -354,6 +354,7 @@ symbols in this file:
 #include "saved games/playlist_profile.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
+#include "tag_files/tag_files.h" /* port: the port_build field (tag_get_name) */
 #include "halo_menus.h" /* port: PC_MENU_FUNCTION_BASE */
 
 /* ---------- constants */
@@ -2011,18 +2012,51 @@ static void set_textbox_to_build_number(
 
 	if (!build_number_string[0])
 	{
-		/* the port's release (build-N on GitHub), so that one can tell whether it is the latest;
-		   the PC version's number when this is not a release */
-		char text[32] = "01.01.14.2342";
-		int build = updater_build_number();
-		if (build > 0)
-		{
-			_snprintf(text, sizeof(text), "build %d", build);
-		}
 		ascii_to_wide(
-			text,
+			"01.01.14.2342",
 			build_number_string,
 			sizeof(build_number_string));
+	}
+	{
+		/* the port's field (port/assets/menus/ce/main_menu.xml, main_menu/port_build): the port's
+		   release, build-N on GitHub, to tell whether it is the latest */
+		static wchar_t port_build_string[64];
+		char const *name = tag_get_name(widget->definition_tag_index);
+		if (name && strstr(name, "port_build"))
+		{
+			if (!port_build_string[0])
+			{
+				char text[32] = "";
+				int build = updater_build_number();
+				if (build > 0)
+				{
+					_snprintf(text, sizeof(text), "build %d", build);
+				}
+				else
+				{
+					_snprintf(text, sizeof(text), "build dev");
+				}
+				ascii_to_wide(text, port_build_string, sizeof(port_build_string));
+			}
+			if (!widget->parameters.text_box.text)
+			{
+				widget->parameters.text_box.text = ui_widget_realloc(
+					NULL,
+					sizeof(port_build_string),
+					"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
+					0x25E);
+				if (widget->parameters.text_box.text)
+				{
+					csmemset(widget->parameters.text_box.text, 0, sizeof(port_build_string));
+				}
+			}
+			if (widget->parameters.text_box.text)
+			{
+				ustrncpy(widget->parameters.text_box.text, port_build_string, NUMBEROF(port_build_string) - 1);
+				widget->parameters.text_box.text[NUMBEROF(port_build_string) - 1] = 0;
+			}
+			return;
+		}
 	}
 
 	if (!widget->parameters.text_box.text)

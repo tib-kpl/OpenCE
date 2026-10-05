@@ -29,6 +29,15 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 #include "port_config.h"
 #include "update.h"
 
+/* (for every platform: the main menu shows it) */
+#ifndef HALO_BUILD_NUMBER
+#define HALO_BUILD_NUMBER 0
+#endif
+int updater_build_number(void)
+{
+	return HALO_BUILD_NUMBER;
+}
+
 #ifndef HALO_ANDROID
 
 #include "memory/zlib/zlib.h"
@@ -73,11 +82,6 @@ enum
 
 static SDL_AtomicInt updater_state;
 static long updater_latest_build;
-
-int updater_build_number(void)
-{
-	return HALO_BUILD_NUMBER;
-}
 static char updater_directory[1024];
 static char updater_executable[1024];
 
