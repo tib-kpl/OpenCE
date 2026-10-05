@@ -1,19 +1,37 @@
 # Halo: Combat Evolved for Linux, Windows and Android
 
 > [!NOTE]
-> **Fork pour la version française (Android)** de [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
-> - L'app importe aussi les disques européens dont les cartes sont dans `maps_fr`, `maps_de`… (sans dossier `maps`), avec le choix de la langue à l'import.
-> - Corrige le démarrage des builds release (« cannot load the game image ») et affiche la cause d'un échec au lancement suivant (`halo_log.txt`).
-> - Les menus PC sont traduits en français (`port/assets/menus/lang/fr.json`, installés à côté de `config.toml` quand la langue du jeu est `fr`) ; les anglais restent intacts.
-> - Les messages de debug du jeu à l'écran se règlent avec `game.console_log` dans `config.toml` (`"important"` par défaut, `"all"` pour tout voir) ; `debug.txt` reçoit toujours tout.
-> - Les liens de téléchargement plus bas mènent aux versions officielles, sans ces changements.
+> **Fork pour la version française (Android)** de [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
+> Les versions de ce fork, en `.apk` simple (`halo-android-release.apk`), sont sur https://github.com/tib-kpl/OpenCE/releases/latest ;
+> les liens de téléchargement plus bas mènent aux versions officielles, sans ces changements.
 >
-> **Fork for the French version (Android)** of [cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
-> The app also imports European discs whose maps are in `maps_fr`, `maps_de`... (no `maps` folder), with a language choice, and puts
-> the PC menus in French (`port/assets/menus/lang/fr.json`) when the game's language is French;
-> release builds start again ("cannot load the game image"), and a failed start is reported at the next start.
+> **Langue**
+> - Les menus PC sont en français quand la langue du jeu est `fr` (`port/assets/menus/lang/fr.json`, installé à côté de `config.toml`) ; les menus anglais restent intacts.
+> - Les textes viennent de la version PC française officielle ; ceux propres au port sont traduits et raccourcis pour tenir à l'écran (statuts de score, écran partagé en ligne, profils…).
+> - Les images des titres de menus et des entrées du menu principal sont en français.
+> - Les boutons ajoutés par le port au menu pause (« PARAMÈTRES », « TERMINER LA PARTIE » pour l'hôte) suivent la langue du jeu (aussi en allemand, espagnol et italien).
+> - L'app importe les disques européens dont les cartes sont dans `maps_fr`, `maps_de`… (sans dossier `maps`), avec le choix de la langue à l'import.
+>
+> **Menus et jeu**
+> - Des illustrations remplacent les images noires « Place Holder » des menus.
+> - « Paramètres » crée un profil s'il n'y en a aucun ; ouvert depuis le menu principal, il ne fige plus la vidéo ni la musique de fond.
+> - « Quitter » ferme vraiment le jeu sur Android.
+> - Le menu principal affiche le numéro de la release du port (« build N ») sous le numéro de version, pour savoir si l'on est à jour.
+>
+> **Android et versions**
+> - Les builds release démarrent (« cannot load the game image ») et la cause d'un échec au lancement s'affiche au lancement suivant (`halo_log.txt`).
+> - Les barres système restent masquées.
+> - Les messages de debug du jeu à l'écran se règlent avec `game.console_log` dans `config.toml` (`"important"` par défaut, `"all"` pour tout voir) ; `debug.txt` reçoit toujours tout.
+> - La mise à jour intégrée suit les releases du dépôt compilé : ce fork se met à jour depuis ses propres releases.
+>
+> **Fork for the French version (Android)** of [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
+> It puts the PC menus in French when the game's language is French (the official French PC texts, French menu pictures,
+> the port's own pause buttons in the game's language), imports European discs whose maps are in `maps_fr`, `maps_de`...,
+> replaces the menus' black "Place Holder" pictures, makes a profile when Settings is opened without one, keeps the main
+> menu's video and music running under Settings, quits for real on Android, shows the port's build number in the main menu,
+> starts release builds again and reports a failed start at the next one, and updates from its own releases.
 > The download links below lead to the upstream builds, without these changes. This fork's own builds,
-> as a bare `.apk` (`halo-android-release.apk`), are at https://github.com/tib-kpl/halo-ce-universal/releases/latest
+> as a bare `.apk` (`halo-android-release.apk`), are at https://github.com/tib-kpl/OpenCE/releases/latest
 
 [![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
 
