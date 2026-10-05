@@ -92,6 +92,7 @@ char const *pc_menu_game_data_input_name(long function_index);
 void event_manager_post_button(short controller_index, short button_index);
 int config_text(char const *name, char *text, unsigned int size);
 int config_write(char const *name, char const *value);
+int config_boolean(char const *name);
 int config_default(char const *name, char *text, unsigned int size);
 char const *config_string(char const *name);
 void platform_display_apply(void);
@@ -2048,6 +2049,7 @@ boolean ui_widget_port_multiplayer_player(short controller_index, long profile_i
 boolean ui_widget_port_unjoin_player(struct widget_instance *widget, struct event_record *event,
 	boolean *widget_deleted);
 void network_game_server_port_set_settings(wchar_t const *name, long maximum_players);
+void network_game_server_port_set_cooperative_friendly_fire(short friendly_fire);
 void *global_network_game_client_get(void);
 void *global_network_game_server_get(void);
 boolean network_game_is_splitscreen_local(void);
@@ -2090,10 +2092,12 @@ static struct
 	/* the server settings */
 	wchar_t game_name[16];
 	short maximum_players_index;
-	/* (co-op's own, the most until set lower, so it leaves multiplayer's
-	as it was) */
+	/* (co-op's own, so it leaves multiplayer's as it was: each game hosted
+	starts with COOPERATIVE_DEFAULT_PLAYERS players at most) */
 	short cooperative_maximum_players_index;
 	boolean cooperative_maximum_players_set;
+	/* co-op's FRIENDLY FIRE shown (network.coop_friendly_fire's) */
+	short cooperative_friendly_fire;
 	/* the browser's games */
 	struct advertised_game *games[MAXIMUM_ADVERTISED_GAMES];
 	short game_count, game_chosen;
@@ -2255,6 +2259,7 @@ static boolean multiplayer_host(struct widget_instance *widget, struct event_rec
 	new game starts with as network.host_public says) */
 	multiplayer.game_private = !config_boolean("network.host_public");
 	p2p_set_hosting_public(multiplayer.mode == _multiplayer_mode_host_internet && !multiplayer.game_private);
+	multiplayer.cooperative_maximum_players_set = FALSE;
 	return ui_widget_port_host(widget, event, widget_deleted);
 }
 
@@ -2583,18 +2588,57 @@ static char const *const server_settings_gametype_rows[] =
 	"op_team_options",
 };
 
+/* the most players a co-op game hosted starts with (maximum_players') */
+#define COOPERATIVE_DEFAULT_PLAYERS 16
+/* Server Setup's help for co-op's FRIENDLY FIRE, by its choice (its
+help_strings, tools/port_settings.py) */
+#define COOPERATIVE_FRIENDLY_FIRE_HELP 12
+
+/* co-op's FRIENDLY FIRE's choices (network.coop_friendly_fire's values,
+port_settings.COOP_FRIENDLY_FIRE_VALUES, in this order) */
+static short const cooperative_friendly_fire_modes[] =
+{
+	_friendly_fire_off, _friendly_fire_on, _friendly_fire_shields_only, _friendly_fire_explosives_only
+};
+
 /* the most players Server Setup shows and sets: the multiplayer game's, or
-the co-op game's */
+the co-op game's (COOPERATIVE_DEFAULT_PLAYERS the first time in each game
+hosted: multiplayer_host) */
 static short *server_settings_maximum_players_index(void)
 {
+	short index;
+
 	if (!hosting_cooperative())
 		return &multiplayer.maximum_players_index;
 	if (!multiplayer.cooperative_maximum_players_set)
 	{
 		multiplayer.cooperative_maximum_players_index = NUMBEROF(maximum_players) - 1;
+		for (index = 0; index < NUMBEROF(maximum_players); index++)
+		{
+			if (maximum_players[index] == COOPERATIVE_DEFAULT_PLAYERS)
+				multiplayer.cooperative_maximum_players_index = index;
+		}
 		multiplayer.cooperative_maximum_players_set = TRUE;
 	}
 	return &multiplayer.cooperative_maximum_players_index;
+}
+
+/* Server Setup's LISTING, PRIVATE: the multiplayer game's (as
+network.host_public started it), or co-op's, saved in network.coop_public */
+static boolean server_settings_private(void)
+{
+	return hosting_cooperative() ? !config_boolean("network.coop_public") : multiplayer.game_private;
+}
+
+static void server_settings_private_set(boolean private_game)
+{
+	if (!hosting_cooperative())
+		multiplayer.game_private = private_game;
+	else if (private_game != server_settings_private() &&
+		!config_write("network.coop_public", private_game ? "false" : "true"))
+	{
+		platform_log("menus: could not write network.coop_public to config.toml");
+	}
 }
 
 /* "server settings init": the game's name (player 1's, else the one given
@@ -2619,7 +2663,8 @@ static boolean server_settings_initialize(struct widget_instance *list)
 	/* (PUBLIC or PRIVATE: this game's; the screen is made again on coming
 	back from an option's screen) */
 	if ((spinner = named(list, "listing_spinner", 0)) != NULL)
-		spinner->parameters.list.selected_index = multiplayer.game_private ? 1 : 0;
+		spinner->parameters.list.selected_index = server_settings_private() ? 1 : 0;
+	p2p_set_hosting_public(multiplayer.mode == _multiplayer_mode_host_internet && !server_settings_private());
 	return TRUE;
 }
 
@@ -2664,6 +2709,18 @@ static void server_settings_update(struct widget_instance *list)
 
 		for (row = 0; row < NUMBEROF(server_settings_gametype_rows); row++)
 			visible_set(named(list, server_settings_gametype_rows[row], 0), !cooperative);
+		/* co-op's FRIENDLY FIRE, in their place: its help is its choice's */
+		visible_set(named(list, "op_friendly_fire", 0), cooperative);
+		if (cooperative && (spinner = named(list, "friendly_fire_spinner", 0)) != NULL)
+		{
+			short choice = (short)PIN(spinner->parameters.list.selected_index, 0,
+				NUMBEROF(cooperative_friendly_fire_modes) - 1);
+			struct widget_instance *help = list->parameters.list.extended_description;
+
+			multiplayer.cooperative_friendly_fire = cooperative_friendly_fire_modes[choice];
+			if (help && list->focused_child == named(list, "op_friendly_fire", 0))
+				help->parameters.text_box.string_list_index = (short)(COOPERATIVE_FRIENDLY_FIRE_HELP + choice);
+		}
 	}
 	/* LISTING (an internet game's): PUBLIC, listed in everyone's server
 	browser, or PRIVATE, for this game. Its help is its choice's */
@@ -2674,7 +2731,7 @@ static void server_settings_update(struct widget_instance *list)
 		boolean public = spinner->parameters.list.selected_index == 0;
 		struct widget_instance *help = list->parameters.list.extended_description;
 
-		multiplayer.game_private = !public;
+		server_settings_private_set(!public);
 		p2p_set_hosting_public(public);
 		if (help && list->focused_child == named(list, "op_listing", 0))
 			help->parameters.text_box.string_list_index = (short)(10 + spinner->parameters.list.selected_index);
@@ -2715,9 +2772,13 @@ static boolean server_start(void)
 		text_field_end(TRUE);
 	network_game_server_port_set_settings(multiplayer.game_name,
 		maximum_players[PIN(*server_settings_maximum_players_index(), 0, NUMBEROF(maximum_players) - 1)]);
-	/* the gametype as Server Setup's options left it (co-op keeps its own) */
+	/* the gametype as Server Setup's options left it (co-op keeps its own,
+	and its FRIENDLY FIRE) */
 	if (hosting_cooperative())
+	{
 		gametype_setup_end();
+		network_game_server_port_set_cooperative_friendly_fire(multiplayer.cooperative_friendly_fire);
+	}
 	else if (!gametype_setup_apply())
 		return campaign_fail();
 	return global_network_game_server_get() != NULL;
