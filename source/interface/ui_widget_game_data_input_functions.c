@@ -857,6 +857,12 @@ static void multiplayer_type_menu_update_extended_description(
 	/* port: in the PC version's lists (port/assets/menus), the item's number
 	among those that take events, as its game counts them (past its labels) */
 	index = ui_widget_port_list_index(list_widget);
+	/* port: the PC version's list ends with its button bar (BACK), which takes
+	focus past the seven items and has no description: the last one stays shown
+	(as difficulty_select_menu_update_extended_description does) instead of
+	"<missing string>" */
+	if (pc_menu_tag(list_widget->definition_tag_index) && index >= 7)
+		index = NONE;
 
 	if (index != NONE)
 	{

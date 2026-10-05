@@ -692,6 +692,46 @@ static void merge_button(XINPUT_GAMEPAD *pad, int analog_index, BOOL down)
 		pad->bAnalogButtons[analog_index] = 0xff;
 }
 
+/* A trigger as a button: pressed past a third of its travel, released under
+a sixth, and then either 0 or 255. The game takes its analog buttons from the
+Xbox, whose threshold follows the value held (the press raises it to 32 under
+the value, the release is 64 over): a Hall-effect trigger (the Odin's) eased a
+little under full travel while firing let go of the button. */
+static int trigger_button(SDL_Gamepad *gamepad, SDL_GamepadAxis axis)
+{
+	enum { PRESS = 11000, RELEASE = 5500, TRACKED = 16 };
+	static struct
+	{
+		SDL_Gamepad *gamepad;
+		SDL_GamepadAxis axis;
+		BOOL down;
+	} states[TRACKED];
+	int index, free_index = -1;
+	int value = SDL_GetGamepadAxis(gamepad, axis);
+
+	for (index = 0; index < TRACKED; index++)
+	{
+		if (states[index].gamepad == gamepad && states[index].axis == axis)
+			break;
+		if (!states[index].gamepad && free_index < 0)
+			free_index = index;
+	}
+	if (index == TRACKED)
+	{
+		if (free_index < 0)
+			return value > PRESS ? 255 : 0;
+		index = free_index;
+		states[index].gamepad = gamepad;
+		states[index].axis = axis;
+		states[index].down = FALSE;
+	}
+	if (value > PRESS)
+		states[index].down = TRUE;
+	else if (value < RELEASE)
+		states[index].down = FALSE;
+	return states[index].down ? 255 : 0;
+}
+
 static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 {
 	static const struct
@@ -726,8 +766,8 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 	merge_button(pad, XINPUT_GAMEPAD_WHITE, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
 	merge_button(pad, XINPUT_GAMEPAD_BLACK, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
 
-	left_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * 255 / 32767;
-	right_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 255 / 32767;
+	left_trigger = trigger_button(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+	right_trigger = trigger_button(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
 	if (left_trigger > pad->bAnalogButtons[XINPUT_GAMEPAD_LEFT_TRIGGER])
 		pad->bAnalogButtons[XINPUT_GAMEPAD_LEFT_TRIGGER] = (BYTE)left_trigger;
 	if (right_trigger > pad->bAnalogButtons[XINPUT_GAMEPAD_RIGHT_TRIGGER])
