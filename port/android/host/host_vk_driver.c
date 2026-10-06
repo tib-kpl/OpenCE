@@ -6,7 +6,8 @@ Vulkan driver and hands out its vkGetInstanceProcAddr.
 
 display.vk_driver empty: the phone's own driver, libvulkan.so through the
 system loader. Otherwise the name of an adrenotools archive (a zip with a
-meta.json and the driver's library) in the app's external files folder. Android
+meta.json and the driver's library) in the app's external files folder. "auto" is the Turnip
+build chosen for this phone, "custom" the archive the player imported (vk_driver_custom.zip). Android
 loads a library only from the app's private storage, so the archive is
 unpacked into <internal storage>/vk_driver/<archive name>/ (again only when the
 archive's size or modification time differs from what was unpacked), its
@@ -746,6 +747,10 @@ PFN_vkGetInstanceProcAddr host_vk_driver_open(const char *setting, char *descrip
 		auto_resolve(auto_setting, sizeof(auto_setting));
 		setting = auto_setting;
 	}
+	/* "custom": the archive the player imported (LauncherActivity's graphics screen), copied to the data folder under
+	this name; a missing one is the phone's own driver, as for any archive that is not there */
+	else if (setting && !strcmp(setting, "custom"))
+		setting = "vk_driver_custom.zip";
 	if (setting && setting[0])
 	{
 		if (open_archive(setting, &library, custom_description, sizeof(custom_description), error, sizeof(error)))

@@ -14,4 +14,18 @@
                 android:value="true" />
         </intent>
     </shortcut>
+    <shortcut
+        android:shortcutId="graphics"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_graphics">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.halo.decomp"
+            android:targetClass="com.halo.decomp.LauncherActivity">
+            <extra
+                android:name="com.halo.decomp.GRAPHICS"
+                android:value="true" />
+        </intent>
+    </shortcut>
 </shortcuts>

@@ -47,6 +47,8 @@ public class LauncherActivity extends Activity {
     private static final int PICK_IMAGE = 1;
     /** set by the "Import disc image" launcher shortcut: import even with data in place */
     static final String EXTRA_IMPORT = "com.halo.decomp.IMPORT";
+    /** set by the "Graphics" launcher shortcut: GraphicsActivity (OpenGL ES or Vulkan, and its driver) */
+    static final String EXTRA_GRAPHICS = "com.halo.decomp.GRAPHICS";
     private boolean importRequested;
 
     private File dataRoot;
@@ -67,6 +69,11 @@ public class LauncherActivity extends Activity {
         passOnHardwareId();
         passOnInvite(getIntent());
         Updater.moveToVulkanDefault(dataRoot);
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_GRAPHICS, false)) {
+            startActivity(new Intent(this, GraphicsActivity.class));
+            finish();
+            return;
+        }
         importRequested = getIntent() != null && getIntent().getBooleanExtra(EXTRA_IMPORT, false);
         if (!importRequested && showFailedStart())
             return;

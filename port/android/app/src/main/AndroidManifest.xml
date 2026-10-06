@@ -65,6 +65,14 @@
             </intent-filter>
         </activity>
 
+        <!-- OpenGL ES or Vulkan, and which Vulkan driver (the launcher icon's
+             Graphics shortcut); started by LauncherActivity -->
+        <activity
+            android:name=".GraphicsActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode" />
+
         <activity
             android:name=".HaloActivity"
             android:exported="false"
