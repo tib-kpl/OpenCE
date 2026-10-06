@@ -83,7 +83,7 @@ public class HaloActivity extends SDLActivity {
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.END);
 
         params.setMargins(0, margin, margin, 0);
-        gear.setImageResource(android.R.drawable.ic_menu_preferences);
+        gear.setImageResource(R.drawable.ic_gear);
         gear.setScaleType(ImageView.ScaleType.FIT_CENTER);
         gear.setPadding(size / 6, size / 6, size / 6, size / 6);
         gear.setAlpha(0.3f);
