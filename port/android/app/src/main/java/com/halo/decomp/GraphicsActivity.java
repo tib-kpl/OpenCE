@@ -29,7 +29,7 @@ import java.util.zip.ZipFile;
  * or a driver the player imports (an adrenotools archive: a zip with a
  * meta.json and the driver's library, as Turnip releases are made).
  *
- * It is the launcher icon's "Graphics" shortcut, for a game that does not
+ * It is the "Halo Graphics" icon (and the main icon's "Graphics" shortcut, where the launcher shows one), for a game that does not
  * start with the current choice (the same choices are in Video Setup, in the
  * game). It writes display.renderer and display.vk_driver in config.toml
  * (port/linux/src/port_config.c); the game reads them when it starts. An
@@ -55,6 +55,8 @@ public class GraphicsActivity extends Activity {
         super.onCreate(savedInstanceState);
         dataRoot = getExternalFilesDir(null);
         config = dataRoot != null ? new File(dataRoot, "config.toml") : null;
+        // (done before the choice is made: the launcher does it once, and a "gl" chosen here must stay)
+        Updater.moveToVulkanDefault(dataRoot);
         buildInterface();
     }
 

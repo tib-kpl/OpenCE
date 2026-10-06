@@ -2,4 +2,5 @@
 <resources>
     <string name="shortcut_import">Importer une image disque</string>
     <string name="shortcut_graphics">Graphiques</string>
+    <string name="graphics_launcher">Halo Graphiques</string>
 </resources>

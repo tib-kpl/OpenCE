@@ -65,13 +65,28 @@
             </intent-filter>
         </activity>
 
-        <!-- OpenGL ES or Vulkan, and which Vulkan driver (the launcher icon's
-             Graphics shortcut); started by LauncherActivity -->
+        <!-- OpenGL ES or Vulkan, and which Vulkan driver (the Halo Graphics icon
+             below, or the launcher icon's Graphics shortcut through LauncherActivity) -->
         <activity
             android:name=".GraphicsActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode" />
+
+        <!-- a second icon, "Halo Graphics", for launchers that show no
+             shortcut on a long press -->
+        <activity-alias
+            android:name=".GraphicsLauncher"
+            android:targetActivity=".GraphicsActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/graphics_launcher">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".HaloActivity"

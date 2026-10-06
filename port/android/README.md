@@ -167,8 +167,10 @@ below the game's version number (`01.01.14.2342`, at the lower right) says
 
 ### Import a driver or switch to OpenGL ES
 
-Long press the game's icon and choose **Graphics** (**Graphiques**). The
-screen has plain buttons, for a gamepad as well:
+Open the **Halo Graphics** (**Halo Graphiques**) icon, next to the game's in the
+list of apps (or long press the game's icon and choose **Graphics**, on a
+launcher that shows shortcuts). The screen has plain buttons, for a gamepad as
+well:
 
 - **OpenGL ES (no Vulkan)**: the game does not use the Vulkan renderer.
 - **Vulkan, the phone's own driver**, or **Vulkan, Turnip (Adreno GPU)**.
