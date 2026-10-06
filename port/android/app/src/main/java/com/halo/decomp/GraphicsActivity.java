@@ -131,7 +131,7 @@ public class GraphicsActivity extends Activity {
             startActivityForResult(intent, PICK_DRIVER);
         });
         button(layout, t("Lancer le jeu", "Start the game"), () -> {
-            startActivity(new Intent(this, LauncherActivity.class));
+            startActivity(new Intent(this, LauncherActivity.class).putExtra(LauncherActivity.EXTRA_NO_HINT, true));
             finish();
         });
 

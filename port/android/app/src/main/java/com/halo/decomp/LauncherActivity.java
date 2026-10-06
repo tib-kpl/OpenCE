@@ -49,6 +49,8 @@ public class LauncherActivity extends Activity {
     static final String EXTRA_IMPORT = "com.halo.decomp.IMPORT";
     /** set by the "Graphics" launcher shortcut: GraphicsActivity (OpenGL ES or Vulkan, and its driver) */
     static final String EXTRA_GRAPHICS = "com.halo.decomp.GRAPHICS";
+    /** set by GraphicsActivity's "Start the game": no graphics hint this time */
+    static final String EXTRA_NO_HINT = "com.halo.decomp.NO_HINT";
     private boolean importRequested;
 
     private File dataRoot;
@@ -78,10 +80,61 @@ public class LauncherActivity extends Activity {
         if (!importRequested && showFailedStart())
             return;
         if (haveData() && !importRequested) {
-            startGameAfterDriver();
+            if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_NO_HINT, false))
+                startGameAfterDriver();
+            else
+                showGraphicsHint();
             return;
         }
         buildInterface();
+    }
+
+    /** the game starts when this has run out, unless the player asked for the graphics screen */
+    private boolean hintOver;
+    private static final int HINT_MILLISECONDS = 2000;
+
+    /**
+     * Before the game starts, two seconds with a line saying that Y (or a touch) opens the graphics
+     * screen (GraphicsActivity: OpenGL ES or Vulkan, and the Vulkan driver, also one to import). The launcher
+     * that starts the game may show no second icon or shortcut, and this is the way to that screen.
+     */
+    private void showGraphicsHint() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setGravity(Gravity.CENTER);
+        layout.setBackgroundColor(Color.rgb(12, 16, 20));
+        TextView hint = new TextView(this);
+        hint.setText(t("Y ou toucher l'écran : réglages graphiques (OpenGL, Vulkan, pilote)",
+            "Y or touch the screen: graphics settings (OpenGL, Vulkan, driver)"));
+        hint.setTextColor(Color.rgb(200, 205, 210));
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        hint.setGravity(Gravity.CENTER);
+        layout.addView(hint);
+        layout.setOnClickListener(v -> openGraphics());
+        setContentView(layout);
+        handler.postDelayed(() -> {
+            if (!hintOver) {
+                hintOver = true;
+                startGameAfterDriver();
+            }
+        }, HINT_MILLISECONDS);
+    }
+
+    private void openGraphics() {
+        if (hintOver)
+            return;
+        hintOver = true;
+        startActivity(new Intent(this, GraphicsActivity.class));
+        finish();
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
+        if (keyCode == android.view.KeyEvent.KEYCODE_BUTTON_Y && !hintOver && !gameStarted) {
+            openGraphics();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     /**
@@ -230,6 +283,14 @@ public class LauncherActivity extends Activity {
                 buildInterface();
         });
         layout.addView(again, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT));
+        Button graphics = new Button(this);
+        graphics.setText(t("Graphiques (OpenGL, Vulkan, pilote)", "Graphics (OpenGL, Vulkan, driver)"));
+        graphics.setOnClickListener(v -> {
+            startActivity(new Intent(this, GraphicsActivity.class));
+            finish();
+        });
+        layout.addView(graphics, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT));
         TextView details = new TextView(this);
         details.setText(report.length() > 0 ? report.toString() : t("(aucun détail)", "(no details)"));
