@@ -398,12 +398,16 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 		{
 			const char *platform = attributes[index + 1];
 
-			if (strcmp(platform, "desktop") && strcmp(platform, "android"))
+			if (strcmp(platform, "desktop") && strcmp(platform, "android") && strcmp(platform, "switch"))
 			{
-				reader_error(reader, "platform=\"%s\" is not \"desktop\" or \"android\"", platform);
+				reader_error(reader, "platform=\"%s\" is not \"desktop\", \"android\" or \"switch\"", platform);
 				return 1;
 			}
-#ifdef HALO_ANDROID
+			/* (the Switch's game is built as Android's, with HALO_SWITCH too:
+			"android" is the Android app's) */
+#if defined(HALO_SWITCH)
+			return !strcmp(platform, "switch");
+#elif defined(HALO_ANDROID)
 			return !strcmp(platform, "android");
 #else
 			return !strcmp(platform, "desktop");
@@ -998,6 +1002,10 @@ static struct
 	int failed;
 } art[MAXIMUM_ART];
 static long art_count;
+#if defined(HALO_SWITCH) || defined(HALO_ANDROID)
+/* changed whenever the art registered changes (menu_art_serial) */
+static unsigned long art_serial = 1;
+#endif
 
 void halo_menus_art_register(void const *texture, char const *png)
 {
@@ -1031,6 +1039,9 @@ void halo_menus_art_register(void const *texture, char const *png)
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
 	art[index].png = strdup(png);
+#if defined(HALO_SWITCH) || defined(HALO_ANDROID)
+	art_serial++;
+#endif
 }
 
 void halo_menus_art_forget(void)
@@ -1044,6 +1055,9 @@ void halo_menus_art_forget(void)
 			glDeleteTextures(1, &art[index].texture);
 	}
 	art_count = 0;
+#if defined(HALO_SWITCH) || defined(HALO_ANDROID)
+	art_serial++;
+#endif
 }
 
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
@@ -1074,3 +1088,28 @@ unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 	*levels = art[index].levels;
 	return art[index].texture;
 }
+
+#if defined(HALO_SWITCH) || defined(HALO_ANDROID)
+unsigned long menu_art_serial(void)
+{
+	return art_serial;
+}
+
+const char *menu_art_name(unsigned long data)
+{
+	long index;
+
+	for (index = 0; index < art_count; index++)
+	{
+		if (art[index].data == data)
+			return art[index].png;
+	}
+	return NULL;
+}
+
+const unsigned char *menu_art_png(const char *name, unsigned long *size)
+{
+	*size = 0;
+	return file_data(name, size);
+}
+#endif

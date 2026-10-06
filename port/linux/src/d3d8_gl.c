@@ -22,6 +22,7 @@ Conventions carried over from the Xbox:
 */
 
 #include "xgpu.h"
+#include "halo_port_window.h"
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
@@ -594,19 +595,7 @@ xgpu_gl_state_invalidate, after which every value is set again. Unknown
 values are all ones, which no real value matches (floats become NaN, which
 compares unequal to everything). */
 
-#ifdef HALO_ANDROID
-struct attribute_pointer
-{
-	GLuint buffer;
-	GLint size;
-	GLenum type;
-	GLboolean normalized;
-	GLboolean integer;
-	GLsizei stride;
-	unsigned long offset;
-};
-#else
-/* desktop GL (4.3) separates an attribute's format from the buffer it
+/* GL 4.3 and ES 3.1 separate an attribute's format from the buffer it
 reads: the attributes of a stream share one binding, so a draw that moves
 the stream rebinds it once instead of pointing each attribute again */
 struct attribute_format
@@ -626,9 +615,8 @@ struct vertex_binding
 	GLsizei stride;
 };
 
-/* a binding per stream (setup_streams); GL has at least 16 */
+/* a binding per stream (setup_streams); GL and ES 3.1 have at least 16 */
 #define VERTEX_BINDING_COUNT 16
-#endif
 
 static struct
 {
@@ -659,12 +647,8 @@ static struct
 	GLuint array_buffer;
 	GLuint element_array_buffer;
 	unsigned char attribute_enabled[XGPU_VERTEX_ATTRIBUTE_COUNT];
-#ifdef HALO_ANDROID
-	struct attribute_pointer attribute_pointers[XGPU_VERTEX_ATTRIBUTE_COUNT];
-#else
 	struct attribute_format attribute_formats[XGPU_VERTEX_ATTRIBUTE_COUNT];
 	struct vertex_binding vertex_bindings[VERTEX_BINDING_COUNT];
-#endif
 	/* a disabled attribute's value; kind 1 is the integer zero */
 	unsigned char attribute_value_kind[XGPU_VERTEX_ATTRIBUTE_COUNT];
 	float attribute_values[XGPU_VERTEX_ATTRIBUTE_COUNT][4];
@@ -752,39 +736,11 @@ static void state_element_array_buffer(GLuint buffer)
 vertex is stride bytes on from the one before it, starting at
 buffer_offset, with the attribute relative_offset bytes into it.
 Attributes given the same binding share the buffer, its offset and its
-stride (on desktop GL; ES points each attribute on its own). */
+stride (a stride of 0 is the same element for every vertex, as Direct3D
+means it: glVertexAttribPointer took 0 as tightly packed). */
 static void state_attribute_stream(GLuint index, GLuint binding, GLuint buffer, GLint size, GLenum type,
 	GLboolean normalized, BOOL integer, GLsizei stride, unsigned long buffer_offset, unsigned long relative_offset)
 {
-#ifdef HALO_ANDROID
-	struct attribute_pointer *pointer = &gl_state.attribute_pointers[index];
-	unsigned long offset = buffer_offset + relative_offset;
-
-	(void)binding;
-	if (gl_state.attribute_enabled[index] != 1)
-	{
-		gl_state.attribute_enabled[index] = 1;
-		glEnableVertexAttribArray(index);
-	}
-	if (pointer->buffer == buffer && pointer->size == size && pointer->type == type &&
-		pointer->normalized == normalized && pointer->integer == (integer ? GL_TRUE : GL_FALSE) &&
-		pointer->stride == stride && pointer->offset == offset)
-	{
-		return;
-	}
-	state_array_buffer(buffer);
-	if (integer)
-		glVertexAttribIPointer(index, size, type, stride, (const void *)offset);
-	else
-		glVertexAttribPointer(index, size, type, normalized, stride, (const void *)offset);
-	pointer->buffer = buffer;
-	pointer->size = size;
-	pointer->type = type;
-	pointer->normalized = normalized;
-	pointer->integer = integer ? GL_TRUE : GL_FALSE;
-	pointer->stride = stride;
-	pointer->offset = offset;
-#else
 	struct attribute_format *format = &gl_state.attribute_formats[index];
 	struct vertex_binding *vertex_binding = &gl_state.vertex_bindings[binding];
 
@@ -818,7 +774,6 @@ static void state_attribute_stream(GLuint index, GLuint binding, GLuint buffer, 
 		vertex_binding->offset = buffer_offset;
 		vertex_binding->stride = stride;
 	}
-#endif
 }
 
 /* disables the attribute, which then reads value, or the integer zero */
@@ -1979,6 +1934,17 @@ static GLuint visibility_unscaled(GLuint samples, DWORD index)
 }
 
 #endif
+
+/* the main menu's line under the version number (menu_functions.c) */
+char const *d3d8_renderer_description(void)
+{
+#ifdef HALO_ANDROID
+	return "OpenGL ES";
+#else
+	return "OpenGL";
+#endif
+}
+
 HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULONGLONG *time_stamp)
 {
 	GLuint available = 0, samples = 0;
@@ -4020,7 +3986,10 @@ void WINAPI D3DDevice_SetStreamSource(UINT stream_number, D3DVertexBuffer *strea
 void WINAPI D3DDevice_SetIndices(D3DIndexBuffer *index_data, UINT base_vertex_index)
 {
 	device.base_vertex_index = base_vertex_index;
-	D3D__IndexData = index_data ? (WORD *)index_data->Data : NULL;
+	/* an index buffer's Data is a window address, not an offset within one:
+	from a map file it is the address the window was linked at, and from
+	CreateIndexBuffer ordinary memory, which the move leaves alone */
+	D3D__IndexData = index_data ? (WORD *)PORT_WINDOW_REBASE(index_data->Data) : NULL;
 }
 
 void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_vertex, UINT vertex_count)
@@ -4375,11 +4344,15 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	if (screenshot_every < 0)
 		screenshot_every = config_integer("debug.screenshot_every");
 
-	if (device.gl_ready)
-	{
-		struct render_target_entry *back_buffer = render_target_get(&device.back_buffer);
-		int window_width, window_height, width, height, x, y;
+	/* the back buffer's memory comes out of the window. If the window could
+	not give it, there is nothing to draw into and every line below would
+	fault on it, so the frame is counted and presented without drawing */
+	struct render_target_entry *back_buffer =
+		device.gl_ready ? render_target_get(&device.back_buffer) : NULL;
+	int window_width, window_height, width, height, x, y;
 
+	if (back_buffer)
+	{
 		if (trace_frame())
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
 				back_buffer->target.texture);

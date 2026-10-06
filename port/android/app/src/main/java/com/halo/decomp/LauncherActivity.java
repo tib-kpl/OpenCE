@@ -36,6 +36,12 @@ import java.nio.channels.FileChannel;
  * the game (.xiso or .iso, any version) with the system file picker, and
  * copies its maps folder there (XisoExtractor), as the desktop games do; or
  * they can push the maps folder with adb.
+ *
+ * Before the game starts, on an Adreno whose data folder lacks it, the
+ * open-source Vulkan driver for its series is downloaded
+ * (Updater.driverDownload), its progress on screen, so that the game finds
+ * it when the player turns it on (display.vk_driver = "auto"). A failed download does not stop the game,
+ * and "Skip" starts it at once.
  */
 public class LauncherActivity extends Activity {
     private static final int PICK_IMAGE = 1;
@@ -60,11 +66,12 @@ public class LauncherActivity extends Activity {
             new File(dataRoot, "maps").mkdirs();
         passOnHardwareId();
         passOnInvite(getIntent());
+        Updater.moveToVulkanDefault(dataRoot);
         importRequested = getIntent() != null && getIntent().getBooleanExtra(EXTRA_IMPORT, false);
         if (!importRequested && showFailedStart())
             return;
         if (haveData() && !importRequested) {
-            startGame();
+            startGameAfterDriver();
             return;
         }
         buildInterface();
@@ -211,7 +218,7 @@ public class LauncherActivity extends Activity {
         again.setText(t("Relancer le jeu", "Start the game again"));
         again.setOnClickListener(v -> {
             if (haveData())
-                startGame();
+                startGameAfterDriver();
             else
                 buildInterface();
         });
@@ -306,11 +313,102 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    private boolean gameStarted;
+
     private void startGame() {
+        if (gameStarted)
+            return;
+        gameStarted = true;
         // the menus in French when the maps are (MenuTranslation)
         MenuTranslation.sync(this, dataRoot);
         startActivity(new Intent(this, HaloActivity.class));
         finish();
+    }
+
+    /* ---------- the Vulkan driver, before the game */
+
+    private boolean driverStarted;
+
+    /** the game started once this phone's driver is downloaded, when it has one and lacks it */
+    private void startGameAfterDriver() {
+        if (driverStarted)
+            return;
+        driverStarted = true;
+        if (Updater.driverReady(dataRoot)) {
+            startGame();
+            return;
+        }
+        new Thread(() -> {
+            Updater.Choice choice = Updater.driverChoose(dataRoot);
+
+            if (choice == null || choice.driver == null || Updater.driverPresent(dataRoot, choice.driver)) {
+                handler.post(this::startGame);
+                return;
+            }
+            handler.post(() -> buildDriverInterface(choice));
+            try {
+                Updater.driverDownload(dataRoot, choice.driver, choice.gpu, (received, total) -> report(
+                    "Downloading the driver... (" + (received >> 10) + " of " + (total >> 10) + " KB)",
+                    total > 0 ? (int) (received * 1000 / total) : 0));
+                handler.post(this::startGame);
+            } catch (Exception exception) {
+                report("The driver could not be downloaded: " + exception.getMessage()
+                    + "\nStarting the game. The download is tried again at the next start.", -1);
+                handler.postDelayed(this::startGame, 3000);
+            }
+        }, "driver download").start();
+    }
+
+    private void buildDriverInterface(Updater.Choice choice) {
+        if (gameStarted)
+            return;
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setGravity(Gravity.CENTER);
+        layout.setPadding(dp(48), dp(24), dp(48), dp(24));
+        layout.setBackgroundColor(Color.rgb(12, 16, 20));
+
+        TextView title = new TextView(this);
+        title.setText("Downloading the Vulkan driver");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
+        title.setGravity(Gravity.CENTER);
+        layout.addView(title);
+
+        TextView message = new TextView(this);
+        message.setText("This phone's GPU (" + choice.gpu + ") can run the game's Vulkan renderer on Turnip, the "
+            + "open-source Vulkan driver for Adreno GPUs. It is downloaded once into the game's data folder (about "
+            + ((choice.driver.size + (1 << 19)) >> 20) + " MB), and is not used until you turn it on: set vk_driver = "
+            + "\"auto\" in the [display] section of config.toml (the README says how).");
+        message.setTextColor(Color.rgb(200, 205, 210));
+        message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        message.setGravity(Gravity.CENTER);
+        message.setPadding(0, dp(16), 0, dp(16));
+        layout.addView(message);
+
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(1000);
+        LinearLayout.LayoutParams progressLayout = new LinearLayout.LayoutParams(dp(480),
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        progressLayout.topMargin = dp(16);
+        layout.addView(progress, progressLayout);
+
+        status = new TextView(this);
+        status.setText("Connecting...");
+        status.setTextColor(Color.rgb(160, 200, 160));
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(0, dp(8), 0, dp(16));
+        layout.addView(status);
+
+        // (the download goes on; the game starting first uses the phone's driver for this run)
+        Button skip = new Button(this);
+        skip.setText("Skip");
+        skip.setOnClickListener(v -> startGame());
+        layout.addView(skip, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        setContentView(layout);
+        skip.requestFocus();
     }
 
     private int dp(float value) {
@@ -388,7 +486,7 @@ public class LauncherActivity extends Activity {
         super.onResume();
         // data pushed with adb while this screen was open
         if (pick != null && pick.isEnabled() && haveData() && !importRequested)
-            startGame();
+            startGameAfterDriver();
     }
 
     @Override
@@ -421,8 +519,9 @@ public class LauncherActivity extends Activity {
 
     private void report(String text, int permille) {
         handler.post(() -> {
-            status.setText(text);
-            if (permille >= 0)
+            if (status != null)
+                status.setText(text);
+            if (permille >= 0 && progress != null)
                 progress.setProgress(permille);
         });
     }
@@ -452,7 +551,7 @@ public class LauncherActivity extends Activity {
             }
             handler.post(() -> {
                 if (haveData()) {
-                    startGame();
+                    startGameAfterDriver();
                 } else {
                     fail("The extraction finished but maps/ui.map is missing.");
                 }

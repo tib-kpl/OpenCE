@@ -93,6 +93,22 @@ static const struct config_setting config_settings[] =
 	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_android,
 		"Columns of the 480-line picture: 0 for the display's shape, 640 for the\n"
 		"Xbox's 4:3." },
+#ifndef HALO_SWITCH
+	/* read by the Android host (port/android/host/host_vk_driver.c) */
+	{ "display.vk_driver", _config_string, "\"\"", "HALO_VK_DRIVER", _environment_value, _platform_android,
+		"The Vulkan driver the Vulkan renderer runs on: empty for the phone's own;\n"
+		"\"auto\" for Turnip, the open-source driver, on an Adreno GPU (the app\n"
+		"downloads the build for its series; the phone's own on any other GPU); or the\n"
+		"name of a driver archive (an adrenotools zip) left in the game's folder. One\n"
+		"that does not load is logged and the phone's own is used." },
+	/* read by the Android host before the game starts, to choose the game
+	image built with that renderer (port/android/VULKAN.md) */
+	{ "display.renderer", _config_string, "\"vulkan\"", "HALO_RENDERER", _environment_value, _platform_android,
+		"How the game draws: \"vulkan\" (over display.vk_driver; OpenGL ES if Vulkan\n"
+		"cannot start) or \"gl\" (OpenGL ES over the phone's driver). Takes effect the\n"
+		"next time the game starts. See the Android README, \"Graphics: OpenGL ES and\n"
+		"Vulkan\"." },
+#endif
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
 	{ "display.max_fps", _config_integer, "0", "HALO_MAX_FPS", _environment_value, _platform_desktop,
@@ -422,6 +438,34 @@ static const struct config_setting config_settings[] =
 	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android,
 		"Log where every game thread is this often, in seconds (read by the\n"
 		"app, port/android/host/host_debug.c); 0 never." },
+#ifdef HALO_SWITCH
+	{ "debug.profiler", _config_boolean, "false", "HALO_PROFILER", _environment_set_is_true, _platform_android,
+		"Profile the game: sample where its threads are (debug.profile_hz times a\n"
+		"second) and write the counts to the profile folder every 20 s, for\n"
+		"tools/switch_profile.py. Takes effect the next start." },
+	{ "debug.profile_hz", _config_integer, "500", "HALO_PROFILE_HZ", _environment_value, _platform_android,
+		"The profiler's samples a second, when debug.profiler is true." },
+#endif
+#ifndef HALO_SWITCH
+	{ "debug.vk_present_marker", _config_boolean, "false", "HALO_VK_PRESENT_MARKER", _environment_set_is_true, _platform_android,
+		"Under the Vulkan renderer, draw a red square at the top left and a green one\n"
+		"at the top right of the picture, so that a screenshot shows which way up it is." },
+	{ "debug.vk_self_test", _config_boolean, "false", "HALO_VK_SELF_TEST", _environment_set_is_true, _platform_android,
+		"Under the Vulkan renderer, try the renderer's clears and the copying of a\n"
+		"draw's data on small targets of its own at start-up; the log says ok or FAILED." },
+	/* the Android app's Vulkan probe and profiler (port/android/host); the Switch's
+	profiler has its own debug.profile_hz above */
+	{ "debug.vk_probe", _config_string, "\"\"", "HALO_VK_PROBE", _environment_value, _platform_android,
+		"Run the Vulkan probe (port/android/host/host_vk_probe.c) instead of the\n"
+		"game: \"all\", or a list of caps, memory, compile, pipelines, draw, present;\n"
+		"empty runs the game. It writes vk_probe.txt." },
+	{ "debug.vk_validation", _config_boolean, "false", "HALO_VK_VALIDATION", _environment_set_is_true, _platform_android,
+		"Turn on Vulkan's validation layer in the probe and in the Vulkan renderer,\n"
+		"when the app carries it." },
+	{ "debug.profile_hz", _config_integer, "0", "HALO_PROFILE_HZ", _environment_value, _platform_android,
+		"Sample every game thread this many times a second into profile.bin\n"
+		"(port/android/host/host_debug.c); 0 off." },
+#endif
 };
 
 #define NUMBER_OF_CONFIG_SETTINGS (sizeof(config_settings) / sizeof(config_settings[0]))

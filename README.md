@@ -1,4 +1,4 @@
-# Halo: Combat Evolved for Linux, Windows and Android
+# Halo: Combat Evolved for Linux, Windows, Android and the Nintendo Switch
 
 > [!NOTE]
 > **Fork pour la version française (Android)** de [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
@@ -35,7 +35,7 @@
 [![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
 
 This project is a port of the Halo: Combat Evolved decompilation to Linux,
-Windows and Android. The decompilation is of the Xbox build 2342
+Windows, Android and the Nintendo Switch. The decompilation is of the Xbox build 2342
 (`cachebeta.exe`, SHA-256
 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
 
@@ -46,14 +46,15 @@ That project is a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo).
 
 ## Download
 
-GitHub Actions builds the game for each commit. These links download the
-builds of the latest release:
+GitHub Actions builds the game for Android and the Switch for each commit
+(for Linux and Windows, see the upstream project,
+[OpenCE](https://github.com/OpenCommunityEdition/OpenCE)). These links
+download the builds of the latest release:
 
 | Platform | Release | Debug |
 | --- | --- | --- |
-| Linux | [halo-linux-release.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-linux-release.zip) | [halo-linux-debug.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-linux-debug.zip) |
-| Windows | [halo-windows-release.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-windows-release.zip) | [halo-windows-debug.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-windows-debug.zip) |
-| Android | [halo-android-release.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/OpenCommunityEdition/OpenCE/releases/latest/download/halo-android-debug.zip) |
+| Android | [halo-android-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-android-debug.zip) |
+| Nintendo Switch | [halo-switch-release.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-release.zip) | [halo-switch-debug.zip](https://github.com/thelinkin3000/halo-ce-universal/releases/latest/download/halo-switch-debug.zip) |
 
 Use the release build to play. The debug build stops at the first failed
 assertion and writes it to the log. Use the debug build to find and report
@@ -63,8 +64,8 @@ The game updates itself. At start-up it looks for a newer release, and asks
 if you want to install it. Refer to "Updates" in
 [port/linux/README.md](port/linux/README.md#updates).
 
-Each build of the `main` branch that passes on all three platforms is a new
-release. The [Releases](https://github.com/OpenCommunityEdition/OpenCE/releases)
+Each build of the `main` branch that passes on all four platforms is a new
+release. The [Releases](https://github.com/thelinkin3000/halo-ce-universal/releases)
 page keeps the last five releases. If the latest build has a problem, get
 an older build from that page.
 
@@ -84,6 +85,20 @@ On Linux and Windows, the game puts `maps/` next to the executable. On
 Android, copy the disc image to the phone first. The app puts `maps/` in its
 data folder. Refer to [port/android/README.md](port/android/README.md).
 
+On the Nintendo Switch there is no file browser to pick the image with, so put
+the disc image on the card yourself:
+
+```
+sdmc:/switch/halo/halo.iso
+```
+
+The game finds it there on the first run and unpacks `maps/` itself, which
+takes a few minutes and writes about 1.7 GB, so leave the card in and keep that
+much space free. The log says which file it is copying and how far it has got.
+If you would rather unpack it yourself, `maps/` still works: put it at
+`sdmc:/switch/halo/maps/` and the game uses it as it is. Refer to
+[port/switch/README.md](port/switch/README.md).
+
 ## Platforms
 
 Each platform has its own instructions:
@@ -92,10 +107,31 @@ Each platform has its own instructions:
 | --- | --- |
 | Linux (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/linux/README.md](port/linux/README.md) |
 | Windows (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/windows/README.md](port/windows/README.md) |
-| Android (arm64 app, OpenGL ES 3, SDL3) | [port/android/README.md](port/android/README.md) |
+| Android (arm64 app, Vulkan or OpenGL ES 3, SDL3) | [port/android/README.md](port/android/README.md) |
+| Nintendo Switch (homebrew program, deko3d, SDL2) | [port/switch/README.md](port/switch/README.md) |
 
 The Linux README also gives the controls, the settings and the multiplayer
 functions. These are almost the same on all platforms.
+
+## Graphics backends
+
+On Android, the game can draw with Vulkan (the default) or with OpenGL ES.
+To change it, open **SETTINGS** from the main menu, choose a profile, and
+open **VIDEO SETUP**:
+
+- **GRAPHICS BACKEND:** `VULKAN` or `OPENGL`.
+- **VULKAN DRIVER** (only when the backend is `VULKAN`): `STOCK`, the
+  phone's own driver, or `TURNIP`, the open-source Mesa driver for
+  Qualcomm Adreno GPUs, which the app downloads.
+
+Select **OK**, then close the game and start it again: the backend and the
+driver change only when the game starts. The line below the version number
+in the main menu shows the backend and driver that run. For more, such as
+a driver archive of your own, refer to "Graphics: OpenGL ES and Vulkan" in
+[port/android/README.md](port/android/README.md).
+
+The Switch draws with deko3d, the console's own graphics interface, and
+has no backend setting. Linux and Windows draw with OpenGL.
 
 ## Multiplayer
 
@@ -127,6 +163,23 @@ To build the game:
 | `ninja linux` | `build/linux/halo` |
 | `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` |
 | `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` |
+| `ninja switch` | `build/switch/halo.nro` and `build/switch/halo_guest.elf` |
+
+The Switch needs two toolchains and neither can be replaced by the other.
+devkitPro builds the host (`devkitA64`, `libnx`, `switch-sdl2`,
+`switch-mesa`, `switch-libdrm_nouveau`), and the Android NDK builds the game
+image, which is ILP32 AArch64 - 32-bit pointers, because the Xbox data
+formats embed them and have to keep their layout. devkitA64 cannot build it,
+being LP64 only. So the Switch build wants the same NDK as the Android build,
+found as it is there, plus devkitPro:
+
+```
+sudo dkp-pacman -S --needed devkitA64 libnx switch-sdl2 switch-mesa switch-libdrm_nouveau
+```
+
+`configure.py` finds devkitPro through `DEVKITPRO`, or `/opt/devkitpro`, or
+`~/devkitpro`. Both files are needed to run: the NRO is the program, and the
+ELF is the game image it loads from the card.
 
 If you enter `ninja` without a target, ninja builds the game for the
 computer that you use.

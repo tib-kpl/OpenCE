@@ -2,7 +2,9 @@ name: Build
 
 # Debug and release builds of the native ports (Linux, Windows, Android) for
 # every pushed commit, uploaded as artifacts. tools/ci_build.py does each
-# build; see it for the options.
+# build; see it for the options. This fork builds Android and the Switch
+# only: the Linux and Windows jobs are kept, upstream's, but do not run
+# (if: false), and the release and the notice go without them.
 #
 # Kept cheap:
 # - one job per platform builds both configurations, so its set-up (tools,
@@ -42,6 +44,8 @@ jobs:
   linux:
     # Arch Linux has what the build needs as packages: clang 22 (for the
     # profile-guided optimisation in pgo/) and 32-bit SDL 3.
+    # (not built by this fork: see the top)
+    if: false
     runs-on: ubuntu-24.04
     container: archlinux:latest
     timeout-minutes: 40
@@ -167,6 +171,8 @@ jobs:
   windows:
     # The runner image has LLVM, Python and Visual Studio's x86 libraries and
     # Windows SDK.
+    # (not built by this fork: see the top)
+    if: false
     runs-on: windows-2025
     timeout-minutes: 40
     defaults:
@@ -235,14 +241,128 @@ jobs:
           path: dist/halo-windows-release-symbols
           retention-days: 3
 
+  switch:
+    # off in this fork (Android is the target): the Switch port stays in the tree
+    if: ${{ false }}
+    # Two toolchains and neither can be replaced by the other: devkitA64 builds
+    # the host, and the Android NDK builds the guest, which is ILP32 AArch64
+    # (32-bit pointers, because the Xbox data formats embed them) and so
+    # cannot be built by devkitA64 at all.
+    #
+    # It runs in devkitPro's own image. Their package hosts
+    # (apt.devkitpro.org, pkg.devkitpro.org) answer 403 to a GitHub runner and
+    # to a plain curl - everything, the repository's root included - so
+    # installing devkitPro, or its SDL2 and Mesa, from them does not work here.
+    # The image carries the toolchain; the Android NDK comes from Google, which
+    # does answer.
+    runs-on: ubuntu-24.04
+    container: devkitpro/devkita64:latest
+    timeout-minutes: 60
+    env:
+      DEVKITPRO: /opt/devkitpro
+      DEVKITA64: /opt/devkitpro/devkitA64
+    steps:
+      # Prove the image has what the host links against, and say which is
+      # missing if it does not. Better a clear message now than a link error
+      # two steps later that reads like a build problem.
+      - name: Check the toolchain
+        run: |
+          echo "--- /opt/devkitpro ---"
+          ls /opt/devkitpro
+          echo "--- portlibs/switch/lib ---"
+          ls /opt/devkitpro/portlibs/switch/lib 2>&1 | head -20 || true
+          for library in libSDL2 libGLESv2 libEGL; do
+            if [ -f "/opt/devkitpro/portlibs/switch/lib/$library.a" ]; then
+              echo "found $library"
+            else
+              echo "::error::$library is not in the image; the host will not link without it"
+            fi
+          done
+          if [ -f /opt/devkitpro/libnx/lib/libdeko3d.a ]; then
+            echo "found libdeko3d"
+          else
+            echo "::error::libdeko3d is not in the image; the host will not link without it"
+          fi
+
+      # The guest needs the NDK, which the image does not carry and the
+      # runner's own SDK is not visible from inside a container. Android
+      # publishes the whole NDK as one archive, so it is fetched and pointed
+      # at with ANDROID_NDK_HOME, which is what configure.py reads.
+      - name: Install the Android NDK
+        run: |
+          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q ndk.zip -d /opt
+          rm ndk.zip
+          # ANDROID_NDK_HOME only. Its bin directory is deliberately *not* on
+          # PATH: musl is compiled by clang, and the NDK's clang 17 does not
+          # know -fno-define-target-os-macros, which musl's Apple-target
+          # configuration passes. The runner's own clang (18) does. The build
+          # calls the NDK's llvm-ar and ld.lld by path, so nothing needs it
+          # on PATH.
+          echo "ANDROID_NDK_HOME=/opt/android-ndk-r26d" >> "$GITHUB_ENV"
+
+      - name: Install the build tools
+        run: |
+          # The guest is compiled for arm64_32, which only recent clang knows
+          # well; Debian's clang 14 emits indirect branches the ELF assembler
+          # will not take, so LLVM's own builds are used instead.
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+            gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-22 main" \
+            > /etc/apt/sources.list.d/llvm.list
+          apt-get update
+          # (meson, bison, flex, mako and git: UAM, deko3d's shader compiler,
+          # fetched and built into the program for the deko3d renderer -
+          # without them the build leaves it out, and that renderer can
+          # compile no shader on the console)
+          apt-get install -y --no-install-recommends python3 ninja-build ccache clang-22 unzip curl zip gnupg \
+            meson bison flex python3-mako git
+          clang-22 --version | head -1
+          ln -sf /usr/bin/clang-22 /usr/local/bin/clang
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-switch-${{ github.sha }}
+          restore-keys: ccache-switch-
+
+      # musl for the guest, which configure.py fetches
+      - uses: actions/cache@v4
+        with:
+          path: build/android/third_party
+          key: android-third-party-${{ hashFiles('tools/android_build.py') }}
+
+      - name: Debug
+        run: python3 tools/ci_build.py switch debug
+
+      - name: Release
+        run: python3 tools/ci_build.py switch release
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-switch-debug
+          path: dist/halo-switch-debug
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-switch-release
+          path: dist/halo-switch-release
+          retention-days: 3
+
   release:
-    # The six builds (and the Windows builds' PDBs) as a release, tagged
+    # The four builds (Android's and the Switch's) as a release, tagged
     # build-<run number> and marked latest
     # (every file keeps its name from release to release, for the README's
     # latest/download links); then all but the newest five build-* releases
     # go, tags and all. Only for main, and only when every platform built.
-    needs: [linux, android, windows]
-    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: [android, switch]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.android.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -305,6 +425,8 @@ jobs:
       # for a personal token instead. A failed upload does not stop the
       # release.
       - name: Upload Windows symbols to Sentry
+        # (no Windows builds in this fork: see the top)
+        if: false
         continue-on-error: true
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -338,7 +460,7 @@ jobs:
     # without it): green when every platform built, red when one did not,
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds.
-    needs: [linux, android, windows, release]
+    needs: [android, switch, release]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -346,9 +468,8 @@ jobs:
       - name: Post to Discord
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          LINUX: ${{ needs.linux.result }}
           ANDROID: ${{ needs.android.result }}
-          WINDOWS: ${{ needs.windows.result }}
+          SWITCH: ${{ needs.switch.result }}
           RELEASE_TAG: ${{ needs.release.outputs.tag }}
           SERVER: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
@@ -371,13 +492,13 @@ jobs:
               *) echo "➖ Skipped" ;;
             esac
           }
-          if [ "$LINUX" = success ] && [ "$ANDROID" = success ] && [ "$WINDOWS" = success ]; then
+          if [ "$ANDROID" = success ] && [ "$SWITCH" = success ]; then
             title="Build succeeded"; color=5763719
           else
             title="Build failed"; color=15548997
           fi
           latest="$SERVER/$REPOSITORY/releases/latest"
-          downloads="[Linux]($latest/download/halo-linux-release.zip) · [Windows]($latest/download/halo-windows-release.zip) · [Android]($latest/download/halo-android-release.apk) ([all builds]($latest))"
+          downloads="[Android]($latest/download/halo-android-release.apk) ([all builds]($latest))"
           if [ -n "$RELEASE_TAG" ]; then
             release="[$RELEASE_TAG]($SERVER/$REPOSITORY/releases/tag/$RELEASE_TAG)"
           else
@@ -388,14 +509,14 @@ jobs:
             --arg title "$title" --argjson color "$color" --arg url "$RUN_URL" \
             --arg description "[\`${SHA:0:7}\`]($COMMIT_URL) $subject — $ACTOR ($BRANCH)" \
             --arg release "$release" --arg downloads "$downloads" \
-            --arg linux "$(status "$LINUX")" --arg windows "$(status "$WINDOWS")" --arg android "$(status "$ANDROID")" \
+            --arg android "$(status "$ANDROID")" \
+            --arg switch "$(status "$SWITCH")" \
             --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{embeds: [{
               title: $title, url: $url, color: $color, description: $description, timestamp: $timestamp,
               fields: [
-                {name: "Linux", value: $linux, inline: true},
-                {name: "Windows", value: $windows, inline: true},
                 {name: "Android", value: $android, inline: true},
+                {name: "Switch", value: $switch, inline: true},
                 {name: "Release", value: $release},
                 {name: "Latest release builds", value: $downloads}
               ]

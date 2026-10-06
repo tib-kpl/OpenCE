@@ -31,6 +31,12 @@ static unsigned long block_page_count[CONTIGUOUS_PAGE_COUNT];
 static BOOL arena_reserved = FALSE;
 static pthread_mutex_t arena_lock = PTHREAD_MUTEX_INITIALIZER;
 
+#ifdef HALO_ANDROID
+/* the host puts the window where the address space was free and passes the
+address in the boot structure, before the constructor below runs */
+unsigned long platform_contiguous_base = 0x80000000UL;
+#endif
+
 static int protection_to_host(DWORD protect)
 {
 	switch (protect & 0xff)
@@ -109,7 +115,8 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	}
 	if (physical_address != PLATFORM_ANY_PHYSICAL_ADDRESS)
 	{
-		unsigned long wanted = (physical_address & ~PLATFORM_CONTIGUOUS_BASE) / PAGE_SIZE_BYTES;
+		/* an offset into the window, not an address in it */
+		unsigned long wanted = physical_address / PAGE_SIZE_BYTES;
 
 		if (pages_free(wanted, count))
 			first = wanted;
@@ -152,6 +159,20 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	block_page_count[first] = count;
 	pthread_mutex_unlock(&arena_lock);
 	return address;
+}
+
+/* the length of the block address is the start of, or 0 */
+unsigned long platform_contiguous_block_size(const void *address)
+{
+	unsigned long first, count = 0;
+
+	if (!platform_is_contiguous(address))
+		return 0;
+	first = ((unsigned long)address - PLATFORM_CONTIGUOUS_BASE) / PAGE_SIZE_BYTES;
+	pthread_mutex_lock(&arena_lock);
+	count = block_page_count[first];
+	pthread_mutex_unlock(&arena_lock);
+	return count * PAGE_SIZE_BYTES;
 }
 
 void platform_contiguous_free(void *address)

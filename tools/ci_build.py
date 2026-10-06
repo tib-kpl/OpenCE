@@ -29,6 +29,11 @@ OUTPUTS = {
     "linux": ["build/linux/halo"],
     "windows": ["build/windows/halo.exe", "build/windows/SDL3.dll"],
     "android": [],  # the APK, below
+    # the Switch is a host and a guest, and both are wanted: the NRO is the
+    # program the console runs, and the ELF is the ILP32 game image it loads
+    # from the card. A release with only the NRO is a release that cannot
+    # start.
+    "switch": ["build/switch/halo.nro", "build/switch/halo_guest.elf"],
 }
 APKS = {
     "debug": "port/android/app/build/outputs/apk/debug/app-debug.apk",
@@ -115,6 +120,10 @@ def main() -> int:
     # Android's APK has its own copy)
     if args.platform != "android":
         shutil.copy2(ROOT / "port/assets/network/brokers.txt", dist / "brokers.txt")
+    if args.platform == "switch":
+        # and the Switch's menus' title font (port/switch/host/host_ui.c),
+        # under the same license
+        shutil.copy2(ROOT / "port/assets/fonts/OpenCE-OFL.txt", dist / "OpenCE-OFL.txt")
     return 0
 
 
