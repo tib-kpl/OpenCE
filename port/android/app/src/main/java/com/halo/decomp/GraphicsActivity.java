@@ -42,6 +42,8 @@ public class GraphicsActivity extends Activity {
     private static final int PICK_DRIVER = 1;
     /** the archive's size limit in the host (host_vk_driver.c ARCHIVE_MAXIMUM) */
     private static final long ARCHIVE_MAXIMUM = 256L << 20;
+    /** set by the gear over the game (HaloActivity) */
+    static final String EXTRA_FROM_GAME = "com.halo.decomp.FROM_GAME";
     static final String CUSTOM_ARCHIVE = "vk_driver_custom.zip";
 
     private File dataRoot;
@@ -101,9 +103,9 @@ public class GraphicsActivity extends Activity {
         layout.addView(title);
 
         TextView help = new TextView(this);
-        help.setText(t("Choisissez avec quoi le jeu dessine. Le changement s'applique au prochain démarrage. "
+        help.setText(t("Choisissez avec quoi le jeu dessine. Le changement s'applique quand le jeu est relancé (fermez-le puis rouvrez-le). "
             + "Ces mêmes choix sont dans les réglages vidéo du jeu.",
-            "Choose what the game draws with. It applies at the next start. "
+            "Choose what the game draws with. It applies when the game is started again (close it, then open it). "
             + "The same choices are in the game's Video Setup."));
         help.setTextColor(Color.rgb(200, 205, 210));
         help.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
@@ -130,10 +132,15 @@ public class GraphicsActivity extends Activity {
             intent.setType("*/*");
             startActivityForResult(intent, PICK_DRIVER);
         });
-        button(layout, t("Lancer le jeu", "Start the game"), () -> {
-            startActivity(new Intent(this, LauncherActivity.class).putExtra(LauncherActivity.EXTRA_NO_HINT, true));
-            finish();
-        });
+        if (getIntent().getBooleanExtra(EXTRA_FROM_GAME, false)) {
+            // opened from the gear over the game: back to it; the change applies when it is started again
+            button(layout, t("Retour au jeu", "Back to the game"), this::finish);
+        } else {
+            button(layout, t("Lancer le jeu", "Start the game"), () -> {
+                startActivity(new Intent(this, LauncherActivity.class));
+                finish();
+            });
+        }
 
         status = new TextView(this);
         status.setTextColor(Color.rgb(160, 200, 160));

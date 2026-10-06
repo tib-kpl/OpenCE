@@ -167,11 +167,10 @@ below the game's version number (`01.01.14.2342`, at the lower right) says
 
 ### Import a driver or switch to OpenGL ES
 
-When the game starts, a line says for two seconds that **Y** (or a touch of
-the screen) opens the graphics screen. It is also the **Graphics** button of
-the screen shown after a failed start, the **Halo Graphics** icon some
-launchers show next to the game's, and the **Graphics** shortcut of a long
-press on the icon. The screen has plain buttons, for a gamepad as well:
+In the game, a small faint gear at the top right (touch it) opens the graphics
+screen; so does the **Graphics** button of the screen shown after a failed
+start, the **Halo Graphics** icon some launchers show next to the game's, and
+the **Graphics** shortcut of a long press on the icon. The screen has plain buttons, for a gamepad as well:
 
 - **OpenGL ES (no Vulkan)**: the game does not use the Vulkan renderer.
 - **Vulkan, the phone's own driver**, or **Vulkan, Turnip (Adreno GPU)**.

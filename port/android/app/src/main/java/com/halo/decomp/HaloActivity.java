@@ -2,12 +2,16 @@ package com.halo.decomp;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.Intent;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Display;
+import android.widget.ImageView;
+import android.widget.FrameLayout;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -60,8 +64,33 @@ public class HaloActivity extends SDLActivity {
         preferHighestRefreshRate();
         hideSystemUiSoon();
         acquireMulticastLock();
+        addGraphicsGear();
         // a new version looked for while the game starts
         Updater.start(this);
+    }
+
+    // ---------- the graphics gear
+
+    /**
+     * A small, faint gear at the top right, over the game at any time: it opens GraphicsActivity (OpenGL ES or
+     * Vulkan, the Vulkan driver, a driver to import), whose change applies when the game is started again.
+     * A touch on the gear only; the rest of the screen is the game's.
+     */
+    private void addGraphicsGear() {
+        ImageView gear = new ImageView(this);
+        int size = (int) (44 * getResources().getDisplayMetrics().density);
+        int margin = (int) (6 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.END);
+
+        params.setMargins(0, margin, margin, 0);
+        gear.setImageResource(android.R.drawable.ic_menu_preferences);
+        gear.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        gear.setPadding(size / 6, size / 6, size / 6, size / 6);
+        gear.setAlpha(0.3f);
+        gear.setContentDescription("Graphics");
+        gear.setOnClickListener(v -> startActivity(new Intent(this, GraphicsActivity.class)
+            .putExtra(GraphicsActivity.EXTRA_FROM_GAME, true)));
+        addContentView(gear, params);
     }
 
     // ---------- full screen
