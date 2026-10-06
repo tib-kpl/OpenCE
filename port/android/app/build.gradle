@@ -55,7 +55,9 @@ abstract class GenerateMenuTranslations extends DefaultTask {
                     logger.lifecycle(text)
                     return
                 }
-                logger.warn("${python}: ${text}")
+                // Python ran and the translation failed (a text of lang/fr.json, a menu): the build stops,
+                // or the app ships without French menus and nothing says so
+                throw new GradleException("${python} tools/translate_menus.py failed: ${text}")
             } catch (IOException ignored) {
                 // no such command: the next
             }
