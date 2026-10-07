@@ -7,12 +7,19 @@ Settings menus), as plain illustrations in the menus' blue, and renders them to 
 Each is a 512x256 picture with a transparent background (as the PC version's are). They stand in
 for the PC version's pictures (Bungie's art: not shipped), one per entry of the menu list it
 previews: see port/assets/menus/NON_HANDDRAWN.md.
+
+The menus draw a picture texel for texel from its top left corner, as much of it as the widget
+showing it covers (ui_widget.c): only that corner of the 512x256 is seen. So each drawing is drawn
+once, measured (what it covers, its glow too), and fitted and centred in the corner its menu shows.
 """
 
 import argparse
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 CE = ROOT / "port/assets/menus/ce/shell/main_menu"
@@ -167,6 +174,25 @@ def network():
                + pc(80, 130) + pc(330, 130))
 
 
+# the part of the picture each menu shows: its widget's size (port/assets/menus/ce/*.xml), from the
+# top left corner
+SHOWN = {
+    "multiplayer_type_select": (307, 244),  # multiplayer_options_pic
+    "settings_select/multiplayer_setup/playlist_edit": (284, 208),  # playlist_edit_ext_desc_pic
+    "settings_select/player_setup/player_profile_edit": (279, 202),  # profile_edit_extended_desc_pic
+}
+MARGIN = 10
+
+
+def fitted(drawing, covered, shown):
+    """the drawing, the part it covers (x0, y0, x1, y1) fitted and centred in shown (width, height)"""
+    x0, y0, x1, y1 = covered
+    width, height = shown
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="512" height="256" viewBox="0 0 512 256">'
+            f'<svg x="{MARGIN}" y="{MARGIN}" width="{width - 2 * MARGIN}" height="{height - 2 * MARGIN}" '
+            f'viewBox="{x0} {y0} {x1 - x0} {y1 - y0}">{drawing}</svg></svg>')
+
+
 # (file below ce/shell/main_menu, picture)
 PICTURES = {
     "multiplayer_type_select/mp_options__0": versus,
@@ -196,16 +222,27 @@ def main():
     args = parser.parse_args()
     command = shlex.split(args.rsvg, posix=False)
     wsl = Path(command[0]).stem.lower() == "wsl"
+    def render(svg_path, png):
+        subprocess.run(command + ["-o", windows_to_wsl(png) if wsl else str(png),
+                                  windows_to_wsl(svg_path) if wsl else str(svg_path)], check=True)
+
     for name, draw in PICTURES.items():
         svg_path = SVG_OUT / (name + ".svg")
         svg_path.parent.mkdir(parents=True, exist_ok=True)
-        svg_path.write_text(draw(), encoding="utf-8", newline="\n")
         png = CE / (name + ".png")
         if not png.parent.is_dir():
             raise SystemExit(f"{png.parent} does not exist")
-        subprocess.run(command + ["-o", windows_to_wsl(png) if wsl else str(png),
-                                  windows_to_wsl(svg_path) if wsl else str(svg_path)], check=True)
-        print(name)
+        shown = SHOWN[name.rsplit("/", 1)[0]]
+        # drawn once as it is, to measure what it covers
+        svg_path.write_text(draw(), encoding="utf-8", newline="\n")
+        with tempfile.TemporaryDirectory(dir=SVG_OUT) as folder:
+            measured = Path(folder) / "measured.png"
+            render(svg_path, measured)
+            with Image.open(measured) as image:
+                covered = image.getchannel("A").point(lambda alpha: 255 if alpha > 8 else 0).getbbox()
+        svg_path.write_text(fitted(draw(), covered, shown), encoding="utf-8", newline="\n")
+        render(svg_path, png)
+        print(name, "covers", covered, "shown in", shown)
 
 
 if __name__ == "__main__":

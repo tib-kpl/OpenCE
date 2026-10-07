@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="256" viewBox="0 0 512 256"><defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="256" viewBox="0 0 512 256"><svg x="10" y="10" width="259" height="182" viewBox="141 56 229 144"><svg xmlns="http://www.w3.org/2000/svg" width="512" height="256" viewBox="0 0 512 256"><defs>
   <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0" stop-color="#f1f1f1"/><stop offset="1" stop-color="#b9bcc2"/>
   </linearGradient>
@@ -11,4 +11,4 @@
     <feComposite in2="b" operator="in" result="g"/>
     <feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
-</defs><g filter="url(#glow)"><path d="M150,108 L196,108 L252,64 L252,192 L196,148 L150,148 Z" fill="url(#metal)" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M300,102 Q326,128 300,154" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M324,92 Q350,128 324,164" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M348,82 Q374,128 348,174" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/></g></svg>
+</defs><g filter="url(#glow)"><path d="M150,108 L196,108 L252,64 L252,192 L196,148 L150,148 Z" fill="url(#metal)" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M300,102 Q326,128 300,154" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M324,92 Q350,128 324,164" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M348,82 Q374,128 348,174" fill="none" stroke="#2896ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/></g></svg></svg></svg>
