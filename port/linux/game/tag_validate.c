@@ -1273,7 +1273,11 @@ static void *buffer_data(
 	long count,
 	void const *buffer)
 {
-	unsigned long offset = (unsigned long)buffer - (unsigned long)buffers;
+	unsigned long offset;
+
+	/* (a part's buffer is the map's pointer to it, as its Data is) */
+	buffer = VALIDATE_REBASE(buffer);
+	offset = (unsigned long)buffer - (unsigned long)buffers;
 
 	if ((unsigned long)buffer < (unsigned long)buffers || offset % BUFFER_SIZE ||
 		offset / BUFFER_SIZE >= (unsigned long)count)
@@ -1281,7 +1285,7 @@ static void *buffer_data(
 		return NULL;
 	}
 
-	return *(void **)((byte const *)buffer + 4);
+	return VALIDATE_REBASE(*(void **)((byte const *)buffer + 4));
 }
 
 void *tag_validate_vertex_buffer_data(
