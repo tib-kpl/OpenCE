@@ -40,6 +40,22 @@ runs it alone on a map file.
 #include <stdio.h>
 #include <string.h>
 
+#ifdef HALO_ANDROID
+#include "halo_port_window.h"
+#endif
+
+/* ---------- macros */
+
+/* Android moves the window the maps were written for (halo_port_window.h),
+and the game moves a tag's pointers where it reads them (TAG_BLOCK_ADDRESS,
+TAG_DATA_ADDRESS): each pointer is moved here before it is checked, which
+the game's own move then leaves as it is */
+#ifdef HALO_ANDROID
+#define VALIDATE_REBASE(address) PORT_WINDOW_REBASE(address)
+#else
+#define VALIDATE_REBASE(address) ((void *)(address))
+#endif
+
 /* ---------- constants */
 
 enum
@@ -521,6 +537,7 @@ static void validate_block_extent(
 	struct tag_schema_definition const *definition = field->definition;
 
 	block->definition = NULL;
+	block->address = VALIDATE_REBASE(block->address);
 	if (block->count < 0)
 	{
 		tag_validate_refuse(validation, "has %ld elements", block->count);
@@ -578,6 +595,7 @@ static void validate_data_extent(
 		}
 		return;
 	}
+	data->address = VALIDATE_REBASE(data->address);
 	if (data->size &&
 		(!region_contains(validation, data->address, data->size) || !claim(data->address, data->size)))
 	{
@@ -638,6 +656,7 @@ static void validate_value(
 	{
 		struct tag_reference *reference = (struct tag_reference *)address;
 
+		reference->name = VALIDATE_REBASE(reference->name);
 		/* (a reference to no tag often has a name pointer that is not one,
 		in the retail maps too: only one to a tag counts as a correction) */
 		if (!string_valid(validation, reference->name))
@@ -978,7 +997,7 @@ static boolean validate_buffers(
 			vertex_buffers + index * BUFFER_SIZE :
 			index_buffers + (index - vertex_buffer_count) * BUFFER_SIZE;
 		/* (the buffer's Data, its bytes' address before it is registered) */
-		void *data = *(void **)(buffer + 4);
+		void *data = VALIDATE_REBASE(*(void **)(buffer + 4));
 
 		if (!region_contains(validation, data, 1))
 		{
@@ -1048,6 +1067,8 @@ boolean tag_validate_tags(
 				absolute_index);
 			break;
 		}
+		instance->name = VALIDATE_REBASE(instance->name);
+		instance->base_address = VALIDATE_REBASE(instance->base_address);
 		if (!string_valid(&validation, instance->name))
 		{
 			instance->name = (char *)tag_validate_empty_name;
