@@ -157,6 +157,8 @@ struct host_vk_backend
 	VkFilter blit_filter;
 	/* the optional device features that were enabled */
 	int sampler_anisotropy, fill_mode_non_solid, occlusion_query_precise, texture_compression_bc;
+	/* Vulkan 1.3's pipelineCreationCacheControl: a pipeline can be asked of the cache alone (host_vk_shaders.c) */
+	int pipeline_cache_control;
 	VkFormatFeatureFlags swapchain_features;
 
 	struct host_vk_frame frames[HOST_VK_FRAMES];

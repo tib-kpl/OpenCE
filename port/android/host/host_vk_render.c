@@ -1303,7 +1303,15 @@ static int device_create(void)
 	enabled_add(names, &name_count, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 	if (host_vk.api >= VK_API_VERSION_1_3)
 	{
+		VkPhysicalDeviceFeatures2 available = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceVulkan13Features available13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+
 		features13.dynamicRendering = VK_TRUE;
+		/* and, where the device has it, pipelines made from the cache alone or not at all (host_vk_pipeline_find) */
+		available.pNext = &available13;
+		host_vk.vkGetPhysicalDeviceFeatures2(host_vk.physical, &available);
+		features13.pipelineCreationCacheControl = available13.pipelineCreationCacheControl;
+		B.pipeline_cache_control = available13.pipelineCreationCacheControl != 0;
 		features.pNext = &features13;
 	}
 	else
@@ -1423,11 +1431,12 @@ static int device_create(void)
 	if (host_vk_self_test)
 		clears_selftest();
 	host_logf(HOST_LOG_INFO, "vk: device ready: queue family %u, colour targets %s, depth targets %s, blit filter %s, "
-		"dynamic rendering from %s; anisotropy %d, non-solid fill %d, precise occlusion %d, BC textures %d", B.family, "B8G8R8A8_UNORM",
+		"dynamic rendering from %s; anisotropy %d, non-solid fill %d, precise occlusion %d, BC textures %d, pipelines from "
+		"the cache %d", B.family, "B8G8R8A8_UNORM",
 		B.depth_format == VK_FORMAT_D24_UNORM_S8_UINT ? "D24_UNORM_S8_UINT" : "D32_SFLOAT_S8_UINT",
 		B.blit_filter == VK_FILTER_LINEAR ? "linear" : "nearest",
 		host_vk.api >= VK_API_VERSION_1_3 ? "Vulkan 1.3" : "VK_KHR_dynamic_rendering", B.sampler_anisotropy,
-		B.fill_mode_non_solid, B.occlusion_query_precise, B.texture_compression_bc);
+		B.fill_mode_non_solid, B.occlusion_query_precise, B.texture_compression_bc, B.pipeline_cache_control);
 	return 1;
 failed:
 	backend_unavailable("the device's frames could not be made");

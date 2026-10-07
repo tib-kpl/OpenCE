@@ -385,6 +385,10 @@ static struct
 	struct pipeline *pipeline_head, *pipeline_tail;
 	/* counted since the start, and the thread's since its last line */
 	unsigned from_disk, compiled, failed, shaders_queued, pipelines_made, pipelines_failed, pipelines_queued;
+	/* pipelines asked of the cache alone at their first draw (host_vk_pipeline_find): found, and not, and the time it
+	took the game thread */
+	unsigned from_cache, not_in_cache;
+	double from_cache_ms, from_cache_longest_ms;
 	struct
 	{
 		unsigned shaders, pipelines;
@@ -679,6 +683,9 @@ static uint64_t state_hash_of(const struct vk_pipeline_state *state)
 	return vk_hash_mix(vk_hash_init(), state, sizeof(*state));
 }
 
+static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule vertex, VkShaderModule pixel,
+	int cache_only);
+
 static struct pipeline *pipeline_lookup(uint64_t vertex_hash, uint64_t pixel_hash, uint64_t state_hash)
 {
 	struct pipeline *pipeline;
@@ -693,8 +700,24 @@ static struct pipeline *pipeline_lookup(uint64_t vertex_hash, uint64_t pixel_has
 	return NULL;
 }
 
+/* a pipeline to the compile thread's queue. S.lock is held. */
+static void pipeline_queue(struct pipeline *pipeline)
+{
+	pipeline->status = PIPELINE_QUEUED;
+	if (S.pipeline_tail)
+		S.pipeline_tail->next_queued = pipeline;
+	else
+		S.pipeline_head = pipeline;
+	S.pipeline_tail = pipeline;
+	S.pipelines_queued++;
+	pthread_cond_signal(&S.wake);
+}
+
 /* the pipeline for two shader handles and a state: made on the compile thread when new, and the VkPipeline once it is ready,
-else VK_NULL_HANDLE (the draw is skipped, counted). B.lock is held. */
+else VK_NULL_HANDLE (the draw is skipped, counted). A new one is first asked of the pipeline cache alone, where the device
+can (Vulkan 1.3's pipelineCreationCacheControl): one made in an earlier run is there, and made from it in about a
+millisecond, so its first draw is drawn rather than skipped (an object would blink out for the frames the thread takes);
+one that would have to be compiled is not, and goes to the thread. B.lock is held. */
 VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, const struct vk_pipeline_state *state)
 {
 	struct shader *vertex, *pixel;
@@ -734,16 +757,40 @@ VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, 
 			pipeline->vertex = vertex_handle;
 			pipeline->pixel = pixel_handle;
 			pipeline->state = *state;
-			pipeline->status = PIPELINE_QUEUED;
 			pipeline->next_in_bucket = S.pipeline_buckets[key % BUCKETS];
 			S.pipeline_buckets[key % BUCKETS] = pipeline;
-			if (S.pipeline_tail)
-				S.pipeline_tail->next_queued = pipeline;
+			if (B.pipeline_cache_control && B.pipeline_cache && vertex->module && pixel->module)
+			{
+				VkShaderModule vertex_module = vertex->module, pixel_module = pixel->module;
+				uint64_t start;
+				double ms;
+				VkPipeline made;
+
+				/* (not queued while it is made: the thread does not see it) */
+				pipeline->status = PIPELINE_MAKING;
+				pthread_mutex_unlock(&S.lock);
+				start = now_ns();
+				made = pipeline_make(pipeline, vertex_module, pixel_module, 1);
+				ms = (double)(now_ns() - start) / 1e6;
+				pthread_mutex_lock(&S.lock);
+				if (made)
+				{
+					pipeline->pipeline = made;
+					pipeline->status = PIPELINE_READY;
+					S.pipelines_made++;
+					S.from_cache++;
+				}
+				else
+				{
+					S.not_in_cache++;
+					pipeline_queue(pipeline);
+				}
+				S.from_cache_ms += ms;
+				if (ms > S.from_cache_longest_ms)
+					S.from_cache_longest_ms = ms;
+			}
 			else
-				S.pipeline_head = pipeline;
-			S.pipeline_tail = pipeline;
-			S.pipelines_queued++;
-			pthread_cond_signal(&S.wake);
+				pipeline_queue(pipeline);
 		}
 	}
 	if (pipeline && pipeline->status == PIPELINE_READY)
@@ -771,7 +818,9 @@ static VkFormat format_of(uint32_t which, int depth)
 }
 
 /* the pipeline made, with the state it carries (Vulkan 1.0's core dynamic states are dynamic; the rest is here) */
-static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule vertex, VkShaderModule pixel)
+/* cache_only: from the pipeline cache or not at all (VK_NULL_HANDLE, said nowhere: the caller compiles it then) */
+static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule vertex, VkShaderModule pixel,
+	int cache_only)
 {
 	const struct vk_pipeline_state *state = &wanted->state;
 	VkPipelineShaderStageCreateInfo stages[2] = { { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO },
@@ -873,6 +922,13 @@ static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule ve
 	info.pDynamicState = &dynamic;
 	info.layout = B.draw_layout;
 	info.basePipelineIndex = -1;
+	if (cache_only)
+	{
+		info.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+		if (vkCreateGraphicsPipelines(B.device, B.pipeline_cache, 1, &info, NULL, &pipeline) != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return pipeline;
+	}
 	if (!HOST_VK_CHECK(vkCreateGraphicsPipelines(B.device, B.pipeline_cache, 1, &info, NULL, &pipeline)))
 		return VK_NULL_HANDLE;
 	return pipeline;
@@ -977,7 +1033,7 @@ static void compile_pipeline_item(struct pipeline *pipeline)
 	pixel = S.handles[pipeline->pixel - 1]->module;
 	pthread_mutex_unlock(&S.lock);
 	start = now_ns();
-	made = pipeline_make(pipeline, vertex, pixel);
+	made = pipeline_make(pipeline, vertex, pixel, 0);
 	pthread_mutex_lock(&S.lock);
 	S.thread.pipelines++;
 	S.thread.pipeline_ms += (double)(now_ns() - start) / 1e6;
@@ -1244,8 +1300,11 @@ void host_vk_services_statistics(char *text, size_t size)
 	for (pipeline = S.pipeline_head; pipeline; pipeline = pipeline->next_queued)
 		queued_pipelines++;
 	snprintf(text, size, "shaders %u from the cache, %u compiled, %u failed, %u queued; pipelines %u made, %u failed, %u "
-		"queued; draws: %u ready, %u would be skipped for a shader, %u for a pipeline; pipeline cache %lu KB",
+		"queued, %u from the cache alone (%.2f ms on average, %.2f at most), %u not in it; draws: %u ready, %u would be "
+		"skipped for a shader, %u for a pipeline; pipeline cache %lu KB",
 		S.from_disk, S.compiled, S.failed, queued_shaders, S.pipelines_made, S.pipelines_failed, queued_pipelines,
+		S.from_cache, S.from_cache + S.not_in_cache ? S.from_cache_ms / (S.from_cache + S.not_in_cache) : 0.0,
+		S.from_cache_longest_ms, S.not_in_cache,
 		B.counts.draws_ready, B.counts.draws_skipped_shader, B.counts.draws_skipped_pipeline, S.pipeline_cache_size / 1024);
 	pthread_mutex_unlock(&S.lock);
 }
