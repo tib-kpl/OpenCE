@@ -375,6 +375,8 @@ static struct
 {
 	pthread_mutex_t lock;
 	pthread_cond_t wake;
+	/* signalled as each pipeline is made or fails: a draw waiting for one the thread is making (host_vk_pipeline_find) */
+	pthread_cond_t pipeline_done;
 	int started, thread_started;
 	char root[640], spirv_folder[768], pipelines_folder[768], failed_folder[768], cache_file[900];
 	struct shader *buckets[BUCKETS];
@@ -399,7 +401,9 @@ static struct
 	unsigned made_since_save;
 	uint64_t last_save;
 	int first_find_logged, first_compile_logged;
-} S = { .lock = PTHREAD_MUTEX_INITIALIZER, .wake = PTHREAD_COND_INITIALIZER };
+	/* pipelines a draw made itself rather than wait for the thread, since the start */
+	unsigned pipelines_made_at_draw;
+} S = { .lock = PTHREAD_MUTEX_INITIALIZER, .wake = PTHREAD_COND_INITIALIZER, .pipeline_done = PTHREAD_COND_INITIALIZER };
 
 static unsigned bucket_of(uint32_t stage, uint64_t hash)
 {
@@ -714,10 +718,10 @@ static void pipeline_queue(struct pipeline *pipeline)
 }
 
 /* the pipeline for two shader handles and a state: made on the compile thread when new, and the VkPipeline once it is ready,
-else VK_NULL_HANDLE (the draw is skipped, counted). A new one is first asked of the pipeline cache alone, where the device
-can (Vulkan 1.3's pipelineCreationCacheControl): one made in an earlier run is there, and made from it in about a
-millisecond, so its first draw is drawn rather than skipped (an object would blink out for the frames the thread takes);
-one that would have to be compiled is not, and goes to the thread. B.lock is held. */
+else VK_NULL_HANDLE (the draw is skipped, counted). B.lock is held. */
+static void compile_pipeline_item(struct pipeline *pipeline);
+static void pipeline_unqueue(struct pipeline *pipeline);
+
 VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, const struct vk_pipeline_state *state)
 {
 	struct shader *vertex, *pixel;
@@ -793,6 +797,18 @@ VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, 
 				pipeline_queue(pipeline);
 		}
 	}
+	/* Not made yet: made now, by the draw that needs it, rather than the draw left out until the thread gets to it. Its
+	shaders are made (the draw has their handles), and with the driver's cache warm a pipeline takes well under a
+	millisecond, where leaving the draw out showed as the sky and whole passes flashing for the first seconds of a map,
+	and after each new effect. One the thread is making already is waited for. */
+	if (pipeline && pipeline->status == PIPELINE_QUEUED)
+	{
+		pipeline_unqueue(pipeline);
+		compile_pipeline_item(pipeline);
+		S.pipelines_made_at_draw++;
+	}
+	while (pipeline && pipeline->status == PIPELINE_MAKING)
+		pthread_cond_wait(&S.pipeline_done, &S.lock);
 	if (pipeline && pipeline->status == PIPELINE_READY)
 	{
 		B.counts.draws_ready++;
@@ -1050,6 +1066,25 @@ static void compile_pipeline_item(struct pipeline *pipeline)
 		pipeline->status = PIPELINE_FAILED;
 		S.pipelines_failed++;
 	}
+	pthread_cond_broadcast(&S.pipeline_done);
+}
+
+/* the pipeline taken out of the thread's queue (S.lock is held) */
+static void pipeline_unqueue(struct pipeline *pipeline)
+{
+	struct pipeline *previous = NULL, *at;
+
+	for (at = S.pipeline_head; at && at != pipeline; at = at->next_queued)
+		previous = at;
+	if (!at)
+		return;
+	if (previous)
+		previous->next_queued = pipeline->next_queued;
+	else
+		S.pipeline_head = pipeline->next_queued;
+	if (S.pipeline_tail == pipeline)
+		S.pipeline_tail = previous;
+	pipeline->next_queued = NULL;
 }
 
 static void *compile_thread(void *unused)
