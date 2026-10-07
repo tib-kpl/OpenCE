@@ -26,15 +26,20 @@ This header is included by both halves.
 
 #include <stdint.h>
 
-/* the guest image is linked to run here. The window is 256 MB-aligned and
-	128 MB long, so it can neither cover nor reach this address, and the host
-	reserves the range before the guest's own pools take any of it. Where the
-	Java runtime already holds it, the Android host loads the image somewhere
-	free instead and moves its pointers (halo_guest.relocs, made by
-	tools/guest_relocations.py), and tells the guest how far
-	(halo_guest_boot.image_shift) */
-#define HALO_GUEST_IMAGE_BASE 0x40000000u
-#define HALO_GUEST_IMAGE_RESERVE 0x01000000u
+/* the guest image is linked to run here, just above the Xbox window: ART
+keeps its heaps low in the address space and fills it upwards. Where the Java
+runtime already holds it, the Android host loads the image somewhere free
+instead and moves its pointers (halo_guest.relocs, made by
+tools/guest_relocations.py), and tells the guest how far
+(halo_guest_boot.image_shift) */
+#define HALO_GUEST_IMAGE_BASE 0x88000000u
+
+/* the tag cache Halo Custom Edition maps are linked to
+(CUSTOM_EDITION_TAG_CACHE_ADDRESS and _BYTES, port/linux/game/cache_file_formats.h):
+the host keeps the window, the image and its pools out of it, and the guest
+maps it itself when the game.custom_edition setting is on */
+#define HALO_GUEST_CUSTOM_EDITION_BASE 0x40440000u
+#define HALO_GUEST_CUSTOM_EDITION_SIZE 0x01700000u
 
 /* the Xbox contiguous memory window (port/linux/src/platform.h). The game
 data is linked to the addresses of the window, so the host looks for

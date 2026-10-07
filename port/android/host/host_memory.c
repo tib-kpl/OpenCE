@@ -59,6 +59,8 @@ static pthread_mutex_t memory_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t window_base, window_end;
 static uint64_t image_base, image_end;
+/* the Custom Edition tag cache's place, 0 where something else held it */
+static uint64_t custom_edition_base, custom_edition_end;
 
 static uint64_t round_up(uint64_t value)
 {
@@ -252,6 +254,21 @@ int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *bas
 		image_base = image_end = 0;
 	}
 
+	/* the place Custom Edition maps' tags are linked to, before the window
+	or the image is put wherever there is room: the guest maps it over this
+	reservation (host_guest_mmap) when it runs those maps */
+	if (reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_SIZE) == 0)
+	{
+		custom_edition_base = HALO_GUEST_CUSTOM_EDITION_BASE;
+		custom_edition_end = HALO_GUEST_CUSTOM_EDITION_BASE + HALO_GUEST_CUSTOM_EDITION_SIZE;
+	}
+	else
+	{
+		host_logf(HOST_LOG_INFO, "the Custom Edition tag cache's address %08llx is taken (%s): Custom Edition maps cannot run",
+			(unsigned long long)HALO_GUEST_CUSTOM_EDITION_BASE, strerror(errno));
+		log_conflicts(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_SIZE);
+	}
+
 	/* the window where the game and its data expect it, if it is free */
 	if (reserve(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE) == 0)
 	{
@@ -415,7 +432,8 @@ int host_low_owns(uintptr_t address, size_t size)
 {
 	int result;
 
-	if (in_range(address, size, window_base, window_end) || in_range(address, size, image_base, image_end))
+	if (in_range(address, size, window_base, window_end) || in_range(address, size, image_base, image_end) ||
+		in_range(address, size, custom_edition_base, custom_edition_end))
 		return 1;
 	pthread_mutex_lock(&memory_lock);
 	result = pool_of(address, size) != NULL;
@@ -472,7 +490,8 @@ long host_guest_munmap(uint64_t address, uint64_t size)
 
 	if (host + length > LOW_LIMIT)
 		return -EINVAL;
-	if (in_range(host, length, window_base, window_end))
+	if (in_range(host, length, window_base, window_end) ||
+		in_range(host, length, custom_edition_base, custom_edition_end))
 	{
 		mmap((void *)host, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
 		return 0;

@@ -87,13 +87,6 @@ static void custom_edition_tag_cache_reserve(void)
 	void *wanted = (void *)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
 	void *result;
 
-#ifdef HALO_ANDROID
-	/* not on Android: 0x40440000 is inside the range the host keeps for the
-	guest image (HALO_GUEST_IMAGE_BASE), where the host's mmap replaces what
-	is there even when asked not to (host_guest_mmap), and would wipe the
-	image's own data */
-	return;
-#endif
 	if (!config_boolean("game.custom_edition"))
 		return;
 	result = mmap(wanted, CUSTOM_EDITION_TAG_CACHE_BYTES, PROT_READ | PROT_WRITE,
