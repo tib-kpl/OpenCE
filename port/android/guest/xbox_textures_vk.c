@@ -1135,3 +1135,17 @@ void vk_texture_cache_begin_frame(void)
 		}
 	}
 }
+
+/* Halo PC's channel order for a Custom Edition map's textures
+(port/linux/src/xbox_textures.c). Android does not play those maps: their
+tag cache's place, 0x40440000, is in the range kept for the guest image
+(HALO_GUEST_IMAGE_BASE), so nothing here is told of texels in that order. */
+void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
+{
+	(void)texels;
+	(void)channel_order;
+}
+
+void halo_custom_edition_texels_forget(void)
+{
+}
