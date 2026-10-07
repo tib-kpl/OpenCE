@@ -25,6 +25,7 @@ VK_HIRES says whether they are on).
 #include "hud_hires.h"
 #include "menu_files.h"
 #include "text_hires.h"
+#include "../../linux/game/cache_file_formats.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -554,6 +555,117 @@ static BOOL bc_native(void)
 	return known;
 }
 
+/* ---------- Custom Edition channel orders
+
+As port/linux/src/xbox_textures.c: Halo PC keeps what some textures hold in
+other channels than the game reads it from (enum
+custom_edition_channel_order), and the Custom Edition map loading says which
+texels hold which order (port/linux/game/custom_edition_bitmaps.c). The
+renderer here has no per-image swizzle, so such texels are decoded to BGRA
+and their channels moved as they are sent. */
+
+/* for each order, the channel (red, green, blue, alpha) of the texels each
+channel is sampled from */
+static const unsigned char custom_edition_channel_sources[NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS][4] =
+{
+	{ 0, 1, 2, 3 },
+	/* specular, self-illumination, color change and the auxiliary mask */
+	{ 2, 1, 3, 0 },
+	/* the fill order in color, the shape in alpha */
+	{ 3, 3, 3, 0 },
+};
+
+struct custom_edition_texels
+{
+	unsigned long address;
+	unsigned char channel_order;
+};
+
+static struct custom_edition_texels *custom_edition_texels;
+static unsigned long custom_edition_texel_count;
+static unsigned long custom_edition_texel_capacity;
+
+/* the order of the texels at address */
+static unsigned char custom_edition_texels_order(unsigned long address)
+{
+	unsigned long index;
+
+	for (index = 0; index < custom_edition_texel_count; index++)
+	{
+		if (custom_edition_texels[index].address == address)
+			return custom_edition_texels[index].channel_order;
+	}
+	return _custom_edition_channels_xbox;
+}
+
+void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
+{
+	unsigned long address = (unsigned long)texels;
+	unsigned long index;
+
+	if (channel_order >= NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS)
+		channel_order = _custom_edition_channels_xbox;
+	for (index = 0; index < custom_edition_texel_count && custom_edition_texels[index].address != address; index++)
+	{
+	}
+	if (index < custom_edition_texel_count)
+	{
+		if (channel_order == _custom_edition_channels_xbox)
+			custom_edition_texels[index] = custom_edition_texels[--custom_edition_texel_count];
+		else
+			custom_edition_texels[index].channel_order = channel_order;
+	}
+	else if (channel_order != _custom_edition_channels_xbox)
+	{
+		if (custom_edition_texel_count == custom_edition_texel_capacity)
+		{
+			unsigned long capacity = custom_edition_texel_capacity ? custom_edition_texel_capacity * 2 : 64;
+			struct custom_edition_texels *grown = realloc(custom_edition_texels, capacity * sizeof(*grown));
+
+			if (!grown)
+			{
+				platform_log("no memory to list the texels at %08lx: they are sampled in Halo PC's channel order",
+					address);
+				return;
+			}
+			custom_edition_texels = grown;
+			custom_edition_texel_capacity = capacity;
+		}
+		custom_edition_texels[custom_edition_texel_count].address = address;
+		custom_edition_texels[custom_edition_texel_count].channel_order = channel_order;
+		custom_edition_texel_count++;
+	}
+}
+
+void halo_custom_edition_texels_forget(void)
+{
+	free(custom_edition_texels);
+	custom_edition_texels = NULL;
+	custom_edition_texel_count = 0;
+	custom_edition_texel_capacity = 0;
+}
+
+/* moves the channels of count BGRA texels (32-bit ARGB words) to where the
+game reads them */
+static void custom_edition_channels_move(unsigned long *texels, unsigned long count, unsigned char channel_order)
+{
+	/* each channel's shift in an ARGB word: red, green, blue, alpha */
+	static const unsigned char shifts[4] = { 16, 8, 0, 24 };
+	unsigned char const *sources = custom_edition_channel_sources[channel_order];
+	unsigned long index;
+
+	for (index = 0; index < count; index++)
+	{
+		unsigned long texel = texels[index];
+		unsigned long moved = 0;
+		unsigned long channel;
+
+		for (channel = 0; channel < 4; channel++)
+			moved |= ((texel >> shifts[sources[channel]]) & 0xff) << shifts[channel];
+		texels[index] = moved;
+	}
+}
+
 /* sends a level of a face: its texels put, and the command that names them. rows is 0 for all of the level, else the 2D BGRA
 rows [top, top + rows) of it */
 static void data_send(uint32_t id, unsigned long level, unsigned long face, const void *texels, unsigned long bytes,
@@ -572,15 +684,17 @@ static void data_send(uint32_t id, unsigned long level, unsigned long face, cons
 }
 
 /* Sends a texture's texels to the host as image id: the image's description, then every level of every face. A compressed
-texture is read where the game keeps it (BC) or decoded; any other is decoded to BGRA. */
+texture is read where the game keeps it (BC) or decoded; any other is decoded to BGRA, as is one whose channels a Custom
+Edition map keeps elsewhere (channel_order). */
 static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_description *description,
-	const unsigned char *base, const D3DCOLOR *palette)
+	const unsigned char *base, const D3DCOLOR *palette, unsigned char channel_order)
 {
 	struct format_information information = format_information(description->format);
 	unsigned long face_count = description->cube_map ? 6 : 1;
 	unsigned long face_size = xgpu_texture_face_size(description);
 	/* (a 3D image of a BC format is optional in Vulkan, where 2D and cube ones are not: a 3D one is decoded) */
-	BOOL native = description->compressed && description->depth <= 1 && bc_native();
+	BOOL native = description->compressed && description->depth <= 1 && bc_native() &&
+		channel_order == _custom_edition_channels_xbox;
 	struct vk_command_texture *command = vk_stream_command(VK_COMMAND_TEXTURE, sizeof(*command));
 	unsigned long face, level;
 	unsigned long *converted = NULL;
@@ -614,6 +728,8 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 					level_dimension(description->height, level), level_dimension(description->depth, level), converted);
 			else
 				decode_level(description, level, source, palette, converted);
+			if (channel_order != _custom_edition_channels_xbox)
+				custom_edition_channels_move(converted, decoded_bytes(description, level) / 4, channel_order);
 			data_send(id, level, face, converted, decoded_bytes(description, level), 0, 0);
 		}
 	}
@@ -1086,7 +1202,8 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 				platform_log("texture upload %08lx fmt %02lx %lux%lu size %lu gen %lu id %u", (unsigned long)data,
 					(unsigned long)entry->description.format, entry->description.width, entry->description.height,
 					entry->size, entry->generation, (unsigned)entry->id);
-			upload(entry->id, entry->kind, &entry->description, (const unsigned char *)entry->address, palette);
+			upload(entry->id, entry->kind, &entry->description, (const unsigned char *)entry->address, palette,
+				custom_edition_texels_order(entry->address));
 		}
 	}
 	entry->last_used_frame = texture_frame;
@@ -1136,16 +1253,3 @@ void vk_texture_cache_begin_frame(void)
 	}
 }
 
-/* Halo PC's channel order for a Custom Edition map's textures
-(port/linux/src/xbox_textures.c). Android does not play those maps: their
-tag cache's place, 0x40440000, is in the range kept for the guest image
-(HALO_GUEST_IMAGE_BASE), so nothing here is told of texels in that order. */
-void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
-{
-	(void)texels;
-	(void)channel_order;
-}
-
-void halo_custom_edition_texels_forget(void)
-{
-}
