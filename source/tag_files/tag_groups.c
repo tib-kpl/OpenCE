@@ -13,6 +13,7 @@ TAG_GROUPS.C
 #ifdef HALO_ANDROID
 #include "platform.h"
 #endif
+#include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 
 /* ---------- constants */
 
@@ -64,12 +65,20 @@ void *tag_empty_data(
 	return tag_empty_data_bytes;
 }
 
+/* port: (cache_files.c) */
+boolean tag_index_is_group(long tag_index, long group_tag);
+
 long verify_tag_reference(
 	const struct tag_reference *reference)
 {
 	long index;
 
 	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3055, reference);
+	/* port: a protected Custom Edition map has its tag names replaced and
+	its references' names emptied, so a reference is taken by its index
+	(port/linux/game/custom_edition_cache.c) */
+	if (custom_edition_cache_tags_loaded())
+		return tag_index_is_group(reference->index, reference->group_tag) ? reference->index : NONE;
 #ifdef HALO_ANDROID
 	/* the map data names this string as the window was linked */
 	index = tag_loaded(reference->group_tag, TAG_REFERENCE_NAME(*reference));
@@ -113,8 +122,15 @@ void* tag_data_get_pointer(
 	long offset, 
 	long size) 
 {
-	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3073, size>=0);
-	match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3074, offset>=0 && offset+size<=data->size);
+	/* port: Halo PC reads a Custom Edition map's tags unchecked, and maps
+	made for it can hold an offset past a tag data's end, which never
+	stopped a game there: it gets the empty data below without an
+	assertion. This build's maps keep theirs */
+	if (!custom_edition_cache_tags_loaded())
+	{
+		match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3073, size>=0);
+		match_assert("c:\\halo\\SOURCE\\tag_files\\tag_groups.c", 3074, offset>=0 && offset+size<=data->size);
+	}
 	/* port: bytes past the data are the empty data's (tag_empty_data), as
 	far as they go */
 	if (size < 0 || offset < 0 || offset > data->size || size > data->size - offset || (size && !data->address))
