@@ -27,9 +27,8 @@ from typing import Any, Dict, List, Optional
 
 from .linux_build import (LINUX_PROFILE, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, XDK_INCLUDE,
                           compile_launcher, game_defines_and_includes, game_sources, miniupnpc_sources,
-                          updater_defines,
                           musl_math_sources, pgo_mode, pgo_profile,
-                          profile_use_flags, xdk_headers)
+                          profile_use_flags, updater_defines, xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
@@ -57,6 +56,8 @@ MUSL_URL = f"https://musl.libc.org/releases/musl-{MUSL_VERSION}.tar.gz"
 SDL_TAG = "release-3.4.16"
 SDL_DIR = THIRD_PARTY / "SDL3"
 SDL_URL = "https://github.com/libsdl-org/SDL.git"
+SDL_ANDROID_MOUSE_PATCH = Path("port/android/patches/sdl-relative-mouse.patch")
+SDL_ANDROID_MOUSE_LISTENER = "android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java"
 ANDROID_API = 28
 # the Vulkan probe's shader compiler (port/android/VULKAN.md, phase 0, step 4)
 GLSLANG_TAG = "16.6.0"
@@ -150,6 +151,8 @@ MUSL_EXCLUDE = {
     "env/__reset_tls.c", "malloc/oldmalloc", "thread/pthread_create.c",
     # unused, and its compiler barrier is an inline assembly statement
     "string/explicit_bzero.c",
+    # eight bytes at a time (guest_string.c)
+    "string/memcmp.c",
 }
 # game files that call variadic functions without a prototype in scope, which
 # only works under x86's calling convention (tools/android_abi_check.py)
@@ -201,6 +204,17 @@ def fetch_third_party(validation: bool = False) -> None:
         print(f"Cloning SDL3 {SDL_TAG}")
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", SDL_TAG, SDL_URL, str(SDL_DIR)],
                        check=True)
+    # SDL 3.4.16's generic mouse listener drops captured relative motion and
+    # button transitions unless they are forwarded from captured pointer events.
+    # A tree patched by another version of the patch (an older checkout, or
+    # CI's cached one) is put back as SDL has it before this one is applied.
+    reverse = subprocess.run(
+        ["git", "-C", str(SDL_DIR), "apply", "--reverse", "--check", str(SDL_ANDROID_MOUSE_PATCH.resolve())],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if reverse.returncode != 0:
+        subprocess.run(["git", "-C", str(SDL_DIR), "checkout", "--", SDL_ANDROID_MOUSE_LISTENER], check=True)
+        subprocess.run(["git", "-C", str(SDL_DIR), "apply", str(SDL_ANDROID_MOUSE_PATCH.resolve())], check=True)
     if not GLSLANG_DIR.is_dir():
         print(f"Cloning glslang {GLSLANG_TAG}")
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", GLSLANG_TAG, GLSLANG_URL,
@@ -261,7 +275,7 @@ def _musl_sources() -> List[Path]:
 
 
 def android_configure_inputs() -> List[Path]:
-    return [Path(__file__), PORT_DIR / "guest", PORT_DIR / "host", PORT_DIR / "probe",
+    return [Path(__file__), SDL_ANDROID_MOUSE_PATCH, PORT_DIR / "guest", PORT_DIR / "host", PORT_DIR / "probe",
             PORT_DIR / "probe" / "adrenotools.patch", LINUX_DIR / "src", *hud_configure_inputs()]
 
 
@@ -482,6 +496,8 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     ])
     for source in game_sources(config):
         cflags = game_cflags
+        if source.as_posix() == "source/main/main.c":
+            cflags += " " + updater_defines(getattr(sln, "port_release", False))
         if source.as_posix() in VARIADIC_PROTOTYPE_FILES:
             cflags += f" -include {PORT_DIR}/include/halo_android_variadic_prototypes.h"
         objects.append(guest_object(source, cflags))
@@ -783,6 +799,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
                     staged_brokers, *probe_staged])
 
     apk = PORT_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+    sdl_android_mouse_listener = SDL_DIR / SDL_ANDROID_MOUSE_LISTENER
     n.rule(
         name="android_gradle",
         # Gradle leaves the APK alone when its contents would not change
@@ -794,6 +811,6 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.build(outputs=apk, rule="android_gradle",
             inputs=[libmain, staged_sdl, staged_image, staged_relocations, staged_vk_image, staged_vk_relocations,
                     staged_brokers, *probe_staged],
-            implicit=[stamp])
+            implicit=[stamp, sdl_android_mouse_listener])
     n.build(outputs="android_apk", rule="phony", inputs=apk)
     n.newline()
