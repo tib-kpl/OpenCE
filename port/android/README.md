@@ -31,6 +31,36 @@ ninja) and these items:
   1.2.5 and SDL 3.4.16 to `build/android/third_party`. Gradle downloads the
   Android Gradle Plugin.
 
+On Windows, build in WSL2 (Ubuntu 24.04). The Android build does not run
+on Windows itself. Enter
+`wsl -d Ubuntu -- bash tools/wsl_setup_android.sh` one time: it installs
+the tools and the Android SDK and NDK in WSL (apt asks for your
+password). Then enter
+`wsl -d Ubuntu -- bash tools/wsl_build_android.sh` for each build. The
+script copies the repository into WSL (`~/halo-build/src`) with LF line
+endings (a Windows checkout has CRLF line endings, which the build's text
+tools do not accept), builds there, and puts the APK in
+`dist/android/app-debug.apk`. Only the changed files are copied, so the
+next build is incremental. Install the APK with the adb of Windows.
+
+A build that you make yourself has a different signature from the builds
+of GitHub Actions. Android installs it only after you remove the app, and
+removing the app deletes its data folder (`maps/`, `save/` and
+`config.toml`). Thus a change between the builds of GitHub Actions and your
+own builds loses the saved games, unless you copy them first (below).
+Your own builds all have the same signature (the debug key of WSL,
+`~/.android`), so they install over each other and keep the data
+(`adb install -r`).
+
+To keep the saved games before you remove the app, enter
+`adb pull /sdcard/Android/data/com.halo.decomp/files/save/u` (the profiles).
+After the new install, before the first start of the app, enter
+`adb push u /sdcard/Android/data/com.halo.decomp/files/save/u`. The app reads
+and overwrites what adb pushes. adb cannot add files to `save/u` or `save/z` once the app made them, or
+change files that the app wrote, so push before the first start. adb cannot read
+some files that the app writes (the `blam.lst` files of `save/z`), so `adb pull`
+of the whole `save` folder stops there.
+
 ## Build and install the app
 
 1. Go to the root folder of the repository.
@@ -69,7 +99,9 @@ To install the data from a computer:
 | Settings | `config.toml` |
 
 To make a copy of the saved games, enter
-`adb pull /sdcard/Android/data/com.halo.decomp/files/save`.
+`adb pull /sdcard/Android/data/com.halo.decomp/files/save/u` (the profiles).
+An `adb pull` of the whole `save` folder stops at the `blam.lst` files of
+`save/z`, which adb cannot read.
 
 ## Controls
 
@@ -125,6 +157,7 @@ These settings are only for Android:
 | `debug.vk_validation` | Refer to "Find problems". |
 | `debug.vk_present_marker` | Under the Vulkan renderer, draws a red square at the top left and a green one at the top right of the picture, so that a screenshot shows which way up it is. Default `false`. |
 | `debug.vk_self_test` | Under the Vulkan renderer, at start-up tries the renderer's clears and the copying of a draw's data (rewritten buffers, data larger than the command stream) on small targets of its own; the log says `clears self-test: ok` and `data self-test: id N ok`, or `FAILED`. Default `false`. |
+| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Refer to "Limits". |
 
 ## Graphics: OpenGL ES and Vulkan
 
@@ -397,7 +430,7 @@ signature. GitHub Actions signs each build with the key in the
 `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD` secrets of the
 repository. If you installed a build that has a different signature, remove
 that build before you install a new build. Removing the app deletes its data
-folder: first make a copy of `maps/` and `save/`.
+folder: first make a copy of `maps/` and `save/u`.
 
 ## Widescreen
 
@@ -583,6 +616,8 @@ assembly of the port is necessary:
   `HALO_APPLICATION_ID_SUFFIX=.vk` when you run `ninja android_apk`. The
   package is then `com.halo.decomp.vk`, with a data folder of its own, which
   needs a copy of `maps/`.
+- The log says which write tracking the app uses: "page protection"
+  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 
 ## Limits
 
@@ -593,3 +628,10 @@ assembly of the port is necessary:
 - The game does not accept touch input. Use a controller or a keyboard.
 - Kernels with 16 KB pages (a developer option of Android 15) do not
   operate. The Xbox memory uses 4 KB pages.
+- The x86 Android emulator runs the app through its ARM translation. The
+  translation cannot deliver the page faults that the renderer uses to
+  notice changed textures and vertices. On the emulator the app compares
+  page contents once a frame instead ("write tracking: page hashes" in the
+  log). This is slower, and a write shows one frame later, so moving
+  geometry can glitch briefly. `debug.memory_watch = false` does the same
+  on a device.

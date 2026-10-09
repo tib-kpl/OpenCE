@@ -46,6 +46,10 @@ void host_probe_start(void);
 /* 1 if a fault on this thread, inside the window, is the probe's to
 handle, and has been sent back to it */
 int host_probe_skip_fault(uintptr_t address);
+/* Makes the write tracking compare page contents instead of catching page
+faults (host_watch_hash.h), for when the app cannot receive its own
+SIGSEGV (ARM translation). Call before the guest starts. */
+void host_memory_watch_use_hashes(void);
 /* page-granular allocations below 4 GB; NULL on failure */
 void *host_low_map(size_t size, int protection);
 void host_low_unmap(void *address, size_t size);
