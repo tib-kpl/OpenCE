@@ -52,7 +52,8 @@ the verified part is the CPU part, as on the Xbox */
 #define TAG_CACHE_BASE_ADDRESS PORT_WINDOW_ADDRESS(0x803A6000)
 /* port: the native builds' larger texture cache (halo_port_capacity.h) */
 #define TEXTURE_CACHE_SIZE HALO_PORT_TEXTURE_CACHE_SIZE
-#define SOUND_CACHE_SIZE 0x400000
+/* port: and their larger sound cache (halo_port_capacity.h) */
+#define SOUND_CACHE_SIZE HALO_PORT_SOUND_CACHE_SIZE
 
 /* ---------- macros */
 
