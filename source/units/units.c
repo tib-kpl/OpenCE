@@ -6985,7 +6985,7 @@ void unit_damage_aftermath(
 			struct object_definition *owner_definition =
 				object_definition_get(owner_object->definition_index);
 			char const *separator = strrchr(
-				TAG_REFERENCE_NAME(owner_definition->object.model),
+				owner_definition->object.model.name,
 				'\\');
 
 			if (separator)

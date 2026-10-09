@@ -35,17 +35,8 @@ Xbox window and the image's range at start-up, and hands out pages for
 everything else (the guest's malloc arenas, thread stacks, anonymous
 mappings) from pools of address space it reserves below 4 GB on demand. */
 
-/* where the window was placed, for the guest's boot structure */
-uint32_t host_memory_window_base(void);
-
-/* claims the image's range (at preferred_base if it is free, else wherever
-there is room: *base says where) and the Xbox window */
-int host_memory_initialize(uint32_t preferred_base, uint32_t image_size, uint32_t *base);
-/* starts the thread that reports the window's own contents (host_probe.c) */
-void host_probe_start(void);
-/* 1 if a fault on this thread, inside the window, is the probe's to
-handle, and has been sent back to it */
-int host_probe_skip_fault(uintptr_t address);
+/* reserves the fixed ranges; returns 0 on success */
+int host_memory_initialize(uint32_t image_base, uint32_t image_size);
 /* Makes the write tracking compare page contents instead of catching page
 faults (host_watch_hash.h), for when the app cannot receive its own
 SIGSEGV (ARM translation). Call before the guest starts. */
@@ -67,30 +58,18 @@ struct host_guest_image
 {
 	const struct halo_guest_header *header;
 	uint32_t base, end;
-	/* how far it was loaded from where it was linked (HALO_GUEST_IMAGE_BASE):
-	0, unless the Java runtime held that address */
-	uint32_t shift;
-	/* addresses of named guest globals, found in the ELF's symbol table when
-	the image was read, so that host-side diagnostics do not carry addresses
-	that a rebuild would move (0 for a name the build does not have) */
-	uint32_t cache_file_globals, global_tag_instances;
 };
 
 extern struct host_guest_image host_image;
 
-/* the size of the address range an ELF file's loadable segments span, from
-HALO_GUEST_IMAGE_BASE; 0 (after logging why) if it is not a guest image */
+/* maps the image from the ELF file in memory; returns 0 on success */
+int host_load_image(const void *elf, size_t size);
+/* port: the two images (GL ES and Vulkan) share one range, reserved
+(host_memory_initialize) before the renderer is chosen: the size of the
+range an ELF file's loadable segments span, 0 (after logging why) if it is
+not a guest image, and the image mapped into the range already reserved */
 uint32_t host_image_span(const void *elf, size_t size);
-/* maps the image from the ELF file in memory, at the address it was linked
-at if it can, else elsewhere with its pointers moved by the relocation table
-(tools/guest_relocations.py); returns 0 on success. The range is reserved here
-(host_memory_initialize) ... */
-int host_load_image(const void *elf, size_t size, const void *relocations, size_t relocations_size);
-/* ... or, in the second form, before: the caller has called
-host_memory_initialize for a range at least host_image_span(elf, size) long,
-which it placed at base */
-int host_load_image_reserved(const void *elf, size_t size, const void *relocations, size_t relocations_size,
-	uint32_t base);
+int host_load_image_reserved(const void *elf, size_t size);
 
 /* ---------- entering guest code (host_thread.c) */
 

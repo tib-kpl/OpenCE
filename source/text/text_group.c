@@ -247,7 +247,7 @@ char *string_list_get_string(long tag_index, short string_index)
 
 			if (entry->string.size > 0)
 			{
-				result = TAG_DATA_ADDRESS(entry->string);
+				result = entry->string.address;
 				result[entry->string.size - 1] = '\0';
 			}
 		}
@@ -275,7 +275,7 @@ wchar_t *unicode_string_list_get_string(long tag_index, short string_index)
 			within it (a size of 1 wrote the terminator before its data) */
 			if (entry->string.size >= (long)sizeof(wchar_t))
 			{
-				result = TAG_DATA_ADDRESS(entry->string);
+				result = entry->string.address;
 				result[entry->string.size / sizeof(wchar_t) - 1] = L'\0';
 			}
 		}

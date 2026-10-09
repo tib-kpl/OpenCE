@@ -96,7 +96,6 @@ symbols in this file:
 
 #include "cseries.h"
 #include "cseries_windows.h"
-#include "halo_port_window.h"
 #include "cseries/errors.h"
 #include "real_math.h"
 #include "console.h"
@@ -310,8 +309,6 @@ void game_state_initialize_for_new_map(
 	game_state_globals.header->difficulty = game_difficulty_level_get();
 	game_state_globals.header->cache_file_checksum = cache_files_get_checksum();
 	game_state_globals.header->allocation_size_checksum = game_state_globals.allocation_size_checksum;
-	game_state_globals.header->layout_address = (unsigned long)game_state_globals.base_address;
-	game_state_globals.header->image_shift = PORT_IMAGE_SHIFT;
 
 	return;
 }
@@ -453,17 +450,6 @@ static boolean game_state_header_valid(
 	boolean halt_on_error)
 {
 	boolean valid = FALSE;
-
-	/* a save written where the game state sat at some other address, or with
-	the game's image moved elsewhere (PORT_IMAGE_SHIFT), holds pointers into a
-	range this process is not using, so there is nothing in it to restore. Not
-	worth reporting: a save from another device or another build is simply not
-	ours, and the caller starts a new game instead */
-	if (header->layout_address != (unsigned long)game_state_globals.base_address ||
-		header->image_shift != PORT_IMAGE_SHIFT)
-	{
-		return FALSE;
-	}
 
 	if (csstrcmp(header->map_name, tag_get_name(global_scenario_index)))
 	{
@@ -1060,7 +1046,7 @@ void game_state_initialize(
 	crc_new(&game_state_globals.allocation_size_checksum);
 	/* the native builds place their larger game state above the tag cache
 	(halo_port_capacity.h, cache/physical_memory_map.c) */
-	game_state_globals.base_address = game_state_allocate_buffer(PORT_WINDOW_ADDRESS(HALO_PORT_GAME_STATE_BASE_ADDRESS), GAME_STATE_CPU_SIZE, GAME_STATE_GPU_SIZE);
+	game_state_globals.base_address = game_state_allocate_buffer(HALO_PORT_GAME_STATE_BASE_ADDRESS, GAME_STATE_CPU_SIZE, GAME_STATE_GPU_SIZE);
 	game_state_create_or_open_file();
 	game_state_globals.header = game_state_malloc("header", NULL, sizeof(*game_state_globals.header));
 

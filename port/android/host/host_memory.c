@@ -9,9 +9,7 @@ references and so also live there. The host therefore claims only what the
 guest needs, when it needs it:
 
 - the Xbox contiguous window at 0x80000000 and the image's own range, at
-  start-up (both at the addresses the guest was built for, else wherever
-  there is room: the guest is told where the window is, and the image's
-  pointers are moved with it, host_loader.c);
+  start-up (both at fixed addresses the guest was built for);
 - pools of address space for the guest's other mappings (malloc arenas,
   thread stacks), reserved in free gaps below 4 GB as they fill up.
 
@@ -28,7 +26,6 @@ instead (host_watch_hash.c).
 #include "host_watch_hash.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -62,8 +59,6 @@ static pthread_mutex_t memory_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t window_base, window_end;
 static uint64_t image_base, image_end;
-/* the Custom Edition tag cache's place, 0 where something else held it */
-static uint64_t custom_edition_base, custom_edition_end;
 
 static uint64_t round_up(uint64_t value)
 {
@@ -75,52 +70,17 @@ static int in_range(uint64_t address, uint64_t size, uint64_t base, uint64_t end
 	return address >= base && address + size <= end && address + size >= address;
 }
 
-/* ---------- moving the window */
-
-/* The guest was built for the window at HALO_GUEST_WINDOW_BASE and works in
-guest addresses throughout, so every address it hands the host through a
-system call is in its own address space. When the window had to be placed
-elsewhere those calls name the address the game expects, and the host has to
-put them where the window actually is before touching the page tables, and
-report results back in guest addresses. Where the window did not move, both
-are the identity and nothing here changes. */
-
-static int guest_window_address(uint64_t address)
-{
-	return address >= HALO_GUEST_WINDOW_BASE &&
-		address - HALO_GUEST_WINDOW_BASE < HALO_GUEST_WINDOW_SIZE;
-}
-
-static uint64_t to_host(uint64_t address)
-{
-	if (window_base != HALO_GUEST_WINDOW_BASE && guest_window_address(address))
-		return window_base + (address - HALO_GUEST_WINDOW_BASE);
-	return address;
-}
-
-static uint64_t to_guest(uint64_t address)
-{
-	if (window_base != HALO_GUEST_WINDOW_BASE && guest_window_address(window_base + (address - window_base)))
-		return HALO_GUEST_WINDOW_BASE + (address - window_base);
-	return address;
-}
-
 /* ---------- reserving address space below 4 GB */
 
-/* the lowest gap of at least size bytes at or above minimum, from
-/proc/self/maps, starting on an alignment boundary; 0 if none. The window is
-placed on one because the game turns a window offset into an address by
-masking, which only holds while the window is a whole number of its own
-size from the bottom. */
-static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
+/* the lowest free gap of at least size bytes at or above minimum, from
+/proc/self/maps; 0 if none */
+static uint64_t find_gap(uint64_t size, uint64_t minimum)
 {
 	FILE *maps = fopen("/proc/self/maps", "r");
 	char line[512];
 	uint64_t previous_end = minimum;
 	uint64_t result = 0;
 
-	if (alignment > 1)
-		minimum = round_up(minimum) & ~(alignment - 1);
 	if (!maps)
 		return 0;
 	while (fgets(line, sizeof(line), maps))
@@ -139,39 +99,116 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 	}
 	fclose(maps);
 	previous_end = round_up(previous_end);
-	if (alignment > 1)
-		previous_end = (previous_end + alignment - 1) & ~(alignment - 1);
 	if (previous_end + size <= LOW_LIMIT)
 		result = previous_end;
 	return result;
 }
 
-/* reports whatever already occupies part of a range, so a refusal to use it
-says what was in the way rather than only that something was */
-static void log_conflicts(uint64_t address, uint64_t size)
+/* ART reserves its spaces (notably the free-list large object space) at
+addresses chosen at zygote start; on some devices (for example the Retroid
+Pocket Flip2, kernel 4.19) that reservation covers the fixed Xbox memory
+window. That space commits pages lazily from its bottom, and the Java side
+of this app hardly allocates large objects, so the slice over the window is
+normally idle address space: unmap exactly the intersection (never more)
+and let the caller retry. Only that space, and only a slice with no page in
+use (present or swapped out, from /proc/self/pagemap): ART's other spaces
+(its heap, bitmaps and card tables) are live, and unmapping them would
+corrupt it where failing to start is at least clear. */
+#define ART_LARGE_OBJECT_SPACE "[anon:dalvik-free list large object space]"
+
+/* whether no page from..to (page aligned) is present or swapped out; 0 if
+it cannot tell */
+static int range_unused(uint64_t from, uint64_t to)
+{
+	FILE *pagemap = fopen("/proc/self/pagemap", "rb");
+	uint64_t entries[512];
+	uint64_t page = from / PAGE;
+	int unused = 1;
+
+	if (!pagemap)
+		return 0;
+	if (fseeko(pagemap, (off_t)(page * sizeof(uint64_t)), SEEK_SET) != 0)
+		unused = 0;
+	while (unused && page < to / PAGE)
+	{
+		size_t wanted = (size_t)(to / PAGE - page);
+		size_t count;
+		size_t index;
+
+		if (wanted > sizeof(entries) / sizeof(entries[0]))
+			wanted = sizeof(entries) / sizeof(entries[0]);
+		count = fread(entries, sizeof(entries[0]), wanted, pagemap);
+		if (count != wanted)
+		{
+			unused = 0;
+			break;
+		}
+		/* (bit 63 present, bit 62 swapped) */
+		for (index = 0; index < count; index++)
+		{
+			if (entries[index] & (3ULL << 62))
+			{
+				unused = 0;
+				break;
+			}
+		}
+		page += count;
+	}
+	fclose(pagemap);
+	return unused;
+}
+
+static int reclaim_art_overlap(uint64_t address, uint64_t size)
 {
 	FILE *maps = fopen("/proc/self/maps", "r");
 	char line[512];
+	int reclaimed = 0;
 
 	if (!maps)
-		return;
+		return 0;
 	while (fgets(line, sizeof(line), maps))
 	{
-		unsigned long long start, end;
+		unsigned long long lo, hi;
+		uint64_t from, to;
+		char *name;
+		int name_offset = 0;
 
-		if (sscanf(line, "%llx-%llx", &start, &end) != 2)
+		if (sscanf(line, "%llx-%llx %*s %*s %*s %*s %n", &lo, &hi, &name_offset) < 2 || !name_offset)
 			continue;
-		if (end > address && start < address + size)
+		if (hi <= address || lo >= address + size)
+			continue;
+		name = line + name_offset;
+		name[strcspn(name, "\n")] = '\0';
+		from = lo > address ? lo : address;
+		to = hi < address + size ? hi : address + size;
+		if (strcmp(name, ART_LARGE_OBJECT_SPACE))
 		{
-			line[strcspn(line, "\n")] = 0;
-			host_logf(HOST_LOG_ERROR, "  in the way: %s", line);
+			host_logf(HOST_LOG_ERROR, "a fixed guest range is overlapped by %08llx-%08llx (%s), which is not ART's large object space; left alone",
+				lo, hi, name[0] ? name : "unnamed");
+			continue;
+		}
+		if (!range_unused(from, to))
+		{
+			host_logf(HOST_LOG_ERROR, "ART's large object space over %08llx-%08llx is in use (or its pages cannot be read); left alone",
+				(unsigned long long)from, (unsigned long long)to);
+			continue;
+		}
+		if (munmap((void *)from, to - from) == 0)
+		{
+			host_logf(HOST_LOG_INFO,
+				"reclaimed idle ART range %08llx-%08llx (%s)",
+				(unsigned long long)from, (unsigned long long)to, name);
+			reclaimed = 1;
 		}
 	}
 	fclose(maps);
+	return reclaimed;
 }
 
-/* claims a fixed range for the guest, or reports the address is taken */
-static int reserve(uint64_t address, uint64_t size)
+/* reclaim_art: the fixed ranges the guest was built for may take ART's
+idle large object space (reclaim_art_overlap); the pools, placed in free
+gaps, never do: a mapping in the way there is one ART just made, maybe live */
+static int reserve(uint64_t address, uint64_t size, int reclaim_art)
 {
 	void *result = mmap((void *)address, size, PROT_NONE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
@@ -180,11 +217,26 @@ static int reserve(uint64_t address, uint64_t size)
 		return 0;
 	if (result != MAP_FAILED)
 	{
-		/* some kernels honour the "no replace" part by handing back an
-		address elsewhere rather than by failing, so errno still says
-		whatever the last call left behind and cannot be trusted here */
 		munmap(result, size);
-		errno = EEXIST;
+		return -1;
+	}
+	if (reclaim_art && errno == EEXIST)
+	{
+		int error = errno;
+
+		/* (the caller reports the first failure if nothing was reclaimed) */
+		if (!reclaim_art_overlap(address, size))
+		{
+			errno = error;
+			return -1;
+		}
+		result = mmap((void *)address, size, PROT_NONE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE,
+			-1, 0);
+		if (result == (void *)address)
+			return 0;
+		if (result != MAP_FAILED)
+			munmap(result, size);
 	}
 	return -1;
 }
@@ -201,16 +253,16 @@ static struct pool *pool_new(void)
 		return NULL;
 	for (attempt = 0; attempt < 64; attempt++)
 	{
-		uint64_t address = find_gap(POOL_SIZE, minimum, 1);
+		uint64_t address = find_gap(POOL_SIZE, minimum);
 
 		if (!address && minimum != LOW_START)
 		{
 			minimum = LOW_START;
-			address = find_gap(POOL_SIZE, minimum, 1);
+			address = find_gap(POOL_SIZE, minimum);
 		}
 		if (!address)
 			return NULL;
-		if (reserve(address, POOL_SIZE) == 0)
+		if (reserve(address, POOL_SIZE, 0) == 0)
 		{
 			pool = calloc(1, sizeof(*pool));
 			pool->base = address;
@@ -225,115 +277,24 @@ static struct pool *pool_new(void)
 	return NULL;
 }
 
-uint32_t host_memory_window_base(void)
+int host_memory_initialize(uint32_t base, uint32_t size)
 {
-	return (uint32_t)window_base;
-}
-
-/* the image is moved by whole numbers of this: more than a page, so its
-sections keep the alignment they were linked with (guest.ld) */
-#define IMAGE_ALIGNMENT 0x10000ULL
-
-int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *base)
-{
-	uint64_t minimum = LOW_START;
-	int attempt;
-	int image_placed;
-
-	/* the image first, where it was linked: the search below reads the
-	mappings, so it has to be claimed before the window is placed or the
-	search hands back the image's own address */
-	image_base = preferred_base;
-	image_end = preferred_base + round_up(size);
-	image_placed = reserve(image_base, image_end - image_base) == 0;
-	if (!image_placed)
-	{
-		/* the Java runtime got there first (its heap can start as low as
-		32 MB and run past 1 GB): the image goes wherever there is room once
-		the window has its place, and its pointers are moved with it */
-		host_logf(HOST_LOG_INFO, "the guest image's address %08llx is taken (%s); putting it somewhere free",
-			(unsigned long long)image_base, strerror(errno));
-		log_conflicts(image_base, image_end - image_base);
-		image_base = image_end = 0;
-	}
-
-	/* the place Custom Edition maps' tags are linked to, before the window
-	or the image is put wherever there is room: the guest maps it over this
-	reservation (host_guest_mmap) when it runs those maps */
-	if (reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_SIZE) == 0)
-	{
-		custom_edition_base = HALO_GUEST_CUSTOM_EDITION_BASE;
-		custom_edition_end = HALO_GUEST_CUSTOM_EDITION_BASE + HALO_GUEST_CUSTOM_EDITION_SIZE;
-	}
-	else
-	{
-		host_logf(HOST_LOG_INFO, "the Custom Edition tag cache's address %08llx is taken (%s): Custom Edition maps cannot run",
-			(unsigned long long)HALO_GUEST_CUSTOM_EDITION_BASE, strerror(errno));
-		log_conflicts(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_SIZE);
-	}
-
-	/* the window where the game and its data expect it, if it is free */
-	if (reserve(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE) == 0)
-	{
-		window_base = HALO_GUEST_WINDOW_BASE;
-	}
-	else
-	{
-		/* the runtime holds the address. The game can still run with the
-		window elsewhere, as long as the map data is moved with it, which
-		the port does and is told about here. */
-		host_logf(HOST_LOG_INFO, "the window at %08llx is taken; putting it somewhere free",
-			(unsigned long long)HALO_GUEST_WINDOW_BASE);
-		window_base = 0;
-		for (attempt = 0; attempt < 128 && !window_base; attempt++)
-		{
-			uint64_t candidate = find_gap(HALO_GUEST_WINDOW_SIZE, minimum,
-				HALO_GUEST_WINDOW_ALIGNMENT);
-
-			if (!candidate)
-				break;
-			/* a mapping in the way here is one ART has just made, and may
-			be live, so it is never taken back: look further up */
-			if (reserve(candidate, HALO_GUEST_WINDOW_SIZE) != 0)
-			{
-				minimum = candidate + PAGE;
-				continue;
-			}
-			window_base = candidate;
-		}
-		if (!window_base)
-		{
-			host_logf(HOST_LOG_ERROR, "no free range of %u MB for the Xbox memory window",
-				(unsigned int)(HALO_GUEST_WINDOW_SIZE / (1024 * 1024)));
-			return -1;
-		}
-	}
+	window_base = HALO_GUEST_WINDOW_BASE;
 	window_end = window_base + HALO_GUEST_WINDOW_SIZE;
-	for (attempt = 0, minimum = LOW_START; attempt < 128 && !image_placed; attempt++)
+	if (reserve(window_base, HALO_GUEST_WINDOW_SIZE, 1) != 0)
 	{
-		uint64_t candidate = find_gap(round_up(size), minimum, IMAGE_ALIGNMENT);
-
-		if (!candidate)
-			break;
-		if (reserve(candidate, round_up(size)) != 0)
-		{
-			minimum = candidate + PAGE;
-			continue;
-		}
-		image_base = candidate;
-		image_end = candidate + round_up(size);
-		image_placed = 1;
-	}
-	if (!image_placed)
-	{
-		host_logf(HOST_LOG_ERROR, "no free range of %u MB for the guest image",
-			(unsigned int)(round_up(size) / (1024 * 1024)));
+		host_logf(HOST_LOG_ERROR, "cannot reserve the Xbox memory window at %08llx (%s)",
+			(unsigned long long)window_base, strerror(errno));
 		return -1;
 	}
-	*base = (uint32_t)image_base;
-	host_logf(HOST_LOG_INFO, "Xbox memory window at %08llx-%08llx, guest image at %08llx-%08llx",
-		(unsigned long long)window_base, (unsigned long long)window_end,
-		(unsigned long long)image_base, (unsigned long long)image_end);
+	image_base = base;
+	image_end = base + round_up(size);
+	if (reserve(image_base, image_end - image_base, 1) != 0)
+	{
+		host_logf(HOST_LOG_ERROR, "cannot reserve the guest image range at %08llx (%s)",
+			(unsigned long long)image_base, strerror(errno));
+		return -1;
+	}
 	return 0;
 }
 
@@ -435,8 +396,7 @@ int host_low_owns(uintptr_t address, size_t size)
 {
 	int result;
 
-	if (in_range(address, size, window_base, window_end) || in_range(address, size, image_base, image_end) ||
-		in_range(address, size, custom_edition_base, custom_edition_end))
+	if (in_range(address, size, window_base, window_end) || in_range(address, size, image_base, image_end))
 		return 1;
 	pthread_mutex_lock(&memory_lock);
 	result = pool_of(address, size) != NULL;
@@ -449,7 +409,6 @@ int host_low_owns(uintptr_t address, size_t size)
 long host_guest_mmap(uint64_t address, uint64_t size, int protection, int flags, int fd, int64_t offset)
 {
 	uint64_t length = round_up(size);
-	uint64_t host = to_host(address);
 	void *result;
 
 	if (!length)
@@ -458,20 +417,20 @@ long host_guest_mmap(uint64_t address, uint64_t size, int protection, int flags,
 	{
 		int fixed_flags = (flags & ~MAP_FIXED_NOREPLACE) | MAP_FIXED;
 
-		if (host + length > LOW_LIMIT)
+		if (address + length > LOW_LIMIT)
 			return -ENOMEM;
 		/* inside a range the host reserved for the guest, a "no replace"
 		request replaces the reservation */
-		if (!host_low_owns(host, length))
+		if (!host_low_owns(address, length))
 		{
 			if (!(flags & MAP_FIXED_NOREPLACE))
 				return -EINVAL;
 			fixed_flags = flags;
 		}
-		result = mmap((void *)host, length, protection, fixed_flags, fd, offset);
+		result = mmap((void *)address, length, protection, fixed_flags, fd, offset);
 		if (result == MAP_FAILED)
 			return -errno;
-		return (long)to_guest((uintptr_t)result);
+		return (long)(uintptr_t)result;
 	}
 	result = host_low_map(length, PROT_NONE);
 	if (!result)
@@ -489,33 +448,29 @@ long host_guest_mmap(uint64_t address, uint64_t size, int protection, int flags,
 long host_guest_munmap(uint64_t address, uint64_t size)
 {
 	uint64_t length = round_up(size);
-	uint64_t host = to_host(address);
 
-	if (host + length > LOW_LIMIT)
+	if (address + length > LOW_LIMIT)
 		return -EINVAL;
-	if (in_range(host, length, window_base, window_end) ||
-		in_range(host, length, custom_edition_base, custom_edition_end))
+	if (in_range(address, length, window_base, window_end))
 	{
-		mmap((void *)host, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
+		mmap((void *)address, length, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
 		return 0;
 	}
-	if (in_range(host, length, image_base, image_end))
+	if (in_range(address, length, image_base, image_end))
 		return -EINVAL;
-	if (host_low_owns(host, length))
+	if (host_low_owns(address, length))
 	{
-		host_low_unmap((void *)host, length);
+		host_low_unmap((void *)address, length);
 		return 0;
 	}
-	return munmap((void *)host, length) ? -errno : 0;
+	return munmap((void *)address, length) ? -errno : 0;
 }
 
 long host_guest_mprotect(uint64_t address, uint64_t size, int protection)
 {
-	uint64_t host = to_host(address);
-
-	if (host + size > LOW_LIMIT)
+	if (address + size > LOW_LIMIT)
 		return -EINVAL;
-	return mprotect((void *)host, size, protection) ? -errno : 0;
+	return mprotect((void *)address, size, protection) ? -errno : 0;
 }
 
 /* ---------- write tracking (port/linux/src/memory_watch.c) */
@@ -542,24 +497,21 @@ static struct watch_hash page_hashes =
 	.frame = 1,
 };
 
-/* The guest reaches this with addresses that are already in the window
-wherever it was placed (platform_contiguous_base), so the tracking follows
-the window the host actually reserved, not the one the game was built for. */
 static int in_window(uint64_t address)
 {
-	return address >= window_base && address - window_base < HALO_GUEST_WINDOW_SIZE;
+	return address >= HALO_GUEST_WINDOW_BASE && address - HALO_GUEST_WINDOW_BASE < HALO_GUEST_WINDOW_SIZE;
 }
 
 static uint64_t watch_page(uint64_t address)
 {
-	return (address - window_base) / PAGE;
+	return (address - HALO_GUEST_WINDOW_BASE) / PAGE;
 }
 
 static void mark_written(uint64_t page)
 {
 	page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
 	page_protected[page] = 0;
-	mprotect((void *)(window_base + page * PAGE), PAGE, PROT_READ | PROT_WRITE);
+	mprotect((void *)(HALO_GUEST_WINDOW_BASE + page * PAGE), PAGE, PROT_READ | PROT_WRITE);
 }
 
 static struct sigaction previous_segv, previous_bus, previous_ill;
@@ -574,11 +526,9 @@ static void report_crash(int signal_number, siginfo_t *information, void *contex
 	host_logf(HOST_LOG_ERROR, "signal %d at address %p: pc %016llx lr %016llx sp %016llx",
 		signal_number, information->si_addr, (unsigned long long)pc, (unsigned long long)lr,
 		(unsigned long long)registers->sp);
-	/* (addr2line wants the addresses the image was linked at, which is not
-	where it ran if the host had to move it) */
 	if (pc >= host_image.base && pc < host_image.end)
 		host_logf(HOST_LOG_ERROR, "  in the guest image: addr2line -e halo_guest.elf 0x%llx 0x%llx",
-			(unsigned long long)(uint32_t)(pc - host_image.shift), (unsigned long long)(uint32_t)(lr - host_image.shift));
+			(unsigned long long)pc, (unsigned long long)lr);
 	for (index = 0; index < 31; index += 4)
 	{
 		host_logf(HOST_LOG_ERROR, "  x%-2d %016llx %016llx %016llx %016llx", index,
@@ -671,8 +621,6 @@ void host_memory_watch_initialize(void)
 
 void host_memory_watch_use_hashes(void)
 {
-	/* (the pages hashed are the window's where the host placed it) */
-	page_hashes.base = (const uint8_t *)(uintptr_t)window_base;
 	watch_hashing = 1;
 }
 
@@ -699,7 +647,7 @@ void host_memory_watch_protect(uint32_t address, uint32_t size)
 		if (!page_protected[page])
 		{
 			page_protected[page] = 1;
-			mprotect((void *)(window_base + page * PAGE), PAGE, PROT_READ);
+			mprotect((void *)(HALO_GUEST_WINDOW_BASE + page * PAGE), PAGE, PROT_READ);
 		}
 	}
 }
@@ -741,10 +689,10 @@ void host_memory_watch_prepare_write(uint32_t address, uint32_t size)
 
 	if (!watch_active || watch_hashing || !size)
 		return;
-	if (start + size <= window_base || start >= window_base + HALO_GUEST_WINDOW_SIZE)
+	if (start + size <= HALO_GUEST_WINDOW_BASE || start >= (uint64_t)HALO_GUEST_WINDOW_BASE + HALO_GUEST_WINDOW_SIZE)
 		return;
-	if (start < window_base)
-		start = window_base;
+	if (start < HALO_GUEST_WINDOW_BASE)
+		start = HALO_GUEST_WINDOW_BASE;
 	first = watch_page(start);
 	last = watch_page((uint64_t)address + size - 1);
 	if (last >= WATCH_PAGE_COUNT)

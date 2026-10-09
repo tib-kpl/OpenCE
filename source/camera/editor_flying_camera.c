@@ -246,7 +246,7 @@ void editor_camera_new(
 	if (!initialized)
 	{
 		if (global_scenario_get()->players.count &&
-			TAG_BLOCK_ADDRESS(global_scenario_get()->players))
+			global_scenario_get()->players.address)
 		{
 			struct editor_camera_player_starting_location *starting_location =
 				TAG_BLOCK_GET_ELEMENT(

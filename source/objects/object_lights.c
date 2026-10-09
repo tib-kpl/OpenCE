@@ -252,14 +252,12 @@ enum
 		_shader_type_environment))
 
 #define structure_material_get_vertex(material, vertex_index) \
-	((struct environment_vertex_compressed const *) \
-		TAG_DATA_ADDRESS((material)->compressed_vertex_data) \
+	((struct environment_vertex_compressed const *)(material)->compressed_vertex_data.address \
 		+ (vertex_index))
 
 #define structure_material_get_lightmap_vertex(material, vertex_index) \
 	((struct environment_lightmap_vertex_compressed const *) \
-		((struct environment_vertex_compressed const *) \
-			TAG_DATA_ADDRESS((material)->compressed_vertex_data) \
+		((struct environment_vertex_compressed const *)(material)->compressed_vertex_data.address \
 			+ (material)->vertices.count) \
 		+ (vertex_index))
 

@@ -594,25 +594,16 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     # ---------- the guest image
 
     linker_script = PORT_DIR / "guest" / "guest.ld"
-    # where the image's 32-bit pointers are, so the host can load it elsewhere
-    # when its address is taken (tools/guest_relocations.py): linked with its
-    # relocations, which the table is made from and the image then drops
-    # (one table per image: $relocations names it)
-    relocations = BUILD / "halo_guest.relocs"
     n.rule(
         name="android_guest_link",
         command=(f"$android_ndk_bin/ld.lld -m aarch64linux -static -nostdlib -T {linker_script} "
-                 f"--emit-relocs -Map $out.map -o $out.full @$out.rsp {libguestc} "
-                 "$$($android_host_cc -print-libgcc-file-name) && "
-                 f"{python} tools/guest_relocations.py $out.full $relocations && "
-                 "$android_ndk_bin/llvm-objcopy --remove-section='.rela*' $out.full $out && rm -f $out.full"),
+                 f"-Map $out.map -o $out @$out.rsp {libguestc} "
+                 "$$($android_host_cc -print-libgcc-file-name)"),
         description="ANDROID LINK $out",
         rspfile="$out.rsp",
         rspfile_content="$in_newline",
     )
-    n.build(outputs=image, rule="android_guest_link", inputs=objects, implicit_outputs=[relocations],
-            implicit=[libguestc, linker_script, Path("tools/guest_relocations.py")],
-            variables={"relocations": str(relocations)})
+    n.build(outputs=image, rule="android_guest_link", inputs=objects, implicit=[libguestc, linker_script])
 
     # The same game with the Vulkan renderer (port/android/VULKAN.md): its device,
     # port/android/guest/d3d8_vk.c, takes the place of d3d8_gl.c and every other
@@ -625,10 +616,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     # the generators for glslang (port/android/VULKAN.md, phase 4): the originals stay in both images
     vk_objects.append(guest_object(PORT_DIR / "guest" / "nv2a_vsh_vk.c", platform_cflags))
     vk_objects.append(guest_object(PORT_DIR / "guest" / "nv2a_psh_vk.c", platform_cflags))
-    vk_relocations = BUILD / "halo_guest_vk.relocs"
-    n.build(outputs=vk_image, rule="android_guest_link", inputs=vk_objects, implicit_outputs=[vk_relocations],
-            implicit=[libguestc, linker_script, Path("tools/guest_relocations.py")],
-            variables={"relocations": str(vk_relocations)})
+    n.build(outputs=vk_image, rule="android_guest_link", inputs=vk_objects, implicit=[libguestc, linker_script])
 
     # ---------- SDL3
 
@@ -758,11 +746,12 @@ def generate_android_build(n: Writer, sln: Any) -> None:
            description="ANDROID STAGE $out")
     n.build(outputs=staged_sdl, rule="android_copy", inputs=libsdl)
     n.build(outputs=staged_image, rule="android_copy", inputs=image)
-    staged_relocations = assets_dir / "halo_guest.relocs"
-    n.build(outputs=staged_relocations, rule="android_copy", inputs=relocations)
     n.build(outputs=staged_vk_image, rule="android_copy", inputs=vk_image)
-    staged_vk_relocations = assets_dir / "halo_guest_vk.relocs"
-    n.build(outputs=staged_vk_relocations, rule="android_copy", inputs=vk_relocations)
+    # (the images' relocation tables went with the moving window: an old copy
+    # would ride along in the APK)
+    for stale in ("halo_guest.relocs", "halo_guest_vk.relocs"):
+        if (assets_dir / stale).exists():
+            (assets_dir / stale).unlink()
     # internet play's MQTT brokers, in the APK: the app writes them beside
     # config.toml (port/android/host/host_main.c)
     staged_brokers = assets_dir / "brokers.txt"
@@ -800,7 +789,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     if not stamp.exists() or stamp.read_text() != wanted:
         stamp.write_text(wanted)
     n.build(outputs="android", rule="phony",
-            inputs=[libmain, staged_sdl, staged_image, staged_relocations, staged_vk_image, staged_vk_relocations,
+            inputs=[libmain, staged_sdl, staged_image, staged_vk_image,
                     staged_brokers, *probe_staged])
 
     apk = PORT_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
@@ -814,7 +803,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         pool="console",
     )
     n.build(outputs=apk, rule="android_gradle",
-            inputs=[libmain, staged_sdl, staged_image, staged_relocations, staged_vk_image, staged_vk_relocations,
+            inputs=[libmain, staged_sdl, staged_image, staged_vk_image,
                     staged_brokers, *probe_staged],
             implicit=[stamp, sdl_android_mouse_listener])
     n.build(outputs="android_apk", rule="phony", inputs=apk)

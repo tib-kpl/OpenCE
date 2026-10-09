@@ -18,21 +18,18 @@ client's own objects take the upper half of the object array).
 /* ---------- game state
 
 The Xbox game state is 0x345000 bytes at 0x80061000 and ends where the tag
-cache begins (0x803A6000). Cache files are linked to those addresses, so
-the game state cannot grow in place, and the port moves them with the
-window where it cannot be at 0x80000000 (port/linux/include/halo_port_window.h).
-The native builds put a 16 MB game state above the tag cache (which ends at
-0x819A6000), inside the Xbox memory window (0x80000000-0xA0000000, Android's
-128 MB wherever the host finds room: port/linux/src/platform.h) and below
-everything the window hands out top-down (texture and sound caches,
-Direct3D resources).
+cache begins (0x803A6000). Cache files are linked to that tag cache address,
+so the game state cannot grow in place. The native builds put a 16 MB game
+state above the tag cache (which ends at 0x819A6000), inside the Xbox memory
+window (0x80000000-0xA0000000, Android's to 0x88000000:
+port/linux/src/platform.h) and below everything the window hands out
+top-down (texture and sound caches, Direct3D resources).
 
 The CPU part holds about 17.2 MB of pools at the sizes below (the Xbox pools
 fill 3,165,260 of its 0x305000 bytes); the GPU part holds only the decal
 vertices, as on the Xbox. A change to a pool's size changes the game state's
 layout: saved games of builds before it no longer load. */
 
-#define HALO_PORT_TAG_CACHE_SIZE 0x1600000 /* (0x1600000) */
 #define HALO_PORT_GAME_STATE_BASE_ADDRESS 0x81A00000 /* (0x80061000) */
 #define HALO_PORT_GAME_STATE_CPU_SIZE 0x13C0000 /* (0x305000) */
 #define HALO_PORT_GAME_STATE_GPU_SIZE 0x40000 /* (0x40000) */

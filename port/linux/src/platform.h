@@ -111,24 +111,12 @@ const char *platform_save_root(void);
 
 The Xbox maps physical memory at virtual 0x80000000 + P. The layer reserves
 that window at start-up and hands out page-granular blocks from it, so the
-physical/virtual arithmetic the game and Direct3D rely on keeps working.
+physical/virtual arithmetic the game and Direct3D rely on keeps working. */
 
-On Android the process shares the low 4 GB with the Java runtime, which maps
-memory of its own there, so the host looks for the window where the address
-space is free and passes its address to the guest in the boot structure
-(port/android). Everything that names a fixed place in the window must then
-be PLATFORM_CONTIGUOUS_ADDRESS(offset) rather than a literal. The window
-stays a multiple of 256 MB, which keeps the masking below correct. */
-
-#ifdef HALO_ANDROID
-extern unsigned long platform_contiguous_base;
-#define PLATFORM_CONTIGUOUS_BASE (platform_contiguous_base)
-#else
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#endif
 #ifdef HALO_ANDROID
-/* 128 MB, a development kit's: the host finds room for it below 4 GB
-(HALO_GUEST_WINDOW_SIZE, port/android/include/halo_android_abi.h) */
+/* 128 MB, a development kit's: Android's guest image is linked just above
+the window (port/android/include/halo_android_abi.h) */
 #define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL
 #else
 /* 512 MB on the desktop builds, whose caches outgrow the Xbox's (Custom
@@ -139,30 +127,13 @@ same size. */
 #endif
 #define PLATFORM_ANY_PHYSICAL_ADDRESS 0xffffffffUL
 
-/* the address of a fixed place in the window, as the game data was built */
-#define PLATFORM_CONTIGUOUS_ADDRESS(offset) (PLATFORM_CONTIGUOUS_BASE + (unsigned long)(offset))
-
 /* returns NULL on failure; physical_address places the block exactly */
 void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	unsigned long physical_address, DWORD protect);
 void platform_contiguous_free(void *address);
 BOOL platform_is_contiguous(const void *address);
-/* A window address and an offset into the window name the same place, and the
-port carries both: a resource the game allocated holds the address it asked
-for, and the port's own allocations hold an offset. On the Xbox the two could
-not be told apart, and setting bit 31 converted either, which is why this used
-to be an OR. That is only right while the base is 0x80000000: once the window
-moves, an address still written as 0x80...... has to be moved with it and an
-offset has the base added. Where the window did not move, both forms are the
-same arithmetic as before. */
-#define PLATFORM_PHYSICAL_TO_VIRTUAL(physical) \
-	((void *)(((unsigned long)(physical) & 0x80000000UL) ? \
-		((unsigned long)(physical) - 0x80000000UL + PLATFORM_CONTIGUOUS_BASE) : \
-		(PLATFORM_CONTIGUOUS_BASE + (unsigned long)(physical))))
-#define PLATFORM_VIRTUAL_TO_PHYSICAL(address) \
-	(((unsigned long)(address) >= PLATFORM_CONTIGUOUS_BASE && \
-	  (unsigned long)(address) - PLATFORM_CONTIGUOUS_BASE < PLATFORM_CONTIGUOUS_SIZE) ? \
-	 (unsigned long)(address) - PLATFORM_CONTIGUOUS_BASE : (unsigned long)(address))
+#define PLATFORM_PHYSICAL_TO_VIRTUAL(physical) ((void *)((unsigned long)(physical) | PLATFORM_CONTIGUOUS_BASE))
+#define PLATFORM_VIRTUAL_TO_PHYSICAL(address) ((unsigned long)(address) & ~PLATFORM_CONTIGUOUS_BASE)
 
 /* The window Halo Custom Edition tag data are linked to (0x40440000):
 reserved at start-up when the game.custom_edition setting is on, else NULL
@@ -189,8 +160,6 @@ do all generations */
 unsigned long memory_watch_serial(void);
 /* call before the host itself (read(), the kernel) writes into the range */
 void memory_watch_prepare_write(void *address, unsigned long size);
-/* the length of the contiguous block starting at address, or 0 */
-unsigned long platform_contiguous_block_size(const void *address);
 /* the range was remapped or reprotected: treat it as written and unwatched */
 void memory_watch_forget(void *address, unsigned long size);
 /* a new frame starts (Present): tracking that compares page contents

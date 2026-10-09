@@ -300,8 +300,6 @@ static uint32_t make_boot(const struct environment *environment)
 	boot->argv = (uint32_t)(uintptr_t)argv;
 	boot->environment = (uint32_t)(uintptr_t)environ_list;
 	boot->page_size = (uint32_t)getpagesize();
-	boot->contiguous_base = host_memory_window_base();
-	boot->image_shift = host_image.shift;
 	return (uint32_t)(uintptr_t)boot;
 }
 
@@ -321,7 +319,7 @@ static void *game_main(void *unused)
 	char path[600];
 	size_t image_size = 0, vk_image_size = 0, image_used_size;
 	void *image, *vk_image = NULL, *image_used;
-	uint32_t span, image_base = 0;
+	uint32_t span;
 	char vulkan_refused[300] = ""; /* why Vulkan, asked for, cannot be tried */
 	int want_vulkan = 0;
 	uint32_t boot;
@@ -386,12 +384,10 @@ static void *game_main(void *unused)
 		}
 	}
 
-	/* the image's range is reserved before anything else is brought up: bringing the
-	display and Vulkan up map memory of their own, which could take the address the
-	image is linked at and make it move when it need not (host_loader.c moves it only
-	where the address was already taken). Both images are linked to run at the same
-	address; the larger one's span is reserved (there, or wherever there is room:
-	image_base), and the other image's data is freed once the choice is made */
+	/* the fixed ranges are reserved before anything else is brought up: bringing the
+	display and Vulkan up map memory of their own, which could take them. Both
+	images are linked to run at the same address; the larger one's span is
+	reserved, and the other image's data is freed once the choice is made */
 	span = host_image_span(image, image_size);
 	if (want_vulkan && !host_image_span(vk_image, vk_image_size))
 	{
@@ -402,7 +398,7 @@ static void *game_main(void *unused)
 	}
 	if (want_vulkan && host_image_span(vk_image, vk_image_size) > span)
 		span = host_image_span(vk_image, vk_image_size);
-	if (!span || host_memory_initialize(HALO_GUEST_IMAGE_BASE, span, &image_base) != 0)
+	if (!span || host_memory_initialize(HALO_GUEST_IMAGE_BASE, span) != 0)
 		host_fatal("cannot load the game image; see logcat (tag \"halo\") for details");
 
 	{
@@ -449,18 +445,8 @@ static void *game_main(void *unused)
 		image_used = image;
 		image_used_size = image_size;
 	}
-	{
-		/* where the chosen image's pointers are, in case its address was taken
-		(host_loader.c): each image has its own table */
-		size_t relocations_size = 0;
-		void *relocations = SDL_LoadFile(image_used == vk_image ? "halo_guest_vk.relocs" : "halo_guest.relocs",
-			&relocations_size);
-		int loaded = host_load_image_reserved(image_used, image_used_size, relocations, relocations_size, image_base);
-
-		SDL_free(relocations);
-		if (loaded != 0)
-			host_fatal("cannot load the game image; see logcat (tag \"halo\") for details");
-	}
+	if (host_load_image_reserved(image_used, image_used_size) != 0)
+		host_fatal("cannot load the game image; see logcat (tag \"halo\") for details");
 	SDL_free(image);
 	SDL_free(vk_image);
 
