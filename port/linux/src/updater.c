@@ -38,7 +38,7 @@ int updater_build_number(void)
 	return HALO_BUILD_NUMBER;
 }
 
-#if !defined(HALO_ANDROID) \&\& !defined(HALO_WEB)
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 
 #include "zlib_prefixed.h"
 
