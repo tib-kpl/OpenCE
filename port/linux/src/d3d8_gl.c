@@ -337,7 +337,7 @@ struct vertex_shader_object
 	/* a shader lit for each pixel failed to compile or link: lit as the
 	vertex shader lights it from then on */
 	BOOL lighting_failed;
-#ifndef HALO_WEB
+#ifndef HALO_GLES
 	/* the vertex array its draws last used, and the streams they had
 	(setup_streams: the layout follows from the two) */
 	struct vertex_array_entry *vertex_array;
@@ -668,8 +668,7 @@ xgpu_gl_state_invalidate, after which every value is set again. Unknown
 values are all ones, which no real value matches (floats become NaN, which
 compares unequal to everything). */
 
-/* the web (WebGL 2) has no vertex bindings: it points each attribute */
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 struct attribute_pointer
 {
 	GLuint buffer;
@@ -681,7 +680,7 @@ struct attribute_pointer
 	unsigned long offset;
 };
 #else
-/* GL 4.3 and ES 3.1 separate an attribute's format from the buffer it
+/* desktop GL (4.3) separates an attribute's format from the buffer it
 reads: the attributes of a stream share one binding, so a draw that moves
 the stream rebinds it once instead of pointing each attribute again */
 struct attribute_format
@@ -701,7 +700,7 @@ struct vertex_binding
 	GLsizei stride;
 };
 
-/* a binding per stream (setup_streams); GL and ES 3.1 have at least 16 */
+/* a binding per stream (setup_streams); GL has at least 16 */
 #define VERTEX_BINDING_COUNT 16
 
 /* a vertex array object for each vertex layout (the attributes a draw
@@ -758,7 +757,7 @@ static struct
 	GLuint array_buffer;
 	GLuint element_array_buffer;
 	unsigned char attribute_enabled[XGPU_VERTEX_ATTRIBUTE_COUNT];
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 	struct attribute_pointer attribute_pointers[XGPU_VERTEX_ATTRIBUTE_COUNT];
 #else
 	GLuint vertex_array;
@@ -899,7 +898,7 @@ static void state_element_array_buffer(GLuint buffer)
 	}
 }
 
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 /* enables the attribute, reading size elements of type from buffer: each
 vertex is stride bytes on from the one before it, starting at
 buffer_offset, with the attribute relative_offset bytes into it */
@@ -1049,7 +1048,7 @@ static void state_attribute_value(GLuint index, const float *value)
 {
 	unsigned char kind = value ? 0 : 1;
 
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 	if (gl_state.attribute_enabled[index] != 0)
 	{
 		gl_state.attribute_enabled[index] = 0;
@@ -4733,7 +4732,7 @@ static void setup_streams(unsigned long first, unsigned long count)
 	BOOL placed[16] = { FALSE };
 	BOOL enabled[XGPU_VERTEX_ATTRIBUTE_COUNT] = { FALSE };
 	unsigned long index, total = 0;
-#ifndef HALO_WEB
+#ifndef HALO_GLES
 	struct vertex_layout layout;
 	unsigned long streams_used = 0;
 
@@ -4818,7 +4817,7 @@ static void setup_streams(unsigned long first, unsigned long count)
 			stream_buffers[stream] = device.stream_buffer;
 			stats.streamed_bytes += bytes;
 		}
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 		if (element->type == D3DVSDT_NORMPACKED3)
 		{
 			state_attribute_stream(element->reg, (GLuint)stream, stream_buffers[stream], 1, GL_UNSIGNED_INT, GL_FALSE,
@@ -4844,7 +4843,7 @@ static void setup_streams(unsigned long first, unsigned long count)
 #endif
 		enabled[element->reg] = TRUE;
 	}
-#ifndef HALO_WEB
+#ifndef HALO_GLES
 	/* (the layout follows from the declaration and the streams it has, so
 	the same two have the same vertex array: no need to look it up) */
 	if (!declaration->vertex_array || declaration->vertex_array_streams != streams_used)
@@ -5219,7 +5218,7 @@ void WINAPI D3DDevice_End(void)
 						attribute_size);
 				}
 			}
-#ifdef HALO_WEB
+#ifdef HALO_GLES
 			offset = stream_upload_aligned(packed, count * vertex_size, vertex_size);
 			first_vertex = offset / vertex_size;
 			for (slot = 0; slot < register_count; slot++)
@@ -5282,6 +5281,13 @@ void WINAPI D3DDevice_End(void)
 			{
 				state_attribute_stream(index, 0, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE,
 					(GLsizei)attribute_size, offset, index * count * attribute_size);
+			}
+#elif defined(HALO_GLES)
+			offset = stream_upload(device.immediate_vertices, count * stride);
+			for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+			{
+				state_attribute_stream(index, 0, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)stride,
+					offset, index * 4 * sizeof(float));
 			}
 #else
 			offset = stream_upload(device.immediate_vertices, count * stride);
