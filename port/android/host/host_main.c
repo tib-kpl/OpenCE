@@ -459,12 +459,8 @@ static void *game_main(void *unused)
 		if (report)
 			fclose(report);
 		host_fatal("The game cannot start: the memory it needs at 0x80000000 is taken by Android's "
-			"Java runtime on this device.
-
-Restarting the device may help. Please report it with "
-			"memory_map.txt from
-%s
-(or adb logcat -s halo).", data_root);
+			"Java runtime on this device.\n\nRestarting the device may help. Please report it with "
+			"memory_map.txt from\n%s\n(or adb logcat -s halo).", data_root);
 	}
 
 	{
