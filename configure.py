@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # root build script: writes build.ninja for the native ports (Linux, Windows,
-# Android, Switch)
+# Android) and the web port
 
 import argparse
 import io
@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 from tools import ninja_syntax
 from tools.android_build import android_configure_inputs, generate_android_build
-from tools.linux_build import generate_linux_build, linux_configure_inputs
-from tools.switch_build import generate_switch_build, switch_configure_inputs
+from tools.linux_build import check_profile_options, generate_linux_build, linux_configure_inputs
+from tools.web_build import generate_web_build, web_configure_inputs
 from tools.windows_build import generate_windows_build, windows_configure_inputs
 
 # arguments
@@ -32,7 +32,13 @@ parser.add_argument(
 parser.add_argument(
     "--release",
     action="store_true",
-    help="release builds (Linux, Windows, Android): assertions are not checked",
+    help="release builds (Linux, Windows, Android, web): assertions are not checked",
+)
+parser.add_argument(
+    "--profile",
+    action="store_true",
+    help="profiling builds (Linux, Windows, Android): CPU scopes recorded on a "
+    "console command or launch setting (README, \"Profiling builds\"); not with --pgo=train",
 )
 parser.add_argument(
     "--lto",
@@ -84,11 +90,15 @@ parser.add_argument(
     help="put the Vulkan validation layer in the Android APK (debug.vk_validation; adds about 30 MB)",
 )
 parser.add_argument(
-    "--devkitpro",
+    "--web-emcc",
     type=str,
-    help="devkitPro for `ninja switch` (default: DEVKITPRO, or /opt/devkitpro)",
+    help="Emscripten's emcc for `ninja web` (default: emcc on the PATH, then EMSDK's or ~/emsdk's)",
 )
 args = parser.parse_args()
+try:
+    check_profile_options(args.profile, args.pgo)
+except ValueError as error:
+    parser.error(str(error))
 
 # the settings the builds read
 sln = SimpleNamespace(
@@ -96,6 +106,7 @@ sln = SimpleNamespace(
     linux_cc=args.linux_cc,
     compiler_launcher=args.compiler_launcher,
     port_release=args.release,
+    port_profile=args.profile,
     port_lto=args.lto,
     port_portable=args.portable,
     port_pgo=args.pgo,
@@ -103,7 +114,7 @@ sln = SimpleNamespace(
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
     android_vulkan_validation=args.android_vulkan_validation,
-    devkitpro=args.devkitpro,
+    web_emcc=args.web_emcc,
 )
 
 
@@ -129,7 +140,7 @@ n.newline()
 generate_linux_build(n, sln)
 generate_android_build(n, sln)
 generate_windows_build(n, sln)
-generate_switch_build(n, sln)
+generate_web_build(n, sln)
 
 n.comment("Reconfigure on change")
 n.rule(
@@ -147,7 +158,7 @@ n.build(
         *linux_configure_inputs(),
         *android_configure_inputs(),
         *windows_configure_inputs(),
-        *switch_configure_inputs(),
+        *web_configure_inputs(),
     ],
 )
 n.newline()
