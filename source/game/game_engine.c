@@ -571,6 +571,7 @@ symbols in this file:
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
 #include "network_voice.h" /* port: port/linux/game/network_voice.c */
+#include "network_chat.h" /* port: port/linux/game/network_chat.c */
 /* (network_server_manager_internal.h's: the host's game record) */
 struct network_game *network_game_server_get_game(struct network_game_server *server);
 #include "objects.h"
@@ -1867,12 +1868,14 @@ static boolean scoreboard_team_columns(
 /* a network game's scoreboard picks players with the mouse
 (halo_scoreboard_pointer_update: a right click frees it): a player's name
 picked opens a menu of what may be done to them, the players' vote to kick
-them (network_votekick.c), muting their voice (network_voice.c), and the
-host's Kick and Ban, Ban picked twice */
+them (network_votekick.c), muting their voice and text chat on this
+machine (network_voice.c, network_chat.c), and the host's Mute for everyone
+(network_chat.c), Kick and Ban, Ban picked twice */
 enum
 {
 	_scoreboard_item_vote,
 	_scoreboard_item_mute,
+	_scoreboard_item_host_mute,
 	_scoreboard_item_kick,
 	_scoreboard_item_ban,
 	_scoreboard_item_cancel,
@@ -1932,20 +1935,26 @@ static void scoreboard_menu_items(
 	{
 		usprintf(labels[_scoreboard_item_vote], L"Start a vote to kick");
 	}
-	/* (its machine's voice: this machine's own choice) */
+	/* (its machine's voice and text chat lines: this machine's own choice) */
 	{
 		struct player_datum *player = player_try_and_get(scoreboard_menu.player_index);
 
-		if (player && network_voice_available())
+		if (player)
 		{
 			offered[_scoreboard_item_mute] = TRUE;
 			usprintf(labels[_scoreboard_item_mute],
-				network_voice_machine_muted(player->network_player_data.machine_index) ? L"Unmute voice" :
-					L"Mute voice");
+				network_voice_machine_muted(player->network_player_data.machine_index) ? L"Unmute voice and chat" :
+					L"Mute voice and chat");
 		}
 	}
 	if (network_votekick_host())
 	{
+		/* (the host's mute of their voice and lines, for every machine:
+		network_chat.c) */
+		offered[_scoreboard_item_host_mute] = TRUE;
+		usprintf(labels[_scoreboard_item_host_mute],
+			network_chat_host_mute_minutes((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(scoreboard_menu.player_index)) ?
+				L"Unmute for everyone" : L"Mute for everyone");
 		offered[_scoreboard_item_kick] = TRUE;
 		offered[_scoreboard_item_ban] = TRUE;
 		usprintf(labels[_scoreboard_item_kick], L"Kick");
@@ -2016,6 +2025,9 @@ static void scoreboard_menu_pick(
 		}
 		break;
 	}
+	case _scoreboard_item_host_mute:
+		network_chat_host_mute(player_index, !network_chat_host_mute_minutes(player_index));
+		break;
 	case _scoreboard_item_kick:
 		network_votekick_host_kick(player_index, FALSE);
 		break;
@@ -4216,7 +4228,6 @@ static void game_engine_build_lighting(
 	void)
 {
 	long player_count = 0;
-	long object_count = 0;
 
 	{
 		struct data_iterator iterator;
@@ -4226,55 +4237,10 @@ static void game_engine_build_lighting(
 			player_count++;
 	}
 
-	if (global_variant.universal_variant.vehicle_set != _game_engine_vehicles_none)
-	{
-		if (global_variant.game_engine_index == game_engine_race)
-		{
-			struct scenario *scenario = global_scenario_get();
-			/* port: a long counter, for a map's long count */
-			long flag_index;
-
-			for (flag_index = 0;
-				flag_index < scenario->netgame_flags.count;
-				flag_index++)
-			{
-				struct scenario_netgame_flag *flag = TAG_BLOCK_GET_ELEMENT(
-					&scenario->netgame_flags,
-					flag_index,
-					struct scenario_netgame_flag);
-
-				if (flag->type == _netgame_flag_race_vehicle)
-					object_count++;
-			}
-
-			if (object_count > player_count)
-				object_count = player_count;
-		}
-		else
-		{
-			struct object_iterator object_iterator;
-
-			object_iterator_new(
-				&object_iterator,
-				_object_mask_vehicle,
-				0);
-			while (object_iterator_next(&object_iterator))
-				object_count++;
-		}
-	}
-
-	if ((player_count > 8 && object_count >= 2) ||
-		player_count >= 13)
-	{
-		SET_FLAG(game_engine_globals.flags, _game_engine_disable_dynamic_light_bit, TRUE);
-	}
-
-	if (player_count > 4 ||
-		object_count >= 4 ||
-		TEST_FLAG(game_engine_globals.flags, _game_engine_disable_dynamic_light_bit))
-	{
-		SET_FLAG(game_engine_globals.flags, _game_engine_disable_integrated_lights_bit, TRUE);
-	}
+	/* port: the Xbox turned dynamic lights off past 13 players, or past 8
+	with two vehicles, and the flashlight off past 4 players or 4 vehicles.
+	A match on a map with a few vehicles then had a flashlight, and the next
+	one did not. The beam is a dynamic light, so both stay on. */
 
 	if (player_count >= 5)
 		SET_FLAG(game_engine_globals.flags, _game_engine_5_or_more_players_bit, TRUE);

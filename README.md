@@ -72,6 +72,10 @@ release, and the web site then plays it. The [Releases](https://github.com/OpenC
 page keeps the last five releases. If the latest build has a problem, get
 an older build from that page.
 
+### Arch-based Linux Distributions
+
+The above Linux binary release is available on the [AUR](https://aur.archlinux.org/packages/opence-bin).
+
 ## Game data
 
 The port does not include the game data. Download an Xbox disc image
@@ -91,19 +95,14 @@ the web, the page copies `maps/` out of the disc image into the browser's
 storage for the site; nothing is uploaded. Refer to
 [port/web/README.md](port/web/README.md).
 
-On the Nintendo Switch there is no file browser to pick the image with, so put
-the disc image on the card yourself:
+## Mods
 
-```
-sdmc:/switch/halo/halo.iso
-```
-
-The game finds it there on the first run and unpacks `maps/` itself, which
-takes a few minutes and writes about 1.7 GB, so leave the card in and keep that
-much space free. The log says which file it is copying and how far it has got.
-If you would rather unpack it yourself, `maps/` still works: put it at
-`sdmc:/switch/halo/maps/` and the game uses it as it is. Refer to
-[port/switch/README.md](port/switch/README.md).
+Mods are folders of Halo PC tag files, as the Halo Editing Kit and Invader
+write them, in `mods/` next to `maps/`: texture, sound, text and model packs
+that play over the maps' on your machine only, in any game. Each has a
+`mod.toml`. Every mod in the folder is on; the main menu's Mods turns them
+off and on and sets the order they load in.
+Refer to [docs/mods.md](docs/mods.md).
 
 ## Platforms
 

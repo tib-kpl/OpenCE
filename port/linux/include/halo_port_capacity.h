@@ -58,7 +58,7 @@ Android's window is 128 MB, as the web build's, and its cache the Xbox's. */
 The sound cache holds the sounds being played in 4 KB pages, 4 MB of them on
 the Xbox. Halo Custom Edition maps' sounds, converted when they load
 (port/linux/game/custom_edition_sounds.c), and those of sound tags loaded
-over a map's (loose_sounds.c), are longer than the Xbox maps' and fill it (a
+over a map's by mods (mod_sounds.c), are longer than the Xbox maps' and fill it (a
 campaign map's dialogue and music did, "SOUND CACHE BLOWN" in debug.txt).
 The desktop builds' cache is 16 MB; Android's and the web build's windows keep
 the Xbox's. */
@@ -115,5 +115,16 @@ without its widget */
 #define HALO_PORT_MAXIMUM_CONTRAIL_POINTS 8192 /* (1024) */
 #define HALO_PORT_MAXIMUM_LIGHTS_PER_MAP 4096 /* (896) */
 #define HALO_PORT_MAXIMUM_GAME_LOOPING_SOUNDS 4096 /* (1024) */
+
+/* ---------- rasterizer
+
+A frame's transparent geometry groups: each transparent part of a model drawn,
+each widget drawn (light volumes, antennas, flags, glows), each batch of
+dynamic geometry (particles, contrails), each transparent surface of the
+structure. A full pool draws the frame without the
+rest ("too many transparent geometry groups" in debug.txt): a b30 co-op game
+with eight times the enemies asked for 464 in a frame. Each group is 160
+bytes */
+#define HALO_PORT_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS 2048 /* (384) */
 
 #endif /* __HALO_PORT_CAPACITY_H */
