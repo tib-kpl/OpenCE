@@ -137,17 +137,48 @@ float halo_screen_scale(void)
 	return screen_scale[0] > screen_scale[1] ? screen_scale[0] : screen_scale[1];
 }
 
-/* display.model_detail (d3d8_gl.c): this renderer draws the models' stock
-level of detail */
+/* display.model_detail (as d3d8_gl.c's): "stock" chooses a model's level of
+detail by the Xbox's 480 lines, "native" by the display's, "highest" draws
+the most detailed level of whatever is drawn at all */
+enum
+{
+	_model_detail_stock,
+	_model_detail_native,
+	_model_detail_highest,
+};
+
+/* (read again only when a setting changes: every model asks, every frame) */
+static int model_detail_setting(void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static int value;
+
+	if (read_at != config_changes())
+	{
+		const char *setting = config_string("display.model_detail");
+
+		read_at = config_changes();
+		value = !strcmp(setting, "native") ? _model_detail_native :
+			!strcmp(setting, "highest") ? _model_detail_highest : _model_detail_stock;
+	}
+	return value;
+}
+
 int halo_model_detail_stock(void)
 {
-	return 1;
+	return model_detail_setting() == _model_detail_stock;
 }
 
 float halo_model_detail_scale(int level)
 {
-	(void)level;
-	return 1.0f;
+	float display_scale;
+
+	if (model_detail_setting() == _model_detail_stock)
+		return 1.0f;
+	if (model_detail_setting() == _model_detail_highest && level)
+		return 1.0e6f;
+	display_scale = halo_screen_pixel_scale();
+	return display_scale > 1.0f ? display_scale : 1.0f;
 }
 
 /* the height fade of the shield flare (d3d8_gl.c, overshield_effect.c): this
@@ -1867,6 +1898,40 @@ sampler (mode 0x11 a 2D one); otherwise the sampler is the texture's own type, a
 its bitmap has a high-res meter (hud_hires.h) whose green is its coverage. The cache there finds the override when it
 uploads the pixels; here it is asked the same way, without the GL texture (the texture's own decoding failing, which
 d3d8_gl.c would see, is not seen) */
+/* hud_hires_override_find's answer for stage 0's texture, kept until the pixels at its address are written or a setting
+changes: it checks the bitmap's pixels (a CRC of the whole of its first level), and every textured draw asks (on the Fold
+8 at the Halo level's falls, 10% of the game thread's work; 99% of the asks are answered again) */
+#define OVERRIDE_MEMO_SLOTS 1024
+
+static struct
+{
+	unsigned long address, width, height, level0_size;
+	unsigned long generation, settings;
+	long override;
+} override_memo[OVERRIDE_MEMO_SLOTS];
+
+static long override_find_kept(unsigned long address, unsigned long width, unsigned long height,
+	unsigned long level0_size)
+{
+	/* (every bit of the address mixed in: bitmaps lie at round addresses in the texture cache's blocks, which a slot of
+	address bits alone put in a few slots, each pushing the other out, so that every draw checked its bitmap anyway) */
+	unsigned long slot = (unsigned long)(((uint32_t)address * 2654435761u) >> 22) % OVERRIDE_MEMO_SLOTS;
+	unsigned long generation = memory_watch_generation(address, level0_size);
+
+	if (override_memo[slot].address == address && override_memo[slot].width == width &&
+		override_memo[slot].height == height && override_memo[slot].level0_size == level0_size &&
+		override_memo[slot].generation == generation && override_memo[slot].settings == config_changes())
+		return override_memo[slot].override;
+	override_memo[slot].override = hud_hires_override_find(address, width, height, level0_size);
+	override_memo[slot].address = address;
+	override_memo[slot].width = width;
+	override_memo[slot].height = height;
+	override_memo[slot].level0_size = level0_size;
+	override_memo[slot].generation = generation;
+	override_memo[slot].settings = config_changes();
+	return override_memo[slot].override;
+}
+
 static void key_textures(struct nv2a_pixel_shader_key *key)
 {
 	int stage;
@@ -1965,11 +2030,20 @@ static unsigned long dump_pixel_count, dump_vertex_count, dump_collisions;
 static FILE *dump_manifest;
 static BOOL dump_present_done;
 
+/* (read again only when a setting changes: every draw asks) */
 static const char *dump_folder(void)
 {
-	const char *folder = config_string("debug.gpu_dump_shaders");
+	static unsigned long read_at = (unsigned long)-1;
+	static const char *folder;
 
-	return folder && *folder ? folder : NULL;
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		folder = config_string("debug.gpu_dump_shaders");
+		if (folder && !*folder)
+			folder = NULL;
+	}
+	return folder;
 }
 
 static void dump_file(const char *folder, const char *name, const void *data, unsigned long size, const char *what)

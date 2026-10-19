@@ -682,13 +682,34 @@ void host_vk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl_address
 
 /* ---------- pipelines */
 
+/* (a word at a time: the state is words, and every draw hashes it; a byte at a time was 2.4% of the game thread at the
+Halo level's falls on a Fold 8. The hash is the lookup's alone, never kept) */
+typedef char pipeline_state_words_assert[sizeof(struct vk_pipeline_state) % 4 == 0 ? 1 : -1];
+
 static uint64_t state_hash_of(const struct vk_pipeline_state *state)
 {
-	return vk_hash_mix(vk_hash_init(), state, sizeof(*state));
+	const uint32_t *word = (const uint32_t *)state;
+	unsigned long count = sizeof(*state) / 4;
+	uint64_t hash = vk_hash_init();
+
+	while (count--)
+		hash = (hash ^ *word++) * 1099511628211ull;
+	return hash;
 }
 
 static VkPipeline pipeline_make(const struct pipeline *wanted, VkShaderModule vertex, VkShaderModule pixel,
 	int cache_only);
+/* the pipelines the latest draws found ready, with what found them: a draw with the same shaders and state is given its
+pipeline without the hash or the lock (a ready pipeline is kept until the device goes) */
+#define RECENT_PIPELINES 4
+
+static struct
+{
+	uint32_t vertex_handle, pixel_handle;
+	struct vk_pipeline_state state;
+	VkPipeline pipeline;
+} recent_pipelines[RECENT_PIPELINES];
+static unsigned recent_pipeline_next;
 
 static struct pipeline *pipeline_lookup(uint64_t vertex_hash, uint64_t pixel_hash, uint64_t state_hash)
 {
@@ -736,6 +757,20 @@ VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, 
 	{
 		B.counts.draws_skipped_shader++;
 		return VK_NULL_HANDLE;
+	}
+	{
+		unsigned index;
+
+		for (index = 0; index < RECENT_PIPELINES; index++)
+		{
+			if (recent_pipelines[index].pipeline && recent_pipelines[index].vertex_handle == vertex_handle &&
+				recent_pipelines[index].pixel_handle == pixel_handle &&
+				!memcmp(&recent_pipelines[index].state, state, sizeof(*state)))
+			{
+				B.counts.draws_ready++;
+				return recent_pipelines[index].pipeline;
+			}
+		}
 	}
 	state_hash = state_hash_of(state);
 	pthread_mutex_lock(&S.lock);
@@ -811,8 +846,14 @@ VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, 
 		pthread_cond_wait(&S.pipeline_done, &S.lock);
 	if (pipeline && pipeline->status == PIPELINE_READY)
 	{
+		unsigned slot = recent_pipeline_next++ % RECENT_PIPELINES;
+
 		B.counts.draws_ready++;
 		ready = pipeline->pipeline;
+		recent_pipelines[slot].vertex_handle = vertex_handle;
+		recent_pipelines[slot].pixel_handle = pixel_handle;
+		recent_pipelines[slot].state = *state;
+		recent_pipelines[slot].pipeline = ready;
 	}
 	else
 		B.counts.draws_skipped_pipeline++;
