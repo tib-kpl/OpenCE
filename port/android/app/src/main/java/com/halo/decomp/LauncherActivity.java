@@ -1,7 +1,6 @@
 package com.halo.decomp;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.widget.ScrollView;
@@ -254,40 +253,6 @@ public class LauncherActivity extends Activity {
         return true;
     }
 
-    private static String languageName(String language) {
-        switch (language) {
-            case "": return "English (maps)";
-            case "fr": return "Français (maps_fr)";
-            case "de": return "Deutsch (maps_de)";
-            case "es": return "Español (maps_es)";
-            case "it": return "Italiano (maps_it)";
-            default: return "maps_" + language;
-        }
-    }
-
-    /** several languages on the image: the player picks one */
-    private void chooseLanguage(Uri image, java.util.List<String> languages) {
-        String[] names = new String[languages.size()];
-        int preferred = 0;
-        for (int index = 0; index < names.length; index++) {
-            names[index] = languageName(languages.get(index));
-            if (languages.get(index).equals(isFrench() ? "fr" : ""))
-                preferred = index;
-        }
-        final int[] chosen = { preferred };
-        new AlertDialog.Builder(this)
-            .setTitle(t("Langue du jeu", "Game language"))
-            .setSingleChoiceItems(names, preferred, (dialog, which) -> chosen[0] = which)
-            .setPositiveButton(t("Installer", "Install"), (dialog, which) -> {
-                status.setText(t("Lecture de l'image disque...", "Reading the disc image..."));
-                String language = languages.get(chosen[0]);
-                new Thread(() -> importImage(image, language)).start();
-            })
-            .setNegativeButton(t("Annuler", "Cancel"), (dialog, which) -> fail(t("Import annulé.", "Import cancelled.")))
-            .setOnCancelListener(dialog -> fail(t("Import annulé.", "Import cancelled.")))
-            .show();
-    }
-
     /**
      * Sets game.language in config.toml (port/linux/src/port_config.c) to the
      * language of the maps installed: the game then also picks its
@@ -513,23 +478,7 @@ public class LauncherActivity extends Activity {
         pick.setEnabled(false);
         progress.setVisibility(View.VISIBLE);
         status.setText(t("Lecture de l'image disque...", "Reading the disc image..."));
-        new Thread(() -> {
-            java.util.List<String> languages;
-            try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(image, "r");
-                 FileInputStream in = new FileInputStream(descriptor.getFileDescriptor())) {
-                languages = XisoExtractor.languages(in.getChannel());
-            } catch (XisoExtractor.ExtractException exception) {
-                fail(exception.getMessage());
-                return;
-            } catch (Exception exception) {
-                fail(t("Lecture impossible : ", "Reading failed: ") + exception.getMessage());
-                return;
-            }
-            if (languages.size() > 1)
-                handler.post(() -> chooseLanguage(image, languages));
-            else
-                importImage(image, languages.isEmpty() ? null : languages.get(0));
-        }).start();
+        new Thread(() -> importImage(image)).start();
     }
 
     private void report(String text, int permille) {
@@ -550,19 +499,30 @@ public class LauncherActivity extends Activity {
         });
     }
 
-    /** language: "" for maps (English), "fr" for maps_fr..., null to let the extractor choose */
-    private void importImage(Uri image, String language) {
+    /**
+     * the game's language for the maps upstream's extractor installs: on a
+     * European disc it takes maps_xx for the device's language
+     * (XisoExtractor), so game.language follows the device ("" for English
+     * and the languages the game has none of); the French PC menus
+     * (MenuTranslation) need it
+     */
+    private static String deviceGameLanguage() {
+        String language = java.util.Locale.getDefault().getLanguage();
+        return java.util.Arrays.asList("ja", "de", "fr", "es", "it").contains(language) ? language : "";
+    }
+
+    private void importImage(Uri image) {
         try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(image, "r")) {
             if (descriptor == null)
                 throw new java.io.IOException("the file could not be opened");
             try (FileInputStream in = new FileInputStream(descriptor.getFileDescriptor())) {
                 FileChannel channel = in.getChannel();
 
-                String installed = XisoExtractor.extractMaps(channel, dataRoot, language,
+                XisoExtractor.extractMaps(channel, dataRoot,
                     (file, done, total) -> report(t("Extraction de maps/", "Extracting maps/") + file + " ("
                         + (done >> 20) + t(" sur ", " of ") + (total >> 20) + t(" Mo)", " MB)"),
                         total > 0 ? (int) (done * 1000 / total) : 0));
-                setGameLanguage(installed);
+                setGameLanguage(deviceGameLanguage());
             }
             handler.post(() -> {
                 if (haveData()) {
