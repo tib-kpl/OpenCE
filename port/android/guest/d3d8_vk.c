@@ -135,6 +135,38 @@ float halo_screen_scale(void)
 	return screen_scale[0] > screen_scale[1] ? screen_scale[0] : screen_scale[1];
 }
 
+/* display.model_detail (d3d8_gl.c): this renderer draws the models' stock
+level of detail */
+int halo_model_detail_stock(void)
+{
+	return 1;
+}
+
+float halo_model_detail_scale(int level)
+{
+	(void)level;
+	return 1.0f;
+}
+
+/* the height fade of the shield flare (d3d8_gl.c, overshield_effect.c): this
+renderer draws the flare whole, as the stock game does */
+void d3d8_gl_set_height_fade(float inverse_softness, float height, float offset, float scale)
+{
+	(void)inverse_softness;
+	(void)height;
+	(void)offset;
+	(void)scale;
+}
+
+/* display.hdr's tone mapping (d3d8_gl.c): this renderer draws without HDR */
+void halo_screen_tone_map(short x0, short y0, short x1, short y1)
+{
+	(void)x0;
+	(void)y0;
+	(void)x1;
+	(void)y1;
+}
+
 /* (d3d8_gl.c's forgets the GL texture its units had bound; this renderer
 binds no GL texture) */
 void xgpu_gl_texture_deleted(unsigned int texture)
