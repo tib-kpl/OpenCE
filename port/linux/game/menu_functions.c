@@ -80,6 +80,7 @@ their handlers open opens.
 #include "text/unicode.h"
 
 #include "halo_menus.h"
+#include "halo_port_french.h" /* port: this fork's French texts */
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
 #include "network_voice.h"
@@ -2036,6 +2037,16 @@ static struct
 	{ "controls.team_chat", L"TEAM CHAT", 3 },
 };
 
+/* port: this fork's French names of the actions above, in their order
+(halo_port_french.h) */
+static wchar_t const *const control_labels_french[] =
+{
+	L"AVANCER", L"RECULER", L"PAS À GAUCHE", L"PAS À DROITE", L"SAUTER", L"S'ACCROUPIR",
+	L"TIRER", L"LANCER GRENADE", L"MÊLÉE", L"RECHARGER", L"ZOOM", L"CHANGER D'ARME",
+	L"AUTRE GRENADE", L"ACTION", L"LAMPE TORCHE", L"VOIR SCORES", L"MENU PAUSE",
+	L"CAPTURE ÉCRAN", L"PUSH-TO-TALK", L"CHAT", L"CHAT D'ÉQUIPE",
+};
+
 static struct
 {
 	/* the bindings shown, until OK writes them */
@@ -2220,7 +2231,9 @@ static void controls_update(struct widget_instance *list)
 				focus_row(list, 0);
 			continue;
 		}
-		text_set(named(row, "command_label", 0), controls[control].label);
+		text_set(named(row, "command_label", 0),
+			port_french() && NUMBEROF(control_labels_french) == NUMBEROF(controls) ?
+			control_labels_french[control] : controls[control].label);
 		for (slot = 0; slot < CONTROL_BINDINGS; slot++)
 		{
 			char const *binding = controls_screen.bindings[control][slot];
@@ -2583,12 +2596,13 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 	if (mod < 0)
 	{
 		/* (no mods: where they go) */
-		mods_wide_text(count ? "" : "No mods", wide, NUMBEROF(wide));
+		mods_wide_text(count ? "" : PORT_TEXT("No mods", "Aucun mod"), wide, NUMBEROF(wide));
 		text_set_length(named(details, "mod_details_name", 0), wide, NUMBEROF(wide));
 		text[0] = 0;
 		if (!count)
 		{
-			mods_wrap("Each mod is a folder of its own in the mods folder, beside the maps folder.", text,
+			mods_wrap(PORT_TEXT("Each mod is a folder of its own in the mods folder, beside the maps folder.",
+				"Chaque mod est un dossier à part dans le dossier mods, à côté du dossier maps."), text,
 				sizeof(text), _mod_details_text, MOD_DETAILS_LINES, 0);
 		}
 		mods_wide_text(text, wide, NUMBEROF(wide));
@@ -2615,8 +2629,9 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 		line = mods_wrap(problem, text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
 		line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
 	}
-	snprintf(about, sizeof(about), "%s\nPriority: %d of %d", status == _port_mod_unplayable ? "Cannot be played" :
-		port_mods_on(mod) ? "On" : "Off", place + 1, count);
+	snprintf(about, sizeof(about), PORT_TEXT("%s\nPriority: %d of %d", "%s\nPriorité : %d sur %d"),
+		status == _port_mod_unplayable ? PORT_TEXT("Cannot be played", "Ne peut pas être joué") :
+		port_mods_on(mod) ? PORT_TEXT("On", "Activé") : PORT_TEXT("Off", "Désactivé"), place + 1, count);
 	line = mods_wrap(about, text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
 	line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
 	port_mods_details(mod, about, sizeof(about));
@@ -2691,7 +2706,7 @@ static void mods_update(struct widget_instance *list)
 			mods_screen.row_mods[row_index] = mod;
 			mods_screen.row_fonts[row_index] = mods_screen.fonts[_mod_row_name];
 		}
-		text_set(named(row, "mod_state", 0), port_mods_on(mod) ? L"ON" : L"OFF");
+		text_set(named(row, "mod_state", 0), port_mods_on(mod) ? PORT_TEXT(L"ON", L"OUI") : PORT_TEXT(L"OFF", L"NON"));
 		icon = named(row, "mod_status", 0);
 		visible_set(icon, status != _port_mod_fine);
 		if (icon)

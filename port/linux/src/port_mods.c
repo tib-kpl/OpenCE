@@ -49,6 +49,7 @@ at startup whether to play them anyway, turn those named off, or quit
 #include "platform.h"
 #include "port_config.h"
 #include "port_mods.h"
+#include "../include/halo_port_french.h" /* this fork's French texts */
 #include "posix.h"
 #include "tomlc17.h"
 
@@ -432,7 +433,7 @@ static int mod_read(struct port_mod *mod, const char *root, const char *folder)
 		}
 		/* (a list of nothing but mistakes is for no map) */
 		if (!mod->map_count)
-			mod->refusal = "its list of maps names none";
+			mod->refusal = PORT_TEXT("its list of maps names none", "sa liste de cartes n'en nomme aucune");
 	}
 	else if (value.type != TOML_UNKNOWN && value.type != TOML_ARRAY)
 	{
@@ -443,7 +444,7 @@ static int mod_read(struct port_mod *mod, const char *root, const char *folder)
 	{
 		platform_log("mods: %s is made for a later build (format %lld): it is not played", path,
 			(long long)value.u.int64);
-		mod->refusal = "made for a later build";
+		mod->refusal = PORT_TEXT("made for a later build", "fait pour une version plus récente");
 	}
 	else if (value.type != TOML_UNKNOWN && value.type != TOML_INT64)
 	{
@@ -1143,21 +1144,23 @@ int port_mods_status(long index, char *text, unsigned long size)
 	if (mod->refusal)
 	{
 		if (text)
-			snprintf(text, size, "It cannot be played: %s.", mod->refusal);
+			snprintf(text, size, PORT_TEXT("It cannot be played: %s.", "Il ne peut pas être joué : %s."), mod->refusal);
 		return _port_mod_unplayable;
 	}
 	if ((other = mod_incompatible_with(index)) >= 0)
 	{
 		if (text)
-			snprintf(text, size, "%s says it cannot be played with this mod.", port_mods.mods[other].name);
+			snprintf(text, size, PORT_TEXT("%s says it cannot be played with this mod.",
+				"%s indique ne pas pouvoir être joué avec ce mod."), port_mods.mods[other].name);
 		return _port_mod_incompatible;
 	}
 	if ((other = mod_out_of_order_with(index, &before)) >= 0)
 	{
 		/* (as the Mods menu shows them: the mod loaded last at the top) */
 		if (text)
-			snprintf(text, size, "It asks to be %s %s, but is %s it.", before ? "below" : "above",
-				port_mods.mods[other].name, before ? "above" : "below");
+			snprintf(text, size, PORT_TEXT("It asks to be %s %s, but is %s it.", "Il demande à être %s %s, mais il est %s."),
+				before ? PORT_TEXT("below", "sous") : PORT_TEXT("above", "au-dessus de"), port_mods.mods[other].name,
+				before ? PORT_TEXT("above", "au-dessus") : PORT_TEXT("below", "en dessous"));
 		return _port_mod_out_of_order;
 	}
 	return _port_mod_fine;
@@ -1179,13 +1182,13 @@ int port_mods_details(long index, char *text, unsigned long size)
 		snprintf(text, size, "Version %s\n", mod->version);
 	length = strlen(text);
 	if (mod->authors[0])
-		snprintf(text + length, size - length, "By %s\n", mod->authors);
+		snprintf(text + length, size - length, PORT_TEXT("By %s\n", "Par %s\n"), mod->authors);
 	length = strlen(text);
-	snprintf(text + length, size - length, "Folder: %s\n", mod->folder);
+	snprintf(text + length, size - length, PORT_TEXT("Folder: %s\n", "Dossier : %s\n"), mod->folder);
 	length = strlen(text);
 	if (mod->maps)
 	{
-		snprintf(text + length, size - length, "For:");
+		snprintf(text + length, size - length, "%s", PORT_TEXT("For:", "Pour :"));
 		for (map = 0; map < mod->map_count; map++)
 		{
 			length = strlen(text);
@@ -1312,7 +1315,8 @@ int port_mods_conflicts(char *text, unsigned long size)
 		{
 			size_t length = strlen(text);
 
-			snprintf(text + length, size - length, "%s%s says it cannot be played with %s.", count ? "\n" : "",
+			snprintf(text + length, size - length, PORT_TEXT("%s%s says it cannot be played with %s.",
+				"%s%s indique ne pas pouvoir être joué avec %s."), count ? "\n" : "",
 				port_mods.mods[other].name, port_mods.mods[index].name);
 		}
 		count++;
@@ -1390,10 +1394,12 @@ void port_mods_startup(void)
 		return;
 	}
 	snprintf(message, sizeof(message),
-		"Mods in the mods folder say they cannot be played together:\n\n%s\n\n"
+		PORT_TEXT("Mods in the mods folder say they cannot be played together:\n\n%s\n\n"
 		"Play them all anyway, turn off %s, or quit? (The main menu's Mods turns mods on and off.)",
+		"Des mods du dossier mods indiquent ne pas pouvoir être joués ensemble :\n\n%s\n\n"
+		"Les jouer tous quand même, désactiver %s, ou quitter ? (Mods, dans le menu principal, active et désactive les mods.)"),
 		conflicts, names);
-	snprintf(disable, sizeof(disable), "Turn off %s", names);
+	snprintf(disable, sizeof(disable), PORT_TEXT("Turn off %s", "Désactiver %s"), names);
 	/* (a long list of names is cut short on its button, at a whole
 	character) */
 	if (strlen(disable) > 40)
@@ -1402,10 +1408,11 @@ void port_mods_startup(void)
 		utf8_trim(disable);
 		strcat(disable, "...");
 	}
-	labels[0] = "Play anyway";
+	labels[0] = PORT_TEXT("Play anyway", "Jouer quand même");
 	labels[1] = disable;
-	labels[2] = "Quit";
-	answer = platform_ask("Halo: mods that cannot be played together", message, labels, 3, 0);
+	labels[2] = PORT_TEXT("Quit", "Quitter");
+	answer = platform_ask(PORT_TEXT("Halo: mods that cannot be played together", "Halo : mods incompatibles entre eux"),
+		message, labels, 3, 0);
 	if (answer == 1)
 	{
 		/* (played so even when load_order.toml cannot be written:
