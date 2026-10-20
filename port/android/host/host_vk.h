@@ -317,6 +317,8 @@ VkPipeline host_vk_pipeline_find(uint32_t vertex_handle, uint32_t pixel_handle, 
 were made since */
 void host_vk_services_statistics(char *text, size_t size);
 void host_vk_services_tick(void);
+/* at each present: the next frame's time for compiling its draws' shaders starts (host_vk_shader_make) */
+void host_vk_shaders_present(void);
 /* the pipeline cache is written to the device (why says what asked: the log's line) */
 void host_vk_pipeline_cache_save(const char *why);
 /* host_vk_render.c: the device made if it is not yet, B.lock held */

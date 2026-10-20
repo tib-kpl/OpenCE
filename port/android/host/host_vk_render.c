@@ -1434,6 +1434,7 @@ static void command_present(const struct vk_command_present *command)
 
 	host_vk_rendering_end();
 	host_vk_visibility_frame_end(cmd);
+	host_vk_shaders_present();
 	if (command->back_buffer.kind == VK_SURFACE_COLOR)
 		back_buffer = host_vk_target_get(&command->back_buffer);
 	/* the next frame starts with nothing bound (the guest tells the host its targets again) */

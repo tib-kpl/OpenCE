@@ -657,6 +657,7 @@ void host_vk_submit(unsigned int commands, unsigned int size);
 /* the shader service (host_vk_shaders.c; the imports pass a 64-bit hash in one register) */
 void host_vk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl, uint32_t glsl_size);
 uint32_t host_vk_shader_find(uint32_t stage, uint64_t hash, uint32_t status_out);
+uint32_t host_vk_shader_make(uint32_t stage, uint64_t hash);
 
 #define STREAM_SIZE (4 * 1024 * 1024)
 
@@ -2431,6 +2432,17 @@ static uint32_t shader_handle(uint32_t stage, uint64_t hash, const struct vertex
 			host_vk_shader_compile(stage, hash, (uint32_t)(uintptr_t)glsl, (uint32_t)strlen(glsl));
 			free(glsl);
 			entry->sent++;
+		}
+	}
+	/* queued or compiling: made now, for this draw, while the frame has time for it (the host's host_vk_shader_make);
+	else the draw is left out until a compile thread has made it */
+	if (status != VK_SHADER_STATUS_FAILED && status != VK_SHADER_STATUS_NOT_READY)
+	{
+		handle = host_vk_shader_make(stage, hash);
+		if (handle)
+		{
+			entry->handle = handle;
+			return handle;
 		}
 	}
 	return 0;

@@ -148,6 +148,9 @@ shader's module, or 0 and writes a VK_SHADER_STATUS_* to the guest address statu
 address, copied during the call) for the compile thread. A 64-bit hash travels in one register */
 uint32_t host_vk_shader_find(uint32_t stage, uint64_t hash, uint32_t status_out);
 void host_vk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl, uint32_t glsl_size);
+/* a queued shader compiled now, by the draw that needs it, or one a compile thread is making waited for, while the frame
+has spent less than a frame's time on it: its handle, or 0 (the draw is left out until the threads make it) */
+uint32_t host_vk_shader_make(uint32_t stage, uint64_t hash);
 /* whether the device reads a Vulkan format as a vertex attribute (host_vk_render.c), asked once for each by the guest */
 uint32_t host_vk_format_supported(uint32_t format);
 /* whether BC1 to BC3 images can be sampled with linear filtering and written by a copy (the guest sends them as they are if so,
