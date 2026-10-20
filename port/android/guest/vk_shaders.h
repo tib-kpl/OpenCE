@@ -229,6 +229,9 @@ color for each pixel (the key's per_pixel_lighting). Returns a malloc'd string. 
 struct nv2a_vertex_lighting;
 char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long instruction_count,
 	unsigned long packed_attribute_mask, const struct nv2a_vertex_lighting *lighting);
+/* the fixed-function pipeline's vertex shader (SetVertexShader with 0: the loading screen's immediate-mode draws, whose
+positions d3d8_vk.c's draw_make has put in clip space). Returns a malloc'd string. */
+char *nv2a_vk_fixed_function_glsl(void);
 
 struct nv2a_pixel_shader_key;
 

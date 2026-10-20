@@ -40,6 +40,7 @@ enum
 	VK_COMMAND_VISIBILITY_BEGIN,
 	VK_COMMAND_VISIBILITY_END,
 	VK_COMMAND_ANTI_ALIAS,
+	VK_COMMAND_BLIT,
 };
 
 /* a surface's kind, as the host makes its image */
@@ -106,6 +107,18 @@ struct vk_command_clear
 	uint32_t stencil;
 	uint32_t rectangle_count;
 	uint32_t rectangles[][4];
+};
+
+/* copies a rectangle of one colour target into a rectangle of another, scaled with a linear filter: the loading screen's
+front buffer, the frame before, which it blurs into its light's trails (d3d8_vk.c, front_buffer_take). Rectangles are x, y,
+width, height in each one's pixels, row 0 at the top */
+struct vk_command_blit
+{
+	struct vk_command_header header;
+	struct vk_surface source;
+	struct vk_surface destination;
+	uint32_t from[4];
+	uint32_t to[4];
 };
 
 /* shows the back buffer, letterboxed to the display */

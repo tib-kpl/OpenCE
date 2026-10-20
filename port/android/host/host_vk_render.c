@@ -277,6 +277,8 @@ uint32_t host_vk_memory_type(uint32_t bits, VkMemoryPropertyFlags preferred)
 }
 
 static VkImageUsageFlags color_usage, depth_usage;
+/* colour targets can be blitted into (command_blit) */
+static int color_blit_destination;
 
 /* the first time a target is drawn into it is cleared (black; depth 1, stencil 0), so that a target read before
 anything is drawn into it reads the same on every driver */
@@ -822,6 +824,65 @@ static void command_targets(const struct vk_command_targets *command)
 		B.samples = samples;
 	}
 	B.counts.targets++;
+}
+
+/* a rectangle of one colour target copied into another's (made if it never was), outside any rendering; the destination
+is then the latest image at its data, which a texture there samples */
+static void command_blit(const struct vk_command_blit *command)
+{
+	static int said;
+	struct host_vk_target *source, *destination;
+	VkCommandBuffer cmd;
+	VkImageBlit blit;
+
+	if (command->source.kind != VK_SURFACE_COLOR || command->destination.kind != VK_SURFACE_COLOR ||
+		!command->from[2] || !command->from[3] || !command->to[2] || !command->to[3])
+		return;
+	if (!color_blit_destination)
+	{
+		if (!said++)
+			host_logf(HOST_LOG_WARN, "vk: colour targets cannot be blitted into here; the loading screen has no trails");
+		return;
+	}
+	source = host_vk_target_get(&command->source);
+	destination = host_vk_target_get(&command->destination);
+	if (!source || !destination || source == destination)
+		return;
+	if ((uint64_t)command->from[0] + command->from[2] > source->key.pixel_width ||
+		(uint64_t)command->from[1] + command->from[3] > source->key.pixel_height ||
+		(uint64_t)command->to[0] + command->to[2] > destination->key.pixel_width ||
+		(uint64_t)command->to[1] + command->to[3] > destination->key.pixel_height)
+	{
+		if (!said++)
+			host_logf(HOST_LOG_ERROR, "vk: a blit of %08x %u,%u %ux%u into %08x %u,%u %ux%u is outside a target; not made",
+				(unsigned)command->source.data, (unsigned)command->from[0], (unsigned)command->from[1],
+				(unsigned)command->from[2], (unsigned)command->from[3], (unsigned)command->destination.data,
+				(unsigned)command->to[0], (unsigned)command->to[1], (unsigned)command->to[2], (unsigned)command->to[3]);
+		return;
+	}
+	/* (ending the rendering resolves a multisampled source into its image) */
+	host_vk_rendering_end();
+	cmd = host_vk_frame_command();
+	host_vk_target_transition(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	host_vk_target_transition(cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	memset(&blit, 0, sizeof(blit));
+	blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.srcSubresource.layerCount = 1;
+	blit.srcOffsets[0].x = (int32_t)command->from[0];
+	blit.srcOffsets[0].y = (int32_t)command->from[1];
+	blit.srcOffsets[1].x = (int32_t)(command->from[0] + command->from[2]);
+	blit.srcOffsets[1].y = (int32_t)(command->from[1] + command->from[3]);
+	blit.srcOffsets[1].z = 1;
+	blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.dstSubresource.layerCount = 1;
+	blit.dstOffsets[0].x = (int32_t)command->to[0];
+	blit.dstOffsets[0].y = (int32_t)command->to[1];
+	blit.dstOffsets[1].x = (int32_t)(command->to[0] + command->to[2]);
+	blit.dstOffsets[1].y = (int32_t)(command->to[1] + command->to[3]);
+	blit.dstOffsets[1].z = 1;
+	vkCmdBlitImage(cmd, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination->image,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, B.blit_filter);
+	destination->bound = ++B.target_clock;
 }
 
 static void command_clear(const struct vk_command_clear *command, uint32_t size)
@@ -1508,6 +1569,8 @@ static int device_create(void)
 		color_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	if (color_features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
 		color_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	color_blit_destination = (color_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) &&
+		(color_features & VK_FORMAT_FEATURE_BLIT_DST_BIT);
 	B.blit_filter = (color_features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 	if (B.blit_filter != VK_FILTER_LINEAR)
 		host_logf(HOST_LOG_WARN, "vk: B8G8R8A8_UNORM cannot be filtered linearly here; the picture is presented unfiltered");
@@ -1798,6 +1861,10 @@ void host_vk_submit(uint32_t commands, uint32_t size)
 		case VK_COMMAND_ANTI_ALIAS:
 			if (header->size >= sizeof(struct vk_command_anti_alias))
 				host_vk_anti_alias_command((const struct vk_command_anti_alias *)header);
+			break;
+		case VK_COMMAND_BLIT:
+			if (header->size >= sizeof(struct vk_command_blit))
+				command_blit((const struct vk_command_blit *)header);
 			break;
 		case VK_COMMAND_TEST_DRAW:
 			if (header->size >= sizeof(struct vk_command_test_draw))
