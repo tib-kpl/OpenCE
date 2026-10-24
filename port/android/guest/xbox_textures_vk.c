@@ -26,6 +26,7 @@ VK_HIRES says whether they are on).
 #include "menu_files.h"
 #include "text_hires.h"
 #include "../../linux/game/cache_file_formats.h"
+#include "../../linux/game/android_ce_texture_cache.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -573,6 +574,8 @@ static const unsigned char custom_edition_channel_sources[NUMBER_OF_CUSTOM_EDITI
 	{ 2, 1, 3, 0 },
 	/* the fill order in color, the shape in alpha */
 	{ 3, 3, 3, 0 },
+	/* Explicit Xbox-order artwork stays in that order. */
+	{ 0, 1, 2, 3 },
 };
 
 struct custom_edition_texels
@@ -584,6 +587,13 @@ struct custom_edition_texels
 static struct custom_edition_texels *custom_edition_texels;
 static unsigned long custom_edition_texel_count;
 static unsigned long custom_edition_texel_capacity;
+
+static int custom_edition_hud_meter_active;
+
+void halo_custom_edition_hud_meter(int active)
+{
+	custom_edition_hud_meter_active = active;
+}
 
 /* the order of the texels at address */
 static unsigned char custom_edition_texels_order(unsigned long address)
@@ -643,6 +653,7 @@ void halo_custom_edition_texels_forget(void)
 	custom_edition_texels = NULL;
 	custom_edition_texel_count = 0;
 	custom_edition_texel_capacity = 0;
+	custom_edition_hud_meter_active = 0;
 }
 
 /* moves the channels of count BGRA texels (32-bit ARGB words) to where the
@@ -736,6 +747,14 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 	free(converted);
 }
 
+/* The same limits as D3DDevice_GetDeviceCaps and the OpenGL cache. */
+static BOOL texture_size_supported(const struct xgpu_texture_description *description)
+{
+	if (description->depth > 1)
+		return description->width <= 512 && description->height <= 512 && description->depth <= 512;
+	return description->width <= 4096 && description->height <= 4096;
+}
+
 /* ---------- cache */
 
 struct texture_entry
@@ -748,6 +767,7 @@ struct texture_entry
 	uint32_t kind;
 	struct xgpu_texture_description description;
 	unsigned long address, size;
+	const void *ce_resource;
 	unsigned long generation;
 	unsigned long last_used_frame;
 	/* the high-res HUD bitmap that stands for it (hud_hires.h), or -1 */
@@ -791,6 +811,7 @@ static struct
 	struct texture_entry *entry;
 	unsigned long watch_serial;
 	unsigned long drop_serial;
+	const void *ce_resource;
 } recent_textures[RECENT_TEXTURE_COUNT];
 static unsigned long texture_drop_serial = 1;
 static unsigned long texture_frame = 0;
@@ -1097,12 +1118,37 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 		description->levels = levels;
 		description->hires = TRUE;
 		description->hires_coverage = hud_hires_override_coverage(entry->override);
+		description->hires_point_threshold = hud_hires_override_point_threshold(entry->override);
 		return id;
 	}
 #endif
 	(void)levels;
 	(void)id;
+	description->ce_meter_channels = custom_edition_hud_meter_active &&
+		custom_edition_texels_order(entry->address) == _custom_edition_channels_xbox;
 	return entry->id;
+}
+
+void android_ce_texture_gpu_forget(const void *resource)
+{
+	const DWORD *header = resource;
+	struct texture_entry **link = &texture_buckets[bucket_index(header[1], header[3], header[4])];
+
+	while (*link)
+	{
+		struct texture_entry *entry = *link;
+		if (entry->ce_resource == resource)
+		{
+			struct vk_command_texture_free *command = vk_stream_command(VK_COMMAND_TEXTURE_FREE, sizeof(*command));
+			command->id = entry->id;
+			*link = entry->next;
+			id_free[id_free_count++] = entry->id;
+			texture_drop_serial++;
+			free(entry);
+		}
+		else
+			link = &entry->next;
+	}
 }
 
 
@@ -1121,8 +1167,12 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	static int no_cache = -1;
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	unsigned long watch_serial = memory_watch_serial();
+	unsigned long ce_bytes;
+	const void *ce_pixels = android_ce_texture_pixels(resource, &ce_bytes);
+	const void *ce_resource = ce_pixels ? resource : NULL;
 
 	if (!palettized && recent_textures[recent].entry && recent_textures[recent].data == data &&
+		recent_textures[recent].ce_resource == ce_resource &&
 		recent_textures[recent].format_word == format_word && recent_textures[recent].size_word == size_word &&
 		recent_textures[recent].watch_serial == watch_serial &&
 		recent_textures[recent].drop_serial == texture_drop_serial)
@@ -1136,6 +1186,8 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	{
 		if (entry->data == data && entry->format_word == format_word && entry->size_word == size_word)
 		{
+			if (entry->ce_resource != ce_resource)
+				continue;
 			if (entry->palette_hash == hash)
 				break;
 			variant_count++;
@@ -1157,15 +1209,37 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 		if (!id)
 			return 0;
 		entry = calloc(1, sizeof(*entry));
+		if (!entry)
+		{
+			id_free[id_free_count++] = id;
+			return 0;
+		}
 		entry->data = data;
 		entry->format_word = format_word;
 		entry->size_word = size_word;
 		entry->palette_hash = hash;
 		xgpu_texture_describe(format_word, size_word, &entry->description);
+		if (!texture_size_supported(&entry->description))
+		{
+			free(entry);
+			id_free[id_free_count++] = id;
+			return 0;
+		}
 		entry->kind = entry->description.cube_map ? VK_IMAGE_CUBE : entry->description.depth > 1 ? VK_IMAGE_3D :
 			VK_IMAGE_2D;
 		entry->address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);
 		entry->size = xgpu_texture_face_size(&entry->description) * (entry->description.cube_map ? 6 : 1);
+		entry->ce_resource = ce_resource;
+		if (ce_resource)
+		{
+			entry->address = (unsigned long)ce_pixels;
+			if (entry->size > ce_bytes)
+			{
+				free(entry);
+				id_free[id_free_count++] = id;
+				return 0;
+			}
+		}
 		entry->generation = 0;
 		entry->override = -1;
 		entry->id = id;
@@ -1175,12 +1249,17 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 
 	if (no_cache < 0)
 		no_cache = config_boolean("debug.texture_no_cache");
-	generation = memory_watch_generation(entry->address, entry->size);
+	generation = entry->ce_resource ? 1 : memory_watch_generation(entry->address, entry->size);
 	if (!entry->generation || generation > entry->generation || no_cache)
 	{
 		/* mark first, so a write racing with the upload is noticed */
-		memory_watch_protect(entry->address, entry->size);
-		entry->generation = memory_watch_generation(entry->address, entry->size);
+		if (entry->ce_resource)
+			entry->generation = 1;
+		else
+		{
+			memory_watch_protect(entry->address, entry->size);
+			entry->generation = memory_watch_generation(entry->address, entry->size);
+		}
 		if (!entry->generation)
 			entry->generation = 1;
 		/* (which bitmap is here may have changed with the pixels) */
@@ -1195,8 +1274,8 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 			if (entry->override >= 0 && !hud_image(entry->override, &levels))
 				entry->override = -1;
 		}
-		if (entry->override < 0 && platform_is_contiguous((void *)entry->address) &&
-			platform_is_contiguous((void *)(entry->address + entry->size - 1)))
+		if (entry->override < 0 && (entry->ce_resource || (platform_is_contiguous((void *)entry->address) &&
+			platform_is_contiguous((void *)(entry->address + entry->size - 1)))))
 		{
 			if (config_boolean("debug.texture_log"))
 				platform_log("texture upload %08lx fmt %02lx %lux%lu size %lu gen %lu id %u", (unsigned long)data,
@@ -1215,6 +1294,7 @@ uint32_t vk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 		recent_textures[recent].entry = entry;
 		recent_textures[recent].watch_serial = watch_serial;
 		recent_textures[recent].drop_serial = texture_drop_serial;
+		recent_textures[recent].ce_resource = ce_resource;
 	}
 	return texture_entry_result(entry, kind, description);
 }

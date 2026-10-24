@@ -1257,6 +1257,15 @@ void WINAPI D3DDevice_SetTexture(DWORD stage, D3DBaseTexture *texture)
 		device.textures[stage] = texture;
 }
 
+/* CE cache headers must be unbound before their storage can be reused. */
+void android_ce_texture_unbind(const void *resource)
+{
+	unsigned long stage;
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+		if ((const void *)device.textures[stage] == resource)
+			device.textures[stage] = NULL;
+}
+
 void WINAPI D3DDevice_SetPalette(DWORD stage, D3DPalette *palette)
 {
 	if (stage < D3DTSS_MAXSTAGES)
@@ -1518,7 +1527,7 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 		D3DBaseTexture *texture = device.textures[stage];
 		unsigned long mode = stage_texture_mode(stage);
 		struct xgpu_texture_description description;
-		BOOL palettized;
+		int kind;
 
 		if (!texture || !texture->Data || mode == 0 || mode == 0x04 || mode == 0x05 || mode == 0x11)
 		{
@@ -1535,18 +1544,18 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 				continue;
 			}
 		}
-		xgpu_texture_describe(texture->Format, texture->Size, &description);
+		if (!vk_texture_get((const DWORD *)texture, device.palettes[stage] && device.palettes[stage]->Data ?
+			(const D3DCOLOR *)PLATFORM_PHYSICAL_TO_VIRTUAL(device.palettes[stage]->Data) : NULL,
+			&kind, &description))
+		{
+			key->sampler_type[stage] = _xgpu_sampler_none;
+			continue;
+		}
 		if (stage == 0)
 		{
-			palettized = ((texture->Format & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
-			if (!palettized && !description.cube_map && description.depth == 1)
-			{
-				long override = hud_hires_override_find((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(texture->Data),
-					description.width, description.height, description.levels > 1 ?
-					xgpu_texture_level_offset(&description, 1) : xgpu_texture_face_size(&description));
-
-				key->coverage_alpha = override >= 0 && hud_hires_override_coverage(override) != 0;
-			}
+			key->coverage_alpha = description.hires_coverage != FALSE;
+			key->point_threshold = description.hires_point_threshold != FALSE;
+			key->ce_meter_channels = description.ce_meter_channels != FALSE;
 		}
 		key->sampler_type[stage] = description.cube_map ? _xgpu_sampler_cube :
 			description.depth > 1 ? _xgpu_sampler_3d : _xgpu_sampler_2d;
