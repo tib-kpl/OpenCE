@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, STB_VORBIS_SOURCE, WINDOWS_PROFILE, XDK_INCLUDE,
+                          build_repository,
                           lto_mode, march_flag, miniupnpc_sources, pgo_mode, compile_launcher, configuration_defines,
                           game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources, opus_cflags,
                           opus_sources, pgo_profile, profile_use_flags, xdk_headers)
@@ -80,13 +81,10 @@ def updater_defines(release: bool) -> str:
     if not number.isdigit():
         number = "0"
     flavor = "release" if release else "debug"
-    # the repository whose releases it looks at: the one being built
-    # (GITHUB_REPOSITORY in GitHub Actions, so a fork updates from itself)
-    repository = os.environ.get("GITHUB_REPOSITORY", "")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        repository = "OpenCommunityEdition/OpenCE"
+    repository = build_repository()
     return (f'-DHALO_BUILD_NUMBER={number} -DHALO_BUILD_FLAVOR=\\"{flavor}\\" '
-            f'-DHALO_UPDATE_REPOSITORY=\\"{repository}\\"')
+            f'-DHALO_BUILD_REPOSITORY=\\"{repository}\\" '
+            f'-DHALO_UPDATE_REPOSITORY=\\"{repository or "OpenCommunityEdition/OpenCE"}\\"')
 
 WINDOWS_ABI_FLAGS = [
     "--target=i686-pc-windows-msvc",
