@@ -647,6 +647,13 @@ static const void *rendered_find(unsigned long data, unsigned long *width, unsig
 	return &rendered[best];
 }
 
+/* The shared HUD and text helpers only upload GL textures when a GL
+context exists. The Vulkan image has none. */
+int xgpu_gl_ready(void)
+{
+	return 0;
+}
+
 /* xbox_textures.c, hud_hires.c and text_hires.c call this after their own GL
 calls, which under Vulkan have no context and do nothing */
 void xgpu_gl_state_invalidate(void)
