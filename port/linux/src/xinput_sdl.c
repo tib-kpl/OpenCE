@@ -49,6 +49,8 @@ extern unsigned char network_aim_assist_block_mouse(void);
 #if defined(HALO_SWITCH) || defined(HALO_PS5)
 #include "guest_host.h"
 #endif
+#include "controller_buttons.h"
+#include "controller_remap.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -1839,6 +1841,8 @@ static DWORD connected_gamepads(void)
 	int port;
 
 	/* the first pad shares port 0 with the keyboard (port_gamepad) */
+	for (port = 0; port < PORT_COUNT; port++)
+		controller_device_update((short)port, port_gamepad(gamepads, count, port));
 	for (port = 1; port < PORT_COUNT; port++)
 	{
 		if (port_gamepad(gamepads, count, port))
@@ -1956,6 +1960,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	int port = controller_port(device);
 	SDL_Gamepad *gamepads[PORT_COUNT];
 	int count;
+	XINPUT_GAMEPAD physical;
+	int captured;
 
 	memset(state, 0, sizeof(*state));
 	if (port < 0)
@@ -1963,6 +1969,13 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	platform_pump_events();
 	split_players = pc_menu_split_players() != 0;
 	count = sdl_gamepads(gamepads);
+	controller_device_update((short)port, port_gamepad(gamepads, count, port));
+	/* Keep physical remapping separate from the keyboard and touch controls. */
+	memset(&physical, 0, sizeof(physical));
+	if (port_gamepad(gamepads, count, port))
+		sdl_gamepad_state(port_gamepad(gamepads, count, port), &physical, NULL, scoreboard_picking_port == port,
+			menu_buttons_swapped(menus_up));
+	captured = controller_remap_input((short)port, &physical, port_gamepad(gamepads, count, port) != NULL);
 	if (port == 0)
 	{
 		struct platform_input_state input;
@@ -1999,24 +2012,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			else
 				keyboard_controls(held, &state->Gamepad);
 		}
-		if (gamepad && !gamepad_capturing(gamepad))
-		{
-			extern unsigned char network_replay_playing(void);
-			BOOL held_back[INPUT_GAMEPAD_END - INPUT_GAMEPAD];
-			int index;
-
-			BOOL swap = menu_buttons_swapped(input.menus);
-			/* (a replay's playback has no voice chat and no game's controls: its
-			own take every button, a shoulder bound to talk its speed too:
-			port/linux/game/network_replay_playback.c) */
-			BOOL replay = network_replay_playing() != 0;
-
-			for (index = 0; index < INPUT_GAMEPAD_END - INPUT_GAMEPAD; index++)
-				held_back[index] = !replay &&
-					(gamepad_bound_to_talk[index] || (!input.menus && gamepad_bound_in_game[index]));
-			face_buttons_held_over_swap(gamepad, swap, held_back);
-			sdl_gamepad_state(gamepad, &state->Gamepad, held_back, scoreboard_picking_port == 0, swap);
-		}
+		if (port_gamepad(gamepads, count, 0))
+			controller_remap_merge(&physical, &state->Gamepad);
 		test_input_gamepad(&state->Gamepad);
 		touch_input_gamepad(&state->Gamepad);
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
@@ -2036,8 +2033,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	}
 	else if (port_gamepad(gamepads, count, port))
 	{
-		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad, NULL, scoreboard_picking_port == port,
-			menu_buttons_swapped(menus_up));
+		state->Gamepad = physical;
 	}
 	/* (the text chat's on-screen keyboard reads each controller's, and
 	takes its owner's while it is up) */
@@ -2049,6 +2045,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	right: network_votekick.c) */
 	if (port == 0)
 		vote_pad_hold_over(&state->Gamepad);
+	if (captured) memset(&state->Gamepad, 0, sizeof(state->Gamepad));
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
 	{

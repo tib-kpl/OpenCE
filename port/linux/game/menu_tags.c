@@ -418,6 +418,7 @@ static char const *const port_function_names[] =
 	"port browser sort increasing",
 	/* (a dedicated server's map vote: menu_functions.c) */
 	"port map vote open", "port map vote choose",
+	"port controller init", "port controller close", "port controller defaults", "port controller save", "port controller bind", "port controller left", "port controller right",
 };
 
 /* the PC version's game data functions that the Xbox's have not, from
@@ -460,6 +461,7 @@ static char const *const port_game_data_input_names[] =
 	"port map vote update",
 	/* (HDR Calibration's patterns, drawn by the renderer) */
 	"port hdr calibration",
+	"port controller update",
 };
 
 static struct
