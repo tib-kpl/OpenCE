@@ -39,6 +39,7 @@ menu gets FRIENDLY FIRE too.
 #include "game/game.h"
 #include "tag_files/tag_groups.h"
 #include "text/text_group.h"
+#include "text/unicode.h"
 #include "rasterizer/xbox/rasterizer_xbox_hardware_bitmaps.h"
 
 #include "halo_menus.h"
@@ -83,9 +84,9 @@ adds to */
 #define MULTIPLAYER_COLLECTION "ui\\shell\\multiplayer"
 /* the campaign's full screen pause screen, which pause_campaign_patch adds to */
 #define CAMPAIGN_PAUSE_SCREEN "ui\\shell\\solo_game\\pause_game\\pause_game"
-/* the tags pause_patch or pause_campaign_patch adds: two buttons and their
-texts (SETTINGS, and END GAME or FRIENDLY FIRE) */
-#define PAUSE_PATCH_TAGS 4
+/* two buttons and their texts (SETTINGS, and END GAME or FRIENDLY FIRE),
+and the French campaign's single-line checkpoint label */
+#define PAUSE_PATCH_TAGS 5
 /* what a frame of ui.map's is drawn as in a game map, which has not got it */
 #define BLANK_PNG "ce/port/blank__0.png"
 #define UI_WIDGET_DEFINITION_TAG 'DeLa'
@@ -1531,6 +1532,33 @@ static boolean tag_name_ends(long tag_index, char const *end)
 	return name && length >= end_length && !strcmp(name + length - end_length, end);
 }
 
+/* The French Xbox prompt is wider than the multiplayer pause box. Keep
+its button icons and formatting, with a shorter word for SELECT. */
+static void pause_prompt_text(struct ui_widget_definition *widget, short depth)
+{
+	struct ui_widget_child_reference const *children = widget->child_widgets.address;
+	long child;
+
+	if (depth > 8 || strncmp(config_string("game.language"), "fr", 2))
+		return;
+	if (widget->text_label_string_list.index != NONE && widget->string_list_index >= 0)
+	{
+		wchar_t *text = unicode_string_list_get_string(widget->text_label_string_list.index, widget->string_list_index);
+		wchar_t *word = text ? ustrstr(text, L"SÉLECTIONNER") : NULL;
+
+		if (word)
+		{
+			memmove(word + 7, word + 12, (ustrlen(word + 12) + 1) * sizeof(*word));
+			memcpy(word, L"CHOISIR", 7 * sizeof(*word));
+		}
+	}
+	for (child = 0; child < widget->child_widgets.count; child++)
+	{
+		if (children[child].widget_tag.index != NONE)
+			pause_prompt_text(tag_get(UI_WIDGET_DEFINITION_TAG, children[child].widget_tag.index), (short)(depth + 1));
+	}
+}
+
 /* the index of the list's button that runs the function (LEAVE GAME's),
 else NONE */
 static long pause_quit_button(struct ui_widget_definition const *list, long quit_function)
@@ -1640,7 +1668,10 @@ static long pause_list_patch(struct cache_file_tag_instance *instances, struct u
 	struct ui_widget_child_reference *children = list->child_widgets.address;
 	long count = list->child_widgets.count, added = host || build.coop ? 2 : 1, child;
 	struct ui_widget_child_reference *grown = allocate((count + added) * sizeof(struct ui_widget_child_reference));
-	struct ui_widget_definition const *model = tag_get(UI_WIDGET_DEFINITION_TAG, children[quit].widget_tag.index);
+	/* RESUME is a single line. REVERT TO SAVED can span two lines in a
+	translated map, with its text raised to centre them: copying that button
+	puts SETTINGS against the preceding row's highlight. */
+	struct ui_widget_definition const *model = tag_get(UI_WIDGET_DEFINITION_TAG, children[0].widget_tag.index);
 	long settings_widget = widget_named(PAUSE_SETTINGS_SCREEN);
 	short spacing = count >= 2 ? (short)(children[count - 1].vertical_offset - children[count - 2].vertical_offset) :
 		PAUSE_BUTTON_SPACING;
@@ -1795,6 +1826,9 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 			continue;
 		for (child = 0; child < definition->child_widgets.count; child++)
 		{
+			if (tag_name_ends(children[child].widget_tag.index, "\\button_key_sm") ||
+				tag_name_ends(children[child].widget_tag.index, "\\button_key"))
+				pause_prompt_text(tag_get(UI_WIDGET_DEFINITION_TAG, children[child].widget_tag.index), 0);
 			if (child != list_child && children[child].widget_tag.index != NONE &&
 				pause_box_stock(tag_get(UI_WIDGET_DEFINITION_TAG, children[child].widget_tag.index)))
 			{
@@ -2104,6 +2138,28 @@ static void pause_campaign_patch(struct cache_file_tag_instance *instances)
 		}
 		if (revert == list->child_widgets.count)
 			return;
+		/* The French map's checkpoint label occupies two lines, touching
+		the adjacent highlights at the port's 30-unit row pitch. Keep this
+		button on one line, with the same text placement as RESUME. */
+		if (!strncmp(config_string("game.language"), "fr", 2))
+		{
+			char const *text = "POINT DE CONTRÔLE";
+			void *strings = string_list_build(&text, NULL, 1, NULL);
+			struct ui_widget_definition *button = tag_get(UI_WIDGET_DEFINITION_TAG, rows[revert].widget_tag.index);
+			struct ui_widget_definition const *resume = tag_get(UI_WIDGET_DEFINITION_TAG, rows[0].widget_tag.index);
+			long text_tag;
+
+			if (strings)
+			{
+				text_tag = next_tag();
+				instance_set(instances, UNICODE_STRING_LIST_TAG, text_tag, "pause/checkpoint", " text", strings);
+				reference_set(&button->text_label_string_list, UNICODE_STRING_LIST_TAG, text_tag);
+				button->string_list_index = 0;
+				button->bounds = resume->bounds;
+				button->horizontal_offset = resume->horizontal_offset;
+				button->vertical_offset = resume->vertical_offset;
+			}
+		}
 		span = (short)(rows[list->child_widgets.count - 1].vertical_offset - rows[0].vertical_offset);
 		top = rows[0].vertical_offset;
 		bottom = list->bounds.y1;

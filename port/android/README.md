@@ -282,9 +282,9 @@ below the game's version number (`01.01.14.2342`, at the lower right) says
 ### Import a driver or switch to OpenGL ES
 
 In the game, a small faint gear at the top right (touch it) opens the graphics
-screen; so does the **Graphics** button of the screen shown after a failed
-start, the **Halo Graphics** icon some launchers show next to the game's, and
-the **Graphics** shortcut of a long press on the icon. The screen has plain buttons, for a gamepad as well:
+screen, including on launchers that do not show the **Halo Graphics** icon
+or the long-press **Graphics** shortcut. The **Graphics** button shown after
+a failed start also opens it. Its buttons work with a gamepad:
 
 - **OpenGL ES (no Vulkan)**: the game does not use the Vulkan renderer.
 - **Vulkan, the phone's own driver**, or **Vulkan, Turnip (Adreno GPU)**.
@@ -297,8 +297,8 @@ the **Graphics** shortcut of a long press on the icon. The screen has plain butt
   Without the archive, `"custom"` falls back to the phone's own driver.
 
 The screen is also the way back when the game does not start with the
-current choice. The same choices are in VIDEO SETUP; the change applies at
-the next start.
+current choice. VIDEO SETUP offers OpenGL ES, Vulkan and Turnip; importing
+a driver archive uses this Android screen. Changes apply at the next start.
 
 ### Find your GPU
 

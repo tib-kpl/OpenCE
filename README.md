@@ -14,20 +14,18 @@
 >
 > **Menus et jeu**
 > - « Paramètres » crée un profil s'il n'y en a aucun ; ouvert depuis le menu principal, il ne fige plus la vidéo ni la musique de fond.
-> - « Quitter » ferme vraiment le jeu sur Android.
 > - Le menu principal affiche le numéro de la release du port (« build N ») sous le numéro de version, pour savoir si l'on est à jour.
 >
 > **Android et versions**
 > - Les builds release démarrent (« cannot load the game image ») et la cause d'un échec au lancement s'affiche au lancement suivant (`halo_log.txt`).
 > - Les barres système restent masquées.
-> - Les messages de debug du jeu à l'écran se règlent avec `game.console_log` dans `config.toml` (`"important"` par défaut, `"all"` pour tout voir) ; `debug.txt` reçoit toujours tout.
 > - La mise à jour intégrée suit les releases du dépôt compilé : ce fork se met à jour depuis ses propres releases.
 >
 > **Fork for the French version (Android)** of [OpenCommunityEdition/OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
 > It puts the PC menus in French when the game's language is French (the official French PC texts, French menu pictures,
 > the port's own pause buttons in the game's language), imports European discs whose maps are in `maps_fr`, `maps_de`...,
 > makes a profile when Settings is opened without one, keeps the main
-> menu's video and music running under Settings, quits for real on Android, shows the port's build number in the main menu,
+> menu's video and music running under Settings, shows the port's build number in the main menu,
 > starts release builds again and reports a failed start at the next one, and updates from its own releases.
 > The download links below lead to the upstream builds, without these changes. This fork's own builds,
 > as a bare `.apk` (`halo-android-release.apk`), are at https://github.com/tib-kpl/OpenCE/releases/latest

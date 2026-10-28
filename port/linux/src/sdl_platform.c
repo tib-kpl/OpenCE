@@ -1856,7 +1856,6 @@ menus' Quit: port/linux/game/menu_functions.c); on Android at once */
 void platform_request_quit(void)
 {
 #ifdef HALO_ANDROID
-	platform_log("quit requested");
 	/* (the guest has no SDL_PushEvent: exit ends the process, host_exit) */
 	exit(EXIT_SUCCESS);
 #else
