@@ -147,6 +147,12 @@ def launch(machine, input, address, broadcast, test, init="", **environment):
     for source in [GAME, *GAME.parent.glob("lib*.so*")]:
         target = machine / ("halo" if source == GAME else source.name)
         target.unlink(missing_ok=True)
+        # A hard link shares the executable's write-open state across parallel
+        # scenarios, which can make exec fail with ETXTBSY. Give each game its
+        # own inode; the shared libraries can still use hard links.
+        if source == GAME:
+            shutil.copy(source, target)
+            continue
         try:
             os.link(source, target)
         except OSError:
