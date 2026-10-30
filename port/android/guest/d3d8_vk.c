@@ -45,6 +45,8 @@ void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long wi
 /* what the context supports: xbox_textures.c reads it (as d3d8_gl.c
 defines it on Android); nothing here is OpenGL, so nothing is supported */
 struct xgpu_capabilities xgpu_capabilities;
+/* This backend keeps the Xbox's depth convention. */
+BOOL xgpu_reversed_depth = FALSE;
 
 /* ---------- the screen's width
 
@@ -167,6 +169,51 @@ void halo_screen_tone_map(short x0, short y0, short x1, short y1)
 	(void)y1;
 }
 
+/* HDR output and its calibration are not available in this backend. */
+int halo_hdr_calibration_available(void)
+{
+	return 0;
+}
+
+void halo_hdr_calibration_show(int pattern, int paper_white, int peak_brightness)
+{
+	(void)pattern;
+	(void)paper_white;
+	(void)peak_brightness;
+}
+
+/* These lifetime notes belong to the GL static-buffer cache. Vulkan's
+uploads do not keep that cache or retain these resource pointers. */
+void xgpu_static_buffer_add(const void *resource, unsigned long size, int indices)
+{
+	(void)resource; (void)size; (void)indices;
+}
+
+void xgpu_static_buffer_remove(const void *resource, int indices)
+{
+	(void)resource; (void)indices;
+}
+
+void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stride, int indices, const void *end)
+{
+	(void)buffers; (void)count; (void)stride; (void)indices; (void)end;
+}
+
+void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices)
+{
+	(void)buffers; (void)count; (void)stride; (void)indices;
+}
+
+void xgpu_static_range_add(const void *start, unsigned long size, int indices)
+{
+	(void)start; (void)size; (void)indices;
+}
+
+void xgpu_static_range_remove(const void *start, int indices)
+{
+	(void)start; (void)indices;
+}
+
 /* (d3d8_gl.c's forgets the GL texture its units had bound; this renderer
 binds no GL texture) */
 void xgpu_gl_texture_deleted(unsigned int texture)
@@ -177,6 +224,19 @@ void xgpu_gl_texture_deleted(unsigned int texture)
 void halo_screen_ui_offset(unsigned char centered)
 {
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
+}
+
+/* Match the shared split-screen menus' centering convention. */
+void halo_screen_ui_offset_view(long view_width)
+{
+	long width = halo_screen_width();
+
+	ui_offset = view_width > 0 && view_width < width ? (view_width > 320 ? (view_width - 320) / 2 : 0) : (width - 640) / 2;
+}
+
+long halo_screen_ui_offset_current(void)
+{
+	return ui_offset;
 }
 
 /* display.shadow_resolution, display.per_pixel_lighting and
