@@ -24,7 +24,7 @@ The exceptions are
 #include <poll.h>
 
 /* The numbers the guest passes are musl's, and musl is compiled for the
-Android port from port/android/guest/libc/arch/arm64_32/bits/syscall.h.in,
+Android port from port/android/guest/libc/arch/generic/bits/syscall.h.in,
 which the build turns into bits/syscall.h with __NR_ renamed to SYS_. This
 file includes that generated header rather than writing the numbers out, so
 the host's dispatch and the guest's libc cannot drift apart: they are the
@@ -33,6 +33,7 @@ same file, and any change to one is a change to both. */
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -319,7 +320,9 @@ static void guest_descriptor_forget(int guest_fd)
 	host_fd = guest_fds[guest_fd];
 	guest_fds[guest_fd] = -1;
 	pthread_mutex_unlock(&guest_fds_lock);
-	if (host_fd >= 0)
+	if (host_memory_file_is(host_fd))
+		host_memory_file_close(host_fd);
+	else if (host_fd >= 0)
 	{
 		host_sd_lock();
 		close(host_fd);
@@ -502,6 +505,30 @@ int unlinkat(int directory, const char *path, int flags)
 		host_sd_unlock();
 		return result;
 	}
+}
+
+/* (map sharing names a map file for its hash: port/linux/game/map_share.c)
+The console's rename will not replace a file, where POSIX's does: a file
+written beside another and renamed over it (the mods' load_order.toml,
+port_mods.c) was written the first time and never again. So a file in the
+way is deleted first, as host_dk_shaders.c does for its own. */
+static int guest_renameat(int old_directory, const char *old_path, int new_directory, const char *new_path)
+{
+	struct stat old_information, new_information;
+	int result;
+
+	if (old_directory >= 0 || new_directory >= 0)
+		return -EBADF;
+	host_sd_lock();
+	result = rename(old_path, new_path);
+	if (result != 0 && stat(old_path, &old_information) == 0 && S_ISREG(old_information.st_mode) &&
+		stat(new_path, &new_information) == 0 && S_ISREG(new_information.st_mode) &&
+		unlink(new_path) == 0)
+	{
+		result = rename(old_path, new_path);
+	}
+	host_sd_unlock();
+	return result;
 }
 
 int mkdirat(int directory, const char *path, mode_t mode)
@@ -929,10 +956,23 @@ asked of: one run left two host files grown to 0x11600000, a guest heap
 address, and this says whether the guest asked for it. */
 #define LARGE_FILE_OFFSET (64LL * 1024 * 1024)
 
+/* Only the first few: a Custom Edition map can be larger than this, and a
+load of one (Lumoria A's, 275 MB) seeked past it 6,111 times. Each line is a
+write to the card under the lock the guest's reads wait on (host_sd_lock):
+with the mremap lines below, that load spent 26 of its 78 s waiting for the
+log. */
+#define LARGE_FILE_OFFSET_LINES 16
+
 static void note_large_offset(const char *call, long long guest_fd, long long offset)
 {
-	if (offset >= LARGE_FILE_OFFSET)
-		host_logf(HOST_LOG_WARN, "guest %s on descriptor %lld at %#llx", call, guest_fd, offset);
+	static int lines;
+
+	if (offset >= LARGE_FILE_OFFSET && lines < LARGE_FILE_OFFSET_LINES)
+	{
+		lines++;
+		host_logf(HOST_LOG_WARN, "guest %s on descriptor %lld at %#llx%s", call, guest_fd, offset,
+			lines == LARGE_FILE_OFFSET_LINES ? " (and no more of these)" : "");
+	}
 }
 
 /* ---------- the platform layer's descriptor helpers
@@ -948,6 +988,78 @@ header; the cache files' seeks, guest descriptors 4 and 5, moved the
 heartbeat and debug.txt to 0x11600000. The import table sends those three
 here instead (tools/android_imports.py), to be translated. */
 
+/* The map cache's files are kept in memory (host_memory_files.c), and these
+helpers reach them too: the cache code measures, seeks, sizes, checks and
+stamps them through posix_*, not through system calls. */
+
+/* a memory file's description as posix_files.c gives a file's */
+static void memory_file_information(const struct stat *in, struct posix_file_information *out)
+{
+	memset(out, 0, sizeof(*out));
+	out->size_low = (posix_ulong)((unsigned long long)in->st_size & 0xffffffffULL);
+	out->size_high = (posix_ulong)((unsigned long long)in->st_size >> 32);
+	out->modification_seconds = (posix_ulong)in->st_mtim.tv_sec;
+	out->modification_nanoseconds = (posix_ulong)in->st_mtim.tv_nsec;
+	out->access_seconds = (posix_ulong)in->st_atim.tv_sec;
+	out->access_nanoseconds = (posix_ulong)in->st_atim.tv_nsec;
+	out->creation_seconds = (posix_ulong)in->st_ctim.tv_sec;
+	out->creation_nanoseconds = (posix_ulong)in->st_ctim.tv_nsec;
+}
+
+/* a memory file's answer, a negated errno or not, as posix_* give theirs */
+static int memory_file_result(long long result)
+{
+	if (result < 0)
+	{
+		errno = (int)-result;
+		return -1;
+	}
+	return 0;
+}
+
+int host_guest_posix_stat(const char *path, struct posix_file_information *information)
+{
+	int slot = host_memory_file_path(path);
+	int result;
+
+	if (slot >= 0)
+	{
+		struct stat in;
+
+		result = host_memory_file_stat(slot, path, &in);
+		if (result == 0)
+			memory_file_information(&in, information);
+		return memory_file_result(result);
+	}
+	host_sd_lock();
+	result = posix_stat(path, information);
+	host_sd_unlock();
+	return result;
+}
+
+int host_guest_posix_set_file_times(const char *path, posix_ulong access_seconds, posix_ulong access_nanoseconds,
+	posix_ulong modification_seconds, posix_ulong modification_nanoseconds)
+{
+	int slot = host_memory_file_path(path);
+	int result;
+
+	if (slot >= 0)
+	{
+		struct timespec times[2];
+
+		times[0].tv_sec = (time_t)access_seconds;
+		times[0].tv_nsec = access_seconds ? (long)access_nanoseconds : UTIME_OMIT;
+		times[1].tv_sec = (time_t)modification_seconds;
+		times[1].tv_nsec = modification_seconds ? (long)modification_nanoseconds : UTIME_OMIT;
+		return memory_file_result(host_memory_file_set_times(slot, times));
+	}
+	host_sd_lock();
+	result = posix_set_file_times(path, access_seconds, access_nanoseconds, modification_seconds,
+		modification_nanoseconds);
+	host_sd_unlock();
+	return result;
+}
+
 int host_guest_posix_fstat(int descriptor, struct posix_file_information *information)
 {
 	int host_fd = host_descriptor(descriptor);
@@ -957,6 +1069,15 @@ int host_guest_posix_fstat(int descriptor, struct posix_file_information *inform
 	{
 		errno = EBADF;
 		return -1;
+	}
+	if (host_memory_file_is(host_fd))
+	{
+		struct stat in;
+
+		result = host_memory_file_fstat(host_fd, &in);
+		if (result == 0)
+			memory_file_information(&in, information);
+		return memory_file_result(result);
 	}
 	host_sd_lock();
 	result = posix_fstat(host_fd, information);
@@ -975,6 +1096,18 @@ int host_guest_posix_seek(int descriptor, posix_long offset_low, posix_long offs
 		errno = EBADF;
 		return -1;
 	}
+	if (host_memory_file_is(host_fd))
+	{
+		long long where = host_memory_file_seek(host_fd,
+			(long long)(((unsigned long long)(posix_ulong)offset_high << 32) | (posix_ulong)offset_low), whence);
+
+		if (where >= 0)
+		{
+			*position_low = (posix_ulong)((unsigned long long)where & 0xffffffffULL);
+			*position_high = (posix_ulong)((unsigned long long)where >> 32);
+		}
+		return memory_file_result(where);
+	}
 	host_sd_lock();
 	result = posix_seek(host_fd, offset_low, offset_high, whence, position_low, position_high);
 	host_sd_unlock();
@@ -991,6 +1124,9 @@ int host_guest_posix_truncate(int descriptor, posix_ulong size_low, posix_ulong 
 		errno = EBADF;
 		return -1;
 	}
+	if (host_memory_file_is(host_fd))
+		return memory_file_result(host_memory_file_truncate(host_fd,
+			(long long)(((unsigned long long)size_high << 32) | size_low)));
 	host_sd_lock();
 	result = posix_truncate(host_fd, size_low, size_high);
 	host_sd_unlock();
@@ -1036,6 +1172,37 @@ long syscall(long number, ...)
 	default:
 		return -ENOSYS;
 	}
+}
+
+/* a vector read or write on a map cache file kept in memory
+(host_memory_files.c), a part at a time */
+static long memory_file_vector(int fd, uint64_t vector, int count, int64_t offset, int positional, int writing)
+{
+	const struct guest_iovec *guest_vector = GUEST(const struct guest_iovec *, vector);
+	long total = 0;
+	int index;
+
+	if (count < 0 || count > 64)
+		return -EINVAL;
+	for (index = 0; index < count; index++)
+	{
+		void *base = GUEST(void *, guest_vector[index].base);
+		size_t length = guest_vector[index].length;
+		long long done;
+
+		if (writing)
+			done = positional ? host_memory_file_pwrite(fd, base, length, offset + total) :
+				host_memory_file_write(fd, base, length);
+		else
+			done = positional ? host_memory_file_pread(fd, base, length, offset + total) :
+				host_memory_file_read(fd, base, length);
+		if (done < 0)
+			return total ? total : (long)done;
+		total += (long)done;
+		if ((size_t)done < length)
+			break;
+	}
+	return total;
 }
 
 static long guest_writev(int fd, uint64_t vector, int count, int64_t offset, int positional)
@@ -1174,6 +1341,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 			if (host_fd < 0)
 				return result_of(-EBADF);
+			if (host_memory_file_is(host_fd))
+				return host_memory_file_write(host_fd, GUEST(const void *, b), (size_t)(uint32_t)c);
 			host_sd_lock();
 			written = bounced_write(host_fd, GUEST(const void *, b), (size_t)(uint32_t)c);
 			host_sd_unlock();
@@ -1183,6 +1352,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return memory_file_vector(host_fd, (uint64_t)b, (int)c, 0, 0, 1);
 		return host_fd < 0 ? result_of(-EBADF) :
 			guest_writev(host_fd, (uint64_t)b, (int)c, 0, 0);
 	}
@@ -1191,6 +1362,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		int host_fd = host_descriptor((int)a);
 
 		note_large_offset("pwritev", a, d);
+		if (host_memory_file_is(host_fd))
+			return memory_file_vector(host_fd, (uint64_t)b, (int)c, d, 1, 1);
 		return host_fd < 0 ? result_of(-EBADF) :
 			guest_writev(host_fd, (uint64_t)b, (int)c, d, 1);
 	}
@@ -1198,6 +1371,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return memory_file_vector(host_fd, (uint64_t)b, (int)c, 0, 0, 0);
 		return host_fd < 0 ? result_of(-EBADF) :
 			guest_readv(host_fd, (uint64_t)b, (int)c, 0, 0);
 	}
@@ -1205,6 +1380,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return memory_file_vector(host_fd, (uint64_t)b, (int)c, d, 1, 0);
 		return host_fd < 0 ? result_of(-EBADF) :
 			guest_readv(host_fd, (uint64_t)b, (int)c, d, 1);
 	}
@@ -1283,6 +1460,9 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			timespec_in((uint64_t)c, &times[0]);
 			timespec_in((uint64_t)c + sizeof(struct guest_timespec), &times[1]);
 		}
+		if (host_memory_file_path(GUEST(const char *, b)) >= 0)
+			return host_memory_file_set_times(host_memory_file_path(GUEST(const char *, b)),
+				guest_times ? times : NULL);
 		return result_of(utimensat((int)a, GUEST(const char *, b), guest_times ? times : NULL, (int)d));
 	}
 
@@ -1307,8 +1487,19 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		 * seeing: it is logged rather than returned quietly, because a
 		 * guest allocator that cannot extend is what "cannot grow emulated
 		 * TLS" turns out to be. */
-		host_logf(HOST_LOG_INFO, "the guest asked to move %llu bytes to %llx",
-			(unsigned long long)b, (unsigned long long)d);
+		/* (said once: musl's realloc asks it of every large block it
+		 * grows, and a Custom Edition map's sounds, decoded as it loads,
+		 * asked it some fourteen hundred times, a line each to the card) */
+		{
+			static int said;
+
+			if (!said)
+			{
+				said = 1;
+				host_logf(HOST_LOG_INFO, "the guest asked to move %llu bytes to %llx (refused, as every mremap "
+					"is: musl maps and copies instead; not said again)", (unsigned long long)b, (unsigned long long)d);
+			}
+		}
 		return -ENOMEM;
 	case SYS_brk:
 		host_logf(HOST_LOG_INFO, "the guest asked brk for %llx", (unsigned long long)a);
@@ -1368,8 +1559,25 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		/* Opened here as before, but the guest is given a number of its own
 		 * and the real descriptor is kept in the table. */
-		int host_fd = openat((int)a, GUEST(const char *, b), (int)c, (int)d, (int)e);
+		int host_fd;
 		int guest_fd;
+		int slot = host_memory_file_path(GUEST(const char *, b));
+
+		/* the map cache's files are kept in memory (host_memory_files.c) */
+		if (slot >= 0)
+		{
+			host_fd = host_memory_file_open(slot, GUEST(const char *, b), open_flags_from_guest((int)c));
+			if (host_fd < 0)
+				return host_fd;
+			guest_fd = guest_descriptor(host_fd);
+			if (guest_fd < 0)
+			{
+				host_memory_file_close(host_fd);
+				return result_of(-EMFILE);
+			}
+			return guest_fd;
+		}
+		host_fd = openat((int)a, GUEST(const char *, b), (int)c, (int)d, (int)e);
 
 		/* newlib's open says -1 and sets errno; the openat above says a
 		 * negated errno itself when the call is one it cannot take. */
@@ -1392,6 +1600,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		if (host_memory_file_is(host_fd))
+			return host_memory_file_read(host_fd, GUEST(void *, b), (size_t)c);
 		host_sd_lock();
 		got = bounced_read(host_fd, GUEST(void *, b), (size_t)c);
 		host_sd_unlock();
@@ -1407,30 +1617,49 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		guest_descriptor_forget((int)a);
 		return result_of(0);
 	}
-	case SYS_lseek:
+	case SYS__llseek:
 	{
+		/* _llseek(fd, offset_high, offset_low, result, whence): the guest's
+		 * result is a 32-bit long, so the 64-bit offset comes in two halves
+		 * and the new position goes back through the pointer
+		 * (port/android/include/halo_guest_syscall.h) */
 		int host_fd = host_descriptor((int)a);
-		off_t where;
+		long long offset = (long long)(((uint64_t)(uint32_t)b << 32) | (uint32_t)c);
+		long long where;
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
-		host_sd_lock();
-		if ((int)c == SEEK_SET)
-			note_large_offset("lseek", a, b);
-		where = lseek(host_fd, (off_t)b, (int)c);
-		host_sd_unlock();
-		return result_of(where);
+		if (!d)
+			return -EFAULT;
+		if (host_memory_file_is(host_fd))
+			where = host_memory_file_seek(host_fd, offset, (int)e);
+		else
+		{
+			host_sd_lock();
+			if ((int)e == SEEK_SET)
+				note_large_offset("lseek", a, offset);
+			where = result_of(lseek(host_fd, (off_t)offset, (int)e));
+			host_sd_unlock();
+		}
+		if (where < 0)
+			return where;
+		memcpy(GUEST(void *, d), &where, sizeof(where));
+		return 0;
 	}
 	case SYS_pread64:
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return host_memory_file_pread(host_fd, GUEST(void *, b), (size_t)c, (long long)d);
 		return result_of(host_fd < 0 ? -EBADF : pread(host_fd, GUEST(void *, b), (size_t)c, (off_t)d));
 	}
 	case SYS_pwrite64:
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return host_memory_file_pwrite(host_fd, GUEST(const void *, b), (size_t)c, (long long)d);
 		note_large_offset("pwrite64", a, d);
 		return result_of(host_fd < 0 ? -EBADF : pwrite(host_fd, GUEST(const void *, b), (size_t)c, (off_t)d));
 	}
@@ -1459,9 +1688,14 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
-		host_sd_lock();
-		result = fstat(host_fd, &information);
-		host_sd_unlock();
+		if (host_memory_file_is(host_fd))
+			result = host_memory_file_fstat(host_fd, &information);
+		else
+		{
+			host_sd_lock();
+			result = result_of(fstat(host_fd, &information));
+			host_sd_unlock();
+		}
 
 		if (result == 0)
 		{
@@ -1470,12 +1704,14 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			if (out)
 				kstat_from_stat(out, &information);
 		}
-		return result_of(result);
+		return result;
 	}
 	case SYS_newfstatat:
 	{
 		struct stat information;
-		int result = fstatat((int)a, GUEST(const char *, b), &information, (int)d);
+		int slot = host_memory_file_path(GUEST(const char *, b));
+		int result = slot >= 0 ? host_memory_file_stat(slot, GUEST(const char *, b), &information) :
+			result_of(fstatat((int)a, GUEST(const char *, b), &information, (int)d));
 
 		if (result == 0)
 		{
@@ -1484,7 +1720,7 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			if (out)
 				kstat_from_stat(out, &information);
 		}
-		return result_of(result);
+		return result;
 	}
 	case SYS_getdents64:
 		/* Not answered, and it cannot be from here.
@@ -1506,6 +1742,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		if (host_memory_file_is(host_fd))
+			return 0;
 		host_sd_lock();
 		result = fsync(host_fd);
 		host_sd_unlock();
@@ -1515,6 +1753,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 	{
 		int host_fd = host_descriptor((int)a);
 
+		if (host_memory_file_is(host_fd))
+			return 0;
 		return result_of(host_fd < 0 ? -EBADF : fdatasync(host_fd));
 	}
 	case SYS_ftruncate:
@@ -1524,6 +1764,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		if (host_memory_file_is(host_fd))
+			return host_memory_file_truncate(host_fd, (long long)b);
 		host_sd_lock();
 		note_large_offset("ftruncate", a, b);
 		result = ftruncate(host_fd, (off_t)b);
@@ -1543,6 +1785,9 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		/* (a map cache file in memory has no second name: nothing asks) */
+		if (host_memory_file_is(host_fd))
+			return -EINVAL;
 		host_sd_lock();
 		duplicate = dup(host_fd);
 		host_sd_unlock();
@@ -1571,6 +1816,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 			return result_of(-EINVAL);
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		if (host_memory_file_is(host_fd))
+			return -EINVAL;
 		if (b < 3)
 		{
 			host_logf(HOST_LOG_WARN, "guest dup3 onto a standard stream is not supported");
@@ -1610,6 +1857,10 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		/* a map cache file in memory: musl's open sets FD_CLOEXEC, which
+		means nothing here, and the flags are read and write */
+		if (host_memory_file_is(host_fd))
+			return (int)b == F_GETFL ? O_RDWR : (int)b == F_GETFD || (int)b == F_SETFD ? 0 : -EINVAL;
 		switch ((int)b)
 		{
 		case F_GETFD:
@@ -1646,9 +1897,31 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 		}
 	}
 	case SYS_faccessat:
+		if (host_memory_file_path(GUEST(const char *, b)) >= 0)
+		{
+			struct stat information;
+
+			return host_memory_file_stat(host_memory_file_path(GUEST(const char *, b)), GUEST(const char *, b),
+				&information);
+		}
 		return result_of(faccessat((int)a, GUEST(const char *, b), (int)c, 0));
 	case SYS_unlinkat:
+		if (host_memory_file_path(GUEST(const char *, b)) >= 0)
+			return host_memory_file_unlink(host_memory_file_path(GUEST(const char *, b)), GUEST(const char *, b));
+		/* Linux's AT_REMOVEDIR (0x200), which musl's remove() and rmdir() pass for a folder: newlib numbers its
+		 * flags its own way, so a folder is removed here as one */
+		if ((int)c & 0x200)
+		{
+			int result;
+
+			host_sd_lock();
+			result = rmdir(GUEST(const char *, b));
+			host_sd_unlock();
+			return result_of(result);
+		}
 		return result_of(unlinkat((int)a, GUEST(const char *, b), (int)c));
+	case SYS_renameat:
+		return result_of(guest_renameat((int)a, GUEST(const char *, b), (int)c, GUEST(const char *, d)));
 	case SYS_mkdirat:
 		return result_of(mkdirat((int)a, GUEST(const char *, b), (mode_t)c));
 	case SYS_fchmod:
@@ -1658,6 +1931,8 @@ static long long host_syscall_inner(long long number, long long a, long long b, 
 
 		if (host_fd < 0)
 			return result_of(-EBADF);
+		if (host_memory_file_is(host_fd))
+			return 0;
 		host_sd_lock();
 		result = fchmod(host_fd, (mode_t)b);
 		host_sd_unlock();
@@ -1814,6 +2089,9 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 		return result;
 	/* refused by the console, and said once already (host_mman.c) */
 	if (number == SYS_mprotect && result == -ENOTSUP)
+		return result;
+	/* refused on purpose, and said once (SYS_mremap above) */
+	if (number == SYS_mremap && result == -ENOMEM)
 		return result;
 	if (result < 0 && result > -4096)
 	{

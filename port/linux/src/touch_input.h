@@ -54,6 +54,9 @@ int touch_input_move(float *forward, float *strafe);
 call to yaw and pitch and to gyro_yaw and gyro_pitch, in radians at `scale`
 radians per pixel */
 void touch_input_look(float scale, float *yaw, float *pitch, float *gyro_yaw, float *gyro_pitch);
+/* the Gyro Aim mode (input.gyro_aim: 0 off, 1 on, 2 only while zoomed in)
+for the overlay, which runs the phone's gyroscope (Android's) */
+void touch_input_gyro_mode(int mode);
 
 /* whether the swipe gets the stick's aim assist (input.touch_aim_assist) */
 int touch_input_aim_assist(void);

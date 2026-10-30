@@ -26,6 +26,8 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -89,6 +91,16 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static final long SHOW_DELAY_MS = 200;
     private static final long VIBRATION_MS = 110;
     private static final long VIBRATION_RENEW_MS = 70;
+    /**
+     * three or four fingers down together (the layout's menuFingers, the last
+     * within MENU_TAP_MS of the first) open the game's overlay menu
+     * (port/linux/game/overlay_menu.c): a press held this long in the
+     * buttons the game reads (port/linux/src/touch_input.c's
+     * TOUCH_OVERLAY_BUTTON_BIT: past SDL's 15)
+     */
+    private static final int MENU_BIT = 15;
+    private static final long MENU_TAP_MS = 250;
+    private static final long MENU_PRESS_MS = 150;
 
     /** the game's HALO_TOUCH_SCENE bits (port/linux/src/touch_input.c) */
     private static final int SCENE_KNOWN = 1;
@@ -157,9 +169,11 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static native void nativeLook(float dx, float dy);
     private static native void nativeGyro(float dx, float dy);
     private static native void nativeLookReset();
+    private static native int nativeGyroMode();
     private static native int nativeRumble();
     private static native int nativeScene();
     private static native int nativeBindings(int[] controls);
+    private static native void nativeMenuFingers(int fingers);
     private static native void nativeDevices(boolean touchscreen, boolean controller);
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -191,6 +205,10 @@ public final class TouchControls extends View implements SensorEventListener, In
     /** each finger on a toolbar item: {x, y, item}; the item acts when it lifts there */
     private final SparseArray<float[]> toolbarFingers = new SparseArray<>();
     private final int[] axes = new int[6];
+    /** until when the menu fingers' press is sent (0: it is not) */
+    private long menuPressedUntil;
+    /** the fingers that opened the overlay, ignored until all are lifted */
+    private boolean menuFingersDown;
     private int lookPointer = -1;
     private float lookX;
     private float lookY;
@@ -218,6 +236,8 @@ public final class TouchControls extends View implements SensorEventListener, In
     private boolean showing;
     private long shownSince = -1;
     private boolean gyroRegistered;
+    /** the game's Gyro Aim, polled: 0 off, 1 on, 2 only on zoom */
+    private int gyroMode;
     private int lastAmplitude;
     private long lastVibration;
     private final int[] bindings = DEFAULT_BINDINGS.clone();
@@ -231,9 +251,19 @@ public final class TouchControls extends View implements SensorEventListener, In
             if (!deviceInputActive)
                 return;
             scene = nativeScene();
+            int mode = nativeGyroMode();
+            if (mode != gyroMode) {
+                gyroMode = mode;
+                updateSensors();
+            }
             updateShowing();
             readBindings();
             updateRumble();
+            // (the menu fingers' press let go of once it has been sent a while)
+            if (menuPressedUntil != 0 && SystemClock.uptimeMillis() >= menuPressedUntil) {
+                menuPressedUntil = 0;
+                publish();
+            }
             postDelayed(this, POLL_MS);
         }
     };
@@ -252,6 +282,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         touchscreenFeature = context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
         preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
         loadLayout(context);
+        nativeMenuFingers(layout.menuFingers);
         hidden = preferences.getBoolean(KEY_HIDDEN, false);
         refreshInputDevices();
         setFocusable(false);
@@ -485,6 +516,8 @@ public final class TouchControls extends View implements SensorEventListener, In
             if (kind.trigger >= 0)
                 axes[kind.trigger] = 32767;
         }
+        if (menuPressedUntil != 0 && SystemClock.uptimeMillis() < menuPressedUntil)
+            bits |= 1 << MENU_BIT;
         nativeState(axes[0], axes[1], axes[2], axes[3], axes[4], axes[5], bits);
     }
 
@@ -613,7 +646,27 @@ public final class TouchControls extends View implements SensorEventListener, In
     private void gameTouch(MotionEvent event) {
         int index = event.getActionIndex();
         int id = event.getPointerId(index);
-        switch (event.getActionMasked()) {
+        int action = event.getActionMasked();
+        // three or four fingers down together open the overlay menu: the controls
+        // they held let go, and the fingers do nothing more until all are lifted
+        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount() == layout.menuFingers
+                && event.getEventTime() - event.getDownTime() <= MENU_TAP_MS) {
+            reset();
+            menuFingersDown = true;
+            menuPressedUntil = SystemClock.uptimeMillis() + MENU_PRESS_MS;
+            publish();
+            return;
+        }
+        // (a first finger is a new touch: the menu's fingers were lifted, perhaps
+        // while the overlay hid the controls and the fingers went to the game)
+        if (action == MotionEvent.ACTION_DOWN)
+            menuFingersDown = false;
+        if (menuFingersDown) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                menuFingersDown = false;
+            return;
+        }
+        switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
                 fingerDown(id, event.getX(index), event.getY(index));
@@ -830,6 +883,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         reset();
         layout = imported.layout;
         sensitivity = imported.sensitivity;
+        nativeMenuFingers(layout.menuFingers);
         setHidden(false);
         cancelRumble();
         invalidate();
@@ -903,16 +957,10 @@ public final class TouchControls extends View implements SensorEventListener, In
         });
         panel.addView(rumble);
 
-        Switch gyro = new Switch(getContext());
-        gyro.setText(gyroscope != null ? "Gyroscope aiming (experimental)" : "Gyroscope aiming (not on this phone)");
-        gyro.setChecked(layout.gyroscopeEnabled);
-        gyro.setEnabled(gyroscope != null);
-        gyro.setOnCheckedChangeListener((view, enabled) -> {
-            layout.gyroscopeEnabled = enabled;
-            gyroAim.reset();
-            saveLayout();
-        });
-        panel.addView(gyro);
+        // (gyroscope aiming is the game's: a profile's Gamepads, Gyro Aim)
+        panel.addView(text(gyroscope != null ?
+            "Gyroscope aiming: in the game's settings, a profile's Gamepads, Gyro Aim" :
+            "Gyroscope aiming: not on this phone"));
 
         Switch floating = new Switch(getContext());
         floating.setText("Floating move stick: it goes where your thumb lands in the lower left");
@@ -931,6 +979,23 @@ public final class TouchControls extends View implements SensorEventListener, In
             saveLayout();
         });
         panel.addView(buttonsStill);
+
+        panel.addView(text("Fingers that tap together to open the cheat menu:"));
+        RadioGroup fingers = new RadioGroup(getContext());
+        fingers.setOrientation(RadioGroup.HORIZONTAL);
+        for (int count = TouchLayout.MIN_MENU_FINGERS; count <= TouchLayout.MAX_MENU_FINGERS; count++) {
+            RadioButton choice = new RadioButton(getContext());
+            choice.setId(count);
+            choice.setText(count + " fingers");
+            fingers.addView(choice);
+        }
+        fingers.check(layout.menuFingers);
+        fingers.setOnCheckedChangeListener((group, count) -> {
+            layout.menuFingers = count;
+            nativeMenuFingers(count);
+            saveLayout();
+        });
+        panel.addView(fingers);
 
         TextView opacityLabel = text("");
         SeekBar opacity = new SeekBar(getContext());
@@ -1163,8 +1228,13 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     // ---------- the gyroscope and the vibration
 
+    /** the game's Gyro Aim (input.gyro_aim): on, or only on zoom, which the game itself applies */
+    private boolean gyroscopeWanted() {
+        return gyroMode != 0;
+    }
+
     private void updateSensors() {
-        boolean needed = deviceInputActive && showing && !hidden && layout.gyroscopeEnabled && gyroscope != null;
+        boolean needed = deviceInputActive && showing && !hidden && gyroscopeWanted() && gyroscope != null;
         if (needed && !gyroRegistered) {
             gyroAim.reset();
             gyroRegistered = sensors.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
@@ -1177,16 +1247,16 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!deviceInputActive || !showing || hidden || !layout.gyroscopeEnabled || editing || openDialogs > 0) {
+        if (!deviceInputActive || !showing || hidden || !gyroscopeWanted() || editing || openDialogs > 0) {
             gyroAim.reset();
             return;
         }
         int rotation = ((WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE))
             .getDefaultDisplay().getRotation();
         if (gyroAim.sample(event.timestamp, event.values[0], event.values[1], rotation, gyroDelta)) {
-            // as a swipe of this many logical units (which the profile's invert leaves alone)
-            nativeGyro(-gyroDelta[0] / LOOK_RADIANS_PER_UNIT * sensitivity,
-                -gyroDelta[1] / LOOK_RADIANS_PER_UNIT * sensitivity);
+            // as a swipe of this many logical units, the phone's own turn (the game applies
+            // Gyro Aim's sensitivity and invert; the profile's invert leaves it alone)
+            nativeGyro(-gyroDelta[0] / LOOK_RADIANS_PER_UNIT, -gyroDelta[1] / LOOK_RADIANS_PER_UNIT);
         }
     }
 

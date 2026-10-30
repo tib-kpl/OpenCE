@@ -435,7 +435,9 @@ boolean game_state_read_from_file(
 		146,
 		xbox_game_state_globals.file_valid_for_read || recover_saved_games_hack);
 
-	/* this file's checkpoint is in memory: the file may still be being written */
+	/* this file's checkpoint is in memory: the file may still be being
+	written. It is this process's own game state, taken as it was saved, so it
+	is not checked as an image read from a file is */
 	if (game_state_writer.snapshot_valid)
 	{
 		memcpy(xbox_game_state_globals.buffer, game_state_writer.snapshot, xbox_game_state_globals.buffer_size);

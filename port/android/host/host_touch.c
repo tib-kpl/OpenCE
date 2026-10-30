@@ -41,9 +41,15 @@ static int64_t look_ns;
 /* the gyroscope's turn, apart: the profile's invert is the swipe's only */
 static float gyro_delta[2];
 static int64_t gyro_ns;
+/* the game's Gyro Aim (input.gyro_aim): 0 off, 1 on, 2 only while zoomed in,
+which the overlay polls to run the phone's gyroscope */
+static volatile int gyro_mode;
 static int rumble_amplitude;
 static int64_t rumble_ns;
 static volatile int touch_scene;
+/* the fingers that tap together to open the overlay menu, the overlay's
+General option; touch_input.c counts them in the menus */
+static volatile int menu_fingers = 3;
 /* the overlay's devices (host_touch_devices): a touchscreen, a game
 controller (a stick or a hat, not a phone's few gamepad keys) */
 #define HOST_TOUCH_DEVICE_TOUCHSCREEN 1
@@ -135,6 +141,33 @@ JNIEXPORT void JNICALL Java_com_halo_decomp_TouchControls_nativeGyro(
 	gyro_delta[1] += dy;
 	gyro_ns = now_ns();
 	pthread_mutex_unlock(&touch_lock);
+}
+
+/* the guest's, when its settings change: the Gyro Aim mode (xinput_sdl.c,
+which applies its sensitivity, invert and zoom itself) */
+void host_touch_gyro_mode(int mode)
+{
+	gyro_mode = mode;
+}
+
+JNIEXPORT jint JNICALL Java_com_halo_decomp_TouchControls_nativeGyroMode(JNIEnv *env, jclass cls)
+{
+	(void)env;
+	(void)cls;
+	return gyro_mode;
+}
+
+JNIEXPORT void JNICALL Java_com_halo_decomp_TouchControls_nativeMenuFingers(JNIEnv *env, jclass cls, jint fingers)
+{
+	(void)env;
+	(void)cls;
+	if (fingers == 3 || fingers == 4)
+		menu_fingers = fingers;
+}
+
+int host_touch_menu_fingers(void)
+{
+	return menu_fingers;
 }
 
 JNIEXPORT void JNICALL Java_com_halo_decomp_TouchControls_nativeLookReset(JNIEnv *env, jclass cls)

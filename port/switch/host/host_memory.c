@@ -57,23 +57,33 @@ from the bottom of the sub-4 GB space mapping a page at a time until one
 refused, and reported that address. It would have answered the question
 directly instead of by elimination.
 
-The pools still have room: they grow from here to the image at 0x40000000,
-which is 768 MB.
+The pools still have room: they grow from here to the image at
+HALO_GUEST_IMAGE_BASE (0x3c000000), which is 704 MB.
 */
 #define LOW_START 0x10000000ULL
+/* A pool is this large where the address space has room, and else as large
+as it has, halving down to POOL_SMALLEST. Below 4 GB the console maps only
+inside its stack region, which libnx scatters thread stacks and the host's
+own mappings across: one lumoria_a.map load had room for no 512 MB window
+and for one 256 MB pool, which the map's 166 MB of converted sounds filled,
+with hundreds of megabytes free in smaller ranges. */
 #define POOL_SIZE (256ULL * 1024 * 1024)
+#define POOL_SMALLEST (16ULL * 1024 * 1024)
 #define POOL_PAGES (POOL_SIZE / PAGE)
-#define MAXIMUM_POOLS 12
+#define MAXIMUM_POOLS 32
 
 /* Where the guest's memory has to be code memory (host_mman.c), a pool and
 the window are made real a chunk at a time and kept: see commit, below */
 #define CHUNK_SIZE (16ULL * 1024 * 1024)
 #define POOL_CHUNKS (POOL_SIZE / CHUNK_SIZE)
-#define WINDOW_CHUNKS (HALO_GUEST_WINDOW_SIZE / CHUNK_SIZE)
+#define WINDOW_CHUNKS (HALO_GUEST_WINDOW_MAXIMUM / CHUNK_SIZE)
 
 struct pool
 {
 	uint64_t base;
+	/* its size, POOL_SIZE or less, and its pages */
+	uint64_t size;
+	uint64_t pages;
 	uint32_t free_pages;
 	uint8_t used[POOL_PAGES]; /* 1 for each page handed out */
 	uint8_t committed[POOL_CHUNKS]; /* 1 for each chunk made real (commit) */
@@ -83,7 +93,7 @@ static struct pool *pools[MAXIMUM_POOLS];
 static int pool_count;
 static pthread_mutex_t memory_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static uint64_t window_base, window_end;
+static uint64_t window_base, window_end, window_size;
 static uint64_t image_base, image_end;
 
 static uint64_t round_up(uint64_t value)
@@ -228,10 +238,49 @@ int host_memory_range_is_reserved(uint64_t address, uint64_t size)
 	return range_claimed(address, size);
 }
 
+/* the guest image's range, held from the start until the image claims it
+(host_memory_hold_image_range); 0 to 0 when nothing is held */
+static uint64_t image_hold_base, image_hold_end;
+/* the placeholder mapped over the image's range from the start of main
+(host_memory_hold_image_range), and whether the image's own memory has
+taken its place (host_memory_initialize) */
+static int image_placeholder, image_mapped;
+
+/* The range the largest window can take, held from the start of main too
+(host_memory_hold_window_range) until the window is placed. A window of
+HALO_GUEST_WINDOW_MAXIMUM is on a multiple of its size, and below 4 GB the
+console maps only in its stack region, to 0x80000000: of 0x20000000,
+0x40000000 and 0x60000000, the game image is in the first and Custom
+Edition's tag cache in the second, and in the third libnx's thread stacks
+and the host's first mappings landed by the time the window was placed, so
+most runs had 256 or 128 MB. A window starts on a whole number of 256 MB
+(place_window), so this holds every place a 512 MB one can go but 0x40000000:
+the kernel puts the threads' local storage pages where it likes, one of them
+in a held range on some runs, and two places are more often both free than
+one. 0 to 0 when nothing is held. */
+#define WINDOW_HOLD_BASE 0x50000000ULL
+#define WINDOW_HOLD_END 0x80000000ULL
+static uint64_t window_hold_base, window_hold_end;
+static VirtmemReservation *window_hold;
+
+/* Custom Edition's tag cache range (HALO_GUEST_CUSTOM_EDITION_BASE), held
+from the start of main as the image's is (host_memory_hold_image_range), for
+the whole run: it lies just past the image, where the console's mappings
+below 4 GB go next, and a thread's stack (0x11000 or 0x21000 bytes, a host
+thread's) landed in it on some runs before it was reserved, and Custom
+Edition maps could not run. 0 to 0 when nothing is held. */
+static uint64_t custom_edition_hold_base, custom_edition_hold_end;
+
 static int range_claimed(uint64_t address, uint64_t size)
 {
 	int index;
 
+	if (address < image_hold_end && image_hold_base < address + size)
+		return 1;
+	if (address < window_hold_end && window_hold_base < address + size)
+		return 1;
+	if (address < custom_edition_hold_end && custom_edition_hold_base < address + size)
+		return 1;
 	for (index = 0; index < reservation_count; index++)
 	{
 		if (address < reservations[index].base + reservations[index].size &&
@@ -289,12 +338,25 @@ uint64_t host_memory_reserved_region(uint64_t size)
  * thing.
  *
  * Held for the whole run: libnx does not mind reservations that overlap, so
- * the image's own reservation simply lands on top of this one. */
-#define IMAGE_HOLD_SIZE (32u * 1024 * 1024)
+ * the image's own reservation simply lands on top of this one.
+ *
+ * Held from this port's own memory too (range_claimed), until the image
+ * claims it. A pool is placed where the kernel says the space is free, and
+ * the kernel knows nothing of libnx's reservations: one run put pool 0 at
+ * 0x30036000, whose 256 MB end at 0x40036000, and the image could never be
+ * loaded at 0x40000000. */
+/* (all of the image, which has grown past 32 MB: a hold that stopped short
+of its end let pool 0 be placed across the rest, at the hold's end. It grew
+past 48 MB too, to 0x3f1c3000 with its zeroed data, so the hold is now all
+the room it has: up to Custom Edition's tag cache, held as well) */
+#define IMAGE_HOLD_SIZE (HALO_GUEST_CUSTOM_EDITION_BASE - HALO_GUEST_IMAGE_BASE)
 
 void host_memory_hold_image_range(void)
 {
 	VirtmemReservation *hold;
+
+	image_hold_base = HALO_GUEST_IMAGE_BASE;
+	image_hold_end = (uint64_t)HALO_GUEST_IMAGE_BASE + IMAGE_HOLD_SIZE;
 
 	virtmemLock();
 	hold = virtmemAddReservation((void *)(uintptr_t)HALO_GUEST_IMAGE_BASE, IMAGE_HOLD_SIZE);
@@ -302,6 +364,60 @@ void host_memory_hold_image_range(void)
 	if (!hold)
 		host_logf(HOST_LOG_ERROR, "libnx would not hold the guest image's range at %08x; a thread's stack may "
 			"land in it", HALO_GUEST_IMAGE_BASE);
+	/* And memory mapped over it, until the image's own takes its place.
+
+	libnx's hold keeps its own placements out - the threads' stacks - and
+	the kernel knows nothing of it. The kernel places a thread's local
+	storage page itself, at a free address of its choosing, whenever a new
+	thread finds the pages it has full, and on one run it put one at
+	0x3d7be000 (type 0c), inside the image's range: every thread made before
+	the image is loaded is a chance of that, the thread lives as long as the
+	game, and the image could not be loaded ("cannot reserve the guest image
+	range"). The kernel does not place anything over a mapping, so the range
+	is mapped from here, before any thread exists. It costs the hold's
+	memory until the image is loaded, a few seconds. */
+	if (mmap((void *)(uintptr_t)HALO_GUEST_IMAGE_BASE, IMAGE_HOLD_SIZE, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == (void *)(uintptr_t)HALO_GUEST_IMAGE_BASE)
+		image_placeholder = 1;
+	else
+		host_logf(HOST_LOG_ERROR, "could not map the guest image's range at %08x ahead of the image; a thread's "
+			"local storage may land in it", HALO_GUEST_IMAGE_BASE);
+
+	/* (and Custom Edition's tag cache's, for the whole run) */
+	custom_edition_hold_base = HALO_GUEST_CUSTOM_EDITION_BASE;
+	custom_edition_hold_end = HALO_GUEST_CUSTOM_EDITION_END;
+	virtmemLock();
+	hold = virtmemAddReservation((void *)(uintptr_t)HALO_GUEST_CUSTOM_EDITION_BASE,
+		HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE);
+	virtmemUnlock();
+	if (!hold)
+		host_logf(HOST_LOG_ERROR, "libnx would not hold Custom Edition's tag cache range at %08x; a thread's stack "
+			"may land in it", HALO_GUEST_CUSTOM_EDITION_BASE);
+}
+
+void host_memory_hold_window_range(void)
+{
+	window_hold_base = WINDOW_HOLD_BASE;
+	window_hold_end = WINDOW_HOLD_END;
+	virtmemLock();
+	window_hold = virtmemAddReservation((void *)(uintptr_t)WINDOW_HOLD_BASE, WINDOW_HOLD_END - WINDOW_HOLD_BASE);
+	virtmemUnlock();
+	if (!window_hold)
+		host_logf(HOST_LOG_ERROR, "libnx would not hold the window's range at %08llx; a thread's stack may land in it",
+			WINDOW_HOLD_BASE);
+}
+
+/* the held range given back, the window placed (in it or elsewhere) */
+static void window_hold_release(void)
+{
+	if (window_hold)
+	{
+		virtmemLock();
+		virtmemRemoveReservation(window_hold);
+		virtmemUnlock();
+		window_hold = NULL;
+	}
+	window_hold_base = window_hold_end = 0;
 }
 
 /* Where the kernel put this process's regions, said once at start.
@@ -342,6 +458,8 @@ void host_memory_log_regions(void)
 	}
 }
 
+static int note_reservation(uint64_t address, uint64_t size, int for_a_purpose);
+
 static int reserve(uint64_t address, uint64_t size, int for_a_purpose)
 {
 	/* taken by anything already mapped, or by another reservation */
@@ -350,6 +468,14 @@ static int reserve(uint64_t address, uint64_t size, int for_a_purpose)
 		errno = EEXIST;
 		return -1;
 	}
+	return note_reservation(address, size, for_a_purpose);
+}
+
+/* the range written down as this port's, here and to libnx, without asking
+what is mapped there: reserve's, and the image's, whose own memory is
+already there when it is (host_memory_initialize) */
+static int note_reservation(uint64_t address, uint64_t size, int for_a_purpose)
+{
 	if (reservation_count >= RESERVATION_LIMIT)
 	{
 		errno = ENOMEM;
@@ -432,6 +558,10 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 					return start;
 				/* step past whatever is already claimed at this point */
 				move = start;
+				if (image_hold_base <= move && move < image_hold_end)
+					move = image_hold_end;
+				if (custom_edition_hold_base <= move && move < custom_edition_hold_end)
+					move = custom_edition_hold_end;
 				for (int index = 0; index < reservation_count; index++)
 				{
 					if (reservations[index].base <= move &&
@@ -478,46 +608,95 @@ static void log_conflicts(uint64_t address, uint64_t size)
 	}
 }
 
-/* claims a fixed range for the guest, or reports the address is taken */
-static struct pool *pool_new(void)
+/* says where everything below 4 GB is, and the port's reservations: why a
+pool could not be placed */
+static void log_low_address_space(void)
 {
-	/* above the image first: ART allocates its own low-4 GB memory from
-	the bottom up */
-	uint64_t minimum = image_end ? image_end : LOW_START;
+	uint64_t where = LOW_START;
+	int index;
+
+	host_logf(HOST_LOG_ERROR, "guest memory: what is mapped below 4 GB:");
+	while (where < LOW_LIMIT)
+	{
+		MemoryInfo information = { 0 };
+		u32 page_info = 0;
+
+		if (R_FAILED(svcQueryMemory(&information, &page_info, where)))
+			break;
+		host_logf(HOST_LOG_ERROR, "  %08llx-%08llx type %02x perm %x",
+			(unsigned long long)information.addr, (unsigned long long)(information.addr + information.size),
+			information.type, information.perm);
+		if (information.addr + information.size <= where)
+			break;
+		where = information.addr + information.size;
+	}
+	for (index = 0; index < reservation_count; index++)
+		host_logf(HOST_LOG_ERROR, "  reserved %08llx-%08llx", (unsigned long long)reservations[index].base,
+			(unsigned long long)(reservations[index].base + reservations[index].size));
+}
+
+/* claims a range for the guest of at least pages pages: POOL_SIZE where
+there is room, else the largest power of two down to POOL_SMALLEST */
+static struct pool *pool_new(uint64_t pages)
+{
+	uint64_t size;
 	struct pool *pool;
 	int attempt;
 
 	if (pool_count == MAXIMUM_POOLS)
-		return NULL;
-	for (attempt = 0; attempt < 64; attempt++)
 	{
-		uint64_t address = find_gap(POOL_SIZE, minimum, 1);
-
-		if (!address && minimum != LOW_START)
-		{
-			minimum = LOW_START;
-			address = find_gap(POOL_SIZE, minimum, 1);
-		}
-		if (!address)
-			return NULL;
-		if (reserve(address, POOL_SIZE, 0) == 0)
-		{
-			pool = calloc(1, sizeof(*pool));
-			pool->base = address;
-			pool->free_pages = POOL_PAGES;
-			pools[pool_count++] = pool;
-			host_logf(HOST_LOG_INFO, "guest memory pool %d at %08llx", pool_count - 1, (unsigned long long)address);
-			return pool;
-		}
-		/* raced with another mapping; look further up */
-		minimum = address + PAGE;
+		host_logf(HOST_LOG_ERROR, "guest memory: all %d pools are made", MAXIMUM_POOLS);
+		return NULL;
 	}
+	for (size = POOL_SIZE; size >= POOL_SMALLEST && size >= pages * PAGE; size /= 2)
+	{
+		/* above the image first: ART allocates its own low-4 GB memory from
+		the bottom up */
+		uint64_t minimum = image_end ? image_end : LOW_START;
+
+		for (attempt = 0; attempt < 64; attempt++)
+		{
+			uint64_t address = find_gap(size, minimum, 1);
+
+			if (!address && minimum != LOW_START)
+			{
+				minimum = LOW_START;
+				address = find_gap(size, minimum, 1);
+			}
+			if (!address)
+				break;
+			if (reserve(address, size, 0) == 0)
+			{
+				pool = calloc(1, sizeof(*pool));
+				if (!pool)
+					return NULL;
+				pool->base = address;
+				pool->size = size;
+				pool->pages = size / PAGE;
+				pool->free_pages = (uint32_t)pool->pages;
+				pools[pool_count++] = pool;
+				host_logf(HOST_LOG_INFO, "guest memory pool %d at %08llx (%llu MB)", pool_count - 1,
+					(unsigned long long)address, (unsigned long long)(size / (1024 * 1024)));
+				return pool;
+			}
+			/* raced with another mapping; look further up */
+			minimum = address + PAGE;
+		}
+	}
+	host_logf(HOST_LOG_ERROR, "guest memory: no room for a pool of %llu KB or more",
+		(unsigned long long)(pages * PAGE / 1024));
+	log_low_address_space();
 	return NULL;
 }
 
 uint32_t host_memory_window_base(void)
 {
 	return (uint32_t)window_base;
+}
+
+uint32_t host_memory_window_size(void)
+{
+	return (uint32_t)window_size;
 }
 
 /* Where the guest image was mapped. host_mman.c's code-memory check only
@@ -528,9 +707,118 @@ uint32_t host_memory_image_base(void)
 	return (uint32_t)image_base;
 }
 
+/* whether the image's memory is mapped already, in the placeholder's place
+(host_memory_initialize), which the loader then only fills */
+int host_memory_image_mapped(void)
+{
+	return image_mapped;
+}
+
+/* A window of size bytes: where the game and its data expect it, but only if
+ * that address will actually hold it.
+ *
+ * It will not. 0x80000000 is reported free by svcQueryMemory and refused by
+ * svcMapMemory at every size from 16 MB to 128 MB, with an error that is not
+ * "out of memory": the console simply will not map there. Checking whether
+ * anything was already mapped - which is all reserve() does - cannot tell the
+ * difference, so the port believed the address was usable, told the guest it
+ * was, and the guest then refused its own window. So each address is tried,
+ * and handed straight back, before it is promised to anything.
+ *
+ * Next, the address this build prefers (HALO_SWITCH_WINDOW_FALLBACK). The
+ * search takes the first free extent the kernel reports, which differs from
+ * run to run - the launcher's own mappings, anything ASLR'd below 4 GB, and
+ * how much of the low pool the port has already taken all move it - and the
+ * port's behaviour is sensitive to where things land. One fixed address is
+ * one less variable.
+ *
+ * Last, the first free range on a whole number of HALO_GUEST_WINDOW_ALIGNMENT
+ * that the console will map. The trial mapping is of heap memory as large as
+ * the window, so a size the console has not the memory for fails here too.
+ *
+ * A window need not start on a whole number of its own size: the port turns
+ * an offset into an address and back by adding and subtracting the base
+ * (platform.h's PLATFORM_PHYSICAL_TO_VIRTUAL), not by masking, and what that
+ * needs is a base at least the window's size, so that no address in it reads
+ * as an offset. It starts on a whole number of CHUNK_SIZE, the pieces it is
+ * made real and handed to the GPU in: a 512 MB window takes any free 512 MB
+ * of the held range, where on a whole number of 256 MB it had two places,
+ * and a thread's stack or local storage page in each kept it from both. */
+static uint64_t place_window(uint64_t size)
+{
+	uint64_t alignment = CHUNK_SIZE;
+	uint64_t minimum = LOW_START > size ? LOW_START : size;
+	int attempt;
+
+	if (host_can_map_at(HALO_GUEST_WINDOW_BASE, size) && reserve(HALO_GUEST_WINDOW_BASE, size, 1) == 0)
+		return HALO_GUEST_WINDOW_BASE;
+	/* the range held for it from the start, its own claim lifted to take it:
+	the free ranges in it the kernel reports (find_gap; what the loader and
+	the kernel put there before the program ran - the main thread's stack, a
+	thread's local storage page - is not), each tried */
+	if (window_hold_end && size <= window_hold_end - window_hold_base)
+	{
+		uint64_t held = window_hold_base, held_end = window_hold_end;
+		uint64_t from = held > size ? held : size;
+
+		window_hold_base = window_hold_end = 0;
+		for (attempt = 0; attempt < 32; attempt++)
+		{
+			uint64_t start = find_gap(size, from, alignment);
+
+			if (!start || start + size > held_end)
+				break;
+			from = start + alignment;
+			if (host_can_map_at(start, size) && reserve(start, size, 1) == 0)
+			{
+				host_logf(HOST_LOG_INFO, "the window takes the range held for it at %08llx", (unsigned long long)start);
+				return start;
+			}
+			host_logf(HOST_LOG_INFO, "the range held for the window at %08llx will not take %u MB",
+				(unsigned long long)start, (unsigned int)(size / (1024 * 1024)));
+			log_conflicts(start, size);
+		}
+		host_logf(HOST_LOG_INFO, "the range held for the window (%08llx-%08llx) has no %u MB free",
+			(unsigned long long)held, (unsigned long long)held_end, (unsigned int)(size / (1024 * 1024)));
+		log_conflicts(held, held_end - held);
+		window_hold_base = held;
+		window_hold_end = held_end;
+	}
+	host_logf(HOST_LOG_INFO, "the window's usual address %08llx will not take %u MB; looking elsewhere",
+		(unsigned long long)HALO_GUEST_WINDOW_BASE, (unsigned int)(size / (1024 * 1024)));
+	if (HALO_SWITCH_WINDOW_FALLBACK % alignment == 0 &&
+		host_can_map_at(HALO_SWITCH_WINDOW_FALLBACK, size) &&
+		reserve(HALO_SWITCH_WINDOW_FALLBACK, size, 1) == 0)
+	{
+		host_logf(HOST_LOG_INFO, "  the window is pinned to %08llx", (unsigned long long)HALO_SWITCH_WINDOW_FALLBACK);
+		return HALO_SWITCH_WINDOW_FALLBACK;
+	}
+	host_logf(HOST_LOG_INFO, "  %08llx will not take it either; searching",
+		(unsigned long long)HALO_SWITCH_WINDOW_FALLBACK);
+	for (attempt = 0; attempt < 128; attempt++)
+	{
+		uint64_t candidate = find_gap(size, minimum, alignment);
+
+		if (!candidate)
+			break;
+		minimum = candidate + PAGE;
+		/* it has to be somewhere the console will really map, for the same
+		reason the usual address was refused, and free of the port's own
+		reservations */
+		if (!host_can_map_at(candidate, size))
+		{
+			host_logf(HOST_LOG_INFO, "  %08llx will not take it", (unsigned long long)candidate);
+			continue;
+		}
+		if (reserve(candidate, size, 1) != 0)
+			continue;
+		return candidate;
+	}
+	return 0;
+}
+
 int host_memory_initialize(uint32_t base, uint32_t size)
 {
-	uint64_t minimum = LOW_START;
 	int attempt;
 
 	/* the image first: it is at a fixed address, and the search below reads
@@ -538,6 +826,22 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	search hands back the image's own address */
 	image_base = base;
 	image_end = base + round_up(size);
+	/* (the image's own reservation stands for the hold from here) */
+	image_hold_base = image_hold_end = 0;
+	/* The placeholder held the range (host_memory_hold_image_range): the
+	image's memory takes its place, the one mapped the moment the other is
+	given back, so the range is free for no longer than that. */
+	if (image_placeholder)
+	{
+		image_placeholder = 0;
+		if (munmap((void *)(uintptr_t)HALO_GUEST_IMAGE_BASE, IMAGE_HOLD_SIZE) == 0 &&
+			mmap((void *)(uintptr_t)image_base, image_end - image_base, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == (void *)(uintptr_t)image_base &&
+			note_reservation(image_base, image_end - image_base, 0) == 0)
+			image_mapped = 1;
+		else
+			host_logf(HOST_LOG_WARN, "the guest image's memory could not take the placeholder's place");
+	}
 	/* Claiming the image's fixed address can lose a race with the console's
 	 * own low-memory manager, which places mappings below 4 GB from the
 	 * bottom up and does not know this program wants 0x40000000. Where the
@@ -551,7 +855,7 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 	 * reuses its space, so the reservation is retried for a few seconds
 	 * before it is called a failure. Each attempt says what was in the way,
 	 * so a conflict that is permanent looks different from one that clears. */
-	for (attempt = 0; attempt < 20; attempt++)
+	for (attempt = 0; attempt < 20 && !image_mapped; attempt++)
 	{
 		if (reserve(image_base, image_end - image_base, 0) == 0)
 			break;
@@ -563,7 +867,7 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 		log_conflicts(image_base, image_end - image_base);
 		usleep(250000);
 	}
-	if (attempt == 20)
+	if (attempt == 20 && !image_mapped)
 	{
 		host_logf(HOST_LOG_ERROR, "cannot reserve the guest image range at %08llx (%s)",
 			(unsigned long long)image_base, strerror(errno));
@@ -571,92 +875,42 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 		return -1;
 	}
 
-	/* The window, where the game and its data expect it - but only if that
-	 * address will actually hold it.
-	 *
-	 * It will not. 0x80000000 is reported free by svcQueryMemory and
-	 * refused by svcMapMemory at every size from 16 MB to 128 MB, with an
-	 * error that is not "out of memory": the console simply will not map
-	 * there. Checking whether anything was already mapped - which is all
-	 * reserve() does - cannot tell the difference, so the port believed
-	 * the address was usable, told the guest it was, and the guest then
-	 * refused its own window.
-	 *
-	 * So the address is tried, and handed straight back, before it is
-	 * promised to anything. */
-	if (host_can_map_at(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE))
+	/* Custom Edition's tag cache, at the address its maps' tag data is
+	linked to (HALO_GUEST_CUSTOM_EDITION_BASE), which the guest asks for
+	itself when game.custom_edition is on (port/linux/src/xbox_memory.c):
+	kept free of the window and the pools, as the Android host keeps it. The
+	window took it once, at 0x40000000: the guest's request for it then
+	landed inside the window, and lumoria_a.map's tag data was loaded over
+	the game state (game.c's "!game_globals->active"). */
+	/* (its hold stands for it from here: libnx keeps both reservations) */
+	custom_edition_hold_base = custom_edition_hold_end = 0;
+	if (reserve(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE, 0) != 0)
 	{
-		if (reserve(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE, 1) == 0)
-			window_base = HALO_GUEST_WINDOW_BASE;
+		host_logf(HOST_LOG_WARN, "Custom Edition's tag cache range %08x-%08x is taken: its maps cannot run",
+			(unsigned)HALO_GUEST_CUSTOM_EDITION_BASE, (unsigned)HALO_GUEST_CUSTOM_EDITION_END);
+		log_conflicts(HALO_GUEST_CUSTOM_EDITION_BASE, HALO_GUEST_CUSTOM_EDITION_END - HALO_GUEST_CUSTOM_EDITION_BASE);
 	}
-	else
-		host_logf(HOST_LOG_INFO,
-			"the window's usual address %08llx will not take %u MB; looking elsewhere",
-			(unsigned long long)HALO_GUEST_WINDOW_BASE,
-			(unsigned int)(HALO_GUEST_WINDOW_SIZE / (1024 * 1024)));
-	if (!window_base)
-	{
-		/* the runtime holds the address. The game can still run with the
-		window elsewhere, as long as the map data is moved with it, which
-		the port does and is told about here. */
-		host_logf(HOST_LOG_INFO, "the window at %08llx is taken; putting it somewhere free",
-			(unsigned long long)HALO_GUEST_WINDOW_BASE);
-		/* Before searching for a gap, the address this build prefers is
-		 * tried. The search takes the first free extent the kernel
-		 * reports, which differs from run to run - the launcher's own
-		 * mappings, anything ASLR'd below 4 GB, and how much of the low
-		 * pool the port has already taken all move it - and the port's
-		 * behaviour is sensitive to where things land. One fixed address
-		 * is one less variable. */
-		if (host_can_map_at(HALO_SWITCH_WINDOW_FALLBACK, HALO_GUEST_WINDOW_SIZE))
-		{
-			if (reserve(HALO_SWITCH_WINDOW_FALLBACK, HALO_GUEST_WINDOW_SIZE, 1) == 0)
-			{
-				window_base = HALO_SWITCH_WINDOW_FALLBACK;
-				host_logf(HOST_LOG_INFO, "  the window is pinned to %08llx",
-					(unsigned long long)window_base);
-			}
-		}
-		else
-			host_logf(HOST_LOG_WARN, "  %08llx will not take the window; searching",
-				(unsigned long long)HALO_SWITCH_WINDOW_FALLBACK);
-	}
-	if (!window_base)
-	{
-		window_base = 0;
-		for (attempt = 0; attempt < 128 && !window_base; attempt++)
-		{
-			uint64_t candidate = find_gap(HALO_GUEST_WINDOW_SIZE, minimum,
-				HALO_GUEST_WINDOW_ALIGNMENT);
 
-			if (!candidate)
-				break;
-			/* a mapping in the way here is one ART has just made, and may
-			be live, so it is never taken back: look further up */
-			if (reserve(candidate, HALO_GUEST_WINDOW_SIZE, 1) != 0)
-			{
-				minimum = candidate + PAGE;
-				continue;
-			}
-			/* and it has to be somewhere the console will really map,
-			for the same reason the usual address was refused */
-			if (!host_can_map_at(candidate, HALO_GUEST_WINDOW_SIZE))
-			{
-				host_logf(HOST_LOG_INFO, "  %08llx will not take the window either",
-					(unsigned long long)candidate);
-				minimum = candidate + PAGE;
-				continue;
-			}
-			window_base = candidate;
-		}
-		if (!window_base)
-		{
-			host_logf(HOST_LOG_ERROR, "no free range of %u MB for the Xbox memory window",
-				(unsigned int)(HALO_GUEST_WINDOW_SIZE / (1024 * 1024)));
-			return -1;
-		}
+	/* The window, as large as the console will give: each size is tried
+	 * where the game and its data expect it, then at the address this build
+	 * prefers, then anywhere free (place_window). */
+	for (window_size = HALO_GUEST_WINDOW_MAXIMUM; window_size >= HALO_GUEST_WINDOW_SIZE; window_size /= 2)
+	{
+		window_base = place_window(window_size);
+		if (window_base)
+			break;
+		host_logf(HOST_LOG_INFO, "no room for a %u MB Xbox memory window",
+			(unsigned int)(window_size / (1024 * 1024)));
 	}
-	window_end = window_base + HALO_GUEST_WINDOW_SIZE;
+	if (!window_base)
+	{
+		host_logf(HOST_LOG_ERROR, "no free range of %u MB for the Xbox memory window",
+			(unsigned int)(HALO_GUEST_WINDOW_SIZE / (1024 * 1024)));
+		return -1;
+	}
+	window_end = window_base + window_size;
+	/* (what of the held range the window did not take is free again) */
+	window_hold_release();
 	/* Where the window moved, the range it was linked for is kept empty.
 	 * The guest moves any value it reads out of the game data that lies
 	 * there (halo_port_window.h), so memory of its own at those addresses
@@ -667,9 +921,11 @@ int host_memory_initialize(uint32_t base, uint32_t size)
 		reserve(HALO_GUEST_WINDOW_BASE, HALO_GUEST_WINDOW_SIZE, 0) != 0)
 		host_logf(HOST_LOG_WARN, "could not keep the window's linked range %08llx free",
 			(unsigned long long)HALO_GUEST_WINDOW_BASE);
-	host_logf(HOST_LOG_INFO, "Xbox memory window at %08llx-%08llx, guest image at %08llx-%08llx",
+	host_logf(HOST_LOG_INFO, "Xbox memory window of %u MB at %08llx-%08llx, guest image at %08llx-%08llx",
+		(unsigned int)(window_size / (1024 * 1024)),
 		(unsigned long long)window_base, (unsigned long long)window_end,
 		(unsigned long long)image_base, (unsigned long long)image_end);
+	host_memory_report("the window placed");
 	return 0;
 }
 
@@ -767,7 +1023,7 @@ static int commit_owned(uint64_t address, uint64_t length)
 	pthread_mutex_lock(&memory_lock);
 	pool = pool_of(address, length);
 	pthread_mutex_unlock(&memory_lock);
-	return pool ? commit(pool->base, pool->committed, POOL_CHUNKS, address, length, 0) : 0;
+	return pool ? commit(pool->base, pool->committed, pool->size / CHUNK_SIZE, address, length, 0) : 0;
 }
 
 /* a mapping's contents, in committed memory: zeros, and a file's bytes from
@@ -809,7 +1065,7 @@ static void *pool_take(struct pool *pool, uint64_t pages)
 
 	if (pool->free_pages < pages)
 		return NULL;
-	for (page = 0; page < POOL_PAGES; page++)
+	for (page = 0; page < pool->pages; page++)
 	{
 		if (pool->used[page])
 		{
@@ -828,23 +1084,111 @@ static void *pool_take(struct pool *pool, uint64_t pages)
 	return NULL;
 }
 
+/* (memory_lock held) Whether the kernel has anything mapped in pages a pool
+just handed out. Where the pools are not chunked, every mapping inside one is
+of pages it has marked used, so one there is something the pool does not know
+of: a lumoria_a.map load had 28 MB taken at 0x6c0a8000 where the kernel had
+only 20 MB free, svcMapMemory refused it (0xd401) every time it was asked
+again, and the game stopped on an allocation it could not make. Its pages
+are marked used for good (they are taken either way), what it is logged, and
+the pages taken given back, for the caller to look again. */
+static int pool_pages_occupied(struct pool *pool, uint64_t address, uint64_t pages)
+{
+	uint64_t end = address + pages * PAGE, where = address, page;
+	int occupied = 0;
+
+	while (where < end)
+	{
+		MemoryInfo information = { 0 };
+		u32 page_info = 0;
+		uint64_t to;
+
+		if (R_FAILED(svcQueryMemory(&information, &page_info, where)))
+			break;
+		to = information.addr + information.size < end ? information.addr + information.size : end;
+		if (information.type != MemType_Unmapped)
+		{
+			if (!occupied)
+				host_logf(HOST_LOG_WARN, "guest memory: %llu KB at %08llx were free in pool %08llx, but the kernel "
+					"has something there:", (unsigned long long)(pages * PAGE / 1024), (unsigned long long)address,
+					(unsigned long long)pool->base);
+			host_logf(HOST_LOG_WARN, "  %08llx-%08llx type %02x perm %x attr %08x; kept out of the pool",
+				(unsigned long long)information.addr, (unsigned long long)(information.addr + information.size),
+				information.type, information.perm, information.attr);
+			occupied = 1;
+		}
+		if (to <= where)
+			break;
+		where = to;
+	}
+	if (!occupied)
+		return 0;
+	/* the pages taken back, then those the kernel has, for good */
+	for (page = (address - pool->base) / PAGE; page < (end - pool->base) / PAGE; page++)
+	{
+		pool->used[page] = 0;
+		pool->free_pages++;
+	}
+	where = address;
+	while (where < end)
+	{
+		MemoryInfo information = { 0 };
+		u32 page_info = 0;
+		uint64_t from, to;
+
+		if (R_FAILED(svcQueryMemory(&information, &page_info, where)))
+			break;
+		from = information.addr > address ? information.addr : address;
+		to = information.addr + information.size < end ? information.addr + information.size : end;
+		if (information.type != MemType_Unmapped)
+		{
+			for (page = (from - pool->base) / PAGE; page < (round_up(to) - pool->base) / PAGE; page++)
+			{
+				if (!pool->used[page])
+				{
+					pool->used[page] = 1;
+					pool->free_pages--;
+				}
+			}
+		}
+		if (to <= where)
+			break;
+		where = to;
+	}
+	return 1;
+}
+
+/* times host_low_map looks again past pages the kernel had something in */
+#define LOW_MAP_ATTEMPTS 16
+
 void *host_low_map(size_t size, int protection)
 {
 	uint64_t pages = round_up(size) / PAGE;
 	void *address = NULL;
-	int index;
+	int index, attempt;
 
 	if (!pages || pages > POOL_PAGES)
 		return NULL;
 	pthread_mutex_lock(&memory_lock);
-	for (index = 0; index < pool_count && !address; index++)
-		address = pool_take(pools[index], pages);
-	if (!address)
+	for (attempt = 0; attempt < LOW_MAP_ATTEMPTS && !address; attempt++)
 	{
-		struct pool *pool = pool_new();
+		struct pool *pool = NULL;
 
-		if (pool)
-			address = pool_take(pool, pages);
+		for (index = 0; index < pool_count && !address; index++)
+		{
+			address = pool_take(pools[index], pages);
+			pool = pools[index];
+		}
+		if (!address)
+		{
+			pool = pool_new(pages);
+			if (pool)
+				address = pool_take(pool, pages);
+		}
+		if (!address)
+			break;
+		if (!memory_is_chunked() && pool_pages_occupied(pool, (uint64_t)(uintptr_t)address, pages))
+			address = NULL;
 	}
 	pthread_mutex_unlock(&memory_lock);
 	if (!address)
@@ -874,7 +1218,7 @@ static struct pool *pool_of(uint64_t address, uint64_t size)
 
 	for (index = 0; index < pool_count; index++)
 	{
-		if (in_range(address, size, pools[index]->base, pools[index]->base + POOL_SIZE))
+		if (in_range(address, size, pools[index]->base, pools[index]->base + pools[index]->size))
 			return pools[index];
 	}
 	return NULL;
@@ -941,6 +1285,9 @@ long host_guest_mmap(uint64_t address, uint64_t size, int protection, int flags,
 		fd = host_guest_fd(fd);
 		if (fd < 0)
 			return -EBADF;
+		/* (a map cache file kept in memory, host_memory_files.c, is not mapped) */
+		if (host_memory_file_is(fd))
+			return -ENODEV;
 	}
 	if (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE))
 	{
@@ -948,6 +1295,14 @@ long host_guest_mmap(uint64_t address, uint64_t size, int protection, int flags,
 
 		if (host + length > LOW_LIMIT)
 			return -ENOMEM;
+		/* the guest's own image is in use, whatever asks: a "no replace"
+		request that reaches into it fails as one over any mapping does.
+		Custom Edition's tag cache asks for 0x40440000
+		(port/linux/src/xbox_memory.c), inside the image wherever the image
+		is where it was linked, and replacing the reservation there put
+		empty pages over the game's code and data */
+		if ((flags & MAP_FIXED_NOREPLACE) && host < image_end && host + length > image_base)
+			return -EEXIST;
 		/* inside a range the host reserved for the guest, a "no replace"
 		request replaces the reservation */
 		if (!host_low_owns(host, length))
@@ -1032,7 +1387,7 @@ long host_guest_mprotect(uint64_t address, uint64_t size, int protection)
 
 /* ---------- write tracking (port/linux/src/memory_watch.c) */
 
-#define WATCH_PAGE_COUNT (HALO_GUEST_WINDOW_SIZE / PAGE)
+#define WATCH_PAGE_COUNT (HALO_GUEST_WINDOW_MAXIMUM / PAGE)
 
 static uint8_t page_protected[WATCH_PAGE_COUNT];
 static uint32_t page_generation[WATCH_PAGE_COUNT];
@@ -1044,7 +1399,7 @@ wherever it was placed (platform_contiguous_base), so the tracking follows
 the window the host actually reserved, not the one the game was built for. */
 static int in_window(uint64_t address)
 {
-	return address >= window_base && address - window_base < HALO_GUEST_WINDOW_SIZE;
+	return address >= window_base && address - window_base < window_size;
 }
 
 static uint64_t watch_page(uint64_t address)
@@ -1130,7 +1485,7 @@ void host_memory_watch_prepare_write(uint32_t address, uint32_t size)
 
 	if (!watch_active || !size)
 		return;
-	if (start + size <= window_base || start >= window_base + HALO_GUEST_WINDOW_SIZE)
+	if (start + size <= window_base || start >= window_end)
 		return;
 	if (start < window_base)
 		start = window_base;
@@ -1160,4 +1515,11 @@ void host_memory_watch_forget(uint32_t address, uint32_t size)
 		page_protected[page] = 0;
 		page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
 	}
+}
+
+/* memory_watch_begin_frame: Android's, for its page hashes (an app under
+ARM translation); the Switch's tracking is page protection alone, with
+nothing to do at a frame's start */
+void host_memory_watch_begin_frame(void)
+{
 }

@@ -41,6 +41,11 @@ enum
 	DK_COMMAND_COMPOSITE,
 	DK_COMMAND_VISIBILITY_BEGIN,
 	DK_COMMAND_VISIBILITY_END,
+	DK_COMMAND_MARKER,
+	DK_COMMAND_HUD_PREPARE,
+	DK_COMMAND_HUD_IMAGE,
+	DK_COMMAND_HUD_FORGET,
+	DK_COMMAND_BLIT,
 };
 
 /* a surface's kind, as the host makes its image */
@@ -69,14 +74,17 @@ struct dk_command_header
 };
 
 /* a render target or depth buffer, known by the physical address of its
-data (Data in its D3DSurface), as d3d8_gl.c knows them; its size is in
-pixels */
+data (Data in its D3DSurface), as d3d8_gl.c knows them; its size in the
+game's pixels, and in the host's: the screen's targets are drawn at
+display.resolution_limit's scale (d3d8_dk.c), the rest at their own */
 struct dk_surface
 {
 	uint32_t data;
 	uint32_t width;
 	uint32_t height;
 	uint32_t kind;
+	uint32_t pixel_width;
+	uint32_t pixel_height;
 };
 
 /* the surfaces later commands draw into (either can be DK_SURFACE_NONE) */
@@ -98,6 +106,19 @@ struct dk_command_clear
 	uint32_t stencil;
 	uint32_t rectangle_count;
 	uint32_t rectangles[][4];
+};
+
+/* copies a rectangle of one color target into a rectangle of another,
+scaled with a linear filter: the loading screen's front buffer, the frame
+before, which it blurs into its light's trails (d3d8_dk.c, front_buffer_take).
+Rectangles are x, y, width, height in each one's pixels. */
+struct dk_command_blit
+{
+	struct dk_command_header header;
+	struct dk_surface source;
+	struct dk_surface destination;
+	uint32_t from[4];
+	uint32_t to[4];
 };
 
 /* shows the back buffer, letterboxed to the display. A screenshot is asked
@@ -273,7 +294,11 @@ level of a compressed format is its 4x4 blocks, of BGRA its texels, depth
 slices after one another - the next face face_bytes on from the last. The
 host reads source_bytes from source when it runs the command. With
 source_bytes 0 the image is only made (its texels undefined), for
-DK_COMMAND_TEXTURE_ROWS to fill. */
+DK_COMMAND_TEXTURE_ROWS to fill. swizzle is where each channel the shaders
+sample (red, green, blue, alpha, a byte each from the lowest) is taken from
+in the image (0 to 3, the same four), or 0 for each from its own: Halo PC's
+multipurpose maps and HUD meters in a mod (xbox_textures_dk.c). A texture
+whose swizzle changes is made again. */
 struct dk_command_texture
 {
 	struct dk_command_header header;
@@ -287,6 +312,53 @@ struct dk_command_texture
 	uint32_t source;
 	uint32_t face_bytes;
 	uint32_t source_bytes;
+	uint32_t swizzle;
+};
+
+/* The high-res HUD's PNGs (port/linux/src/hud_hires.c's embedded ones, in
+the guest image) are decoded by the host, on a thread of its own, with
+their mip levels, into the host's memory: made on the game thread, at the
+first frame to draw it, a 2048 by 2048 sheet held that frame 135 to 180 ms,
+and the guest's heap has no room to hold a map's sheets ahead. */
+
+/* a map's sheets, to decode now, in this order (what was decoded and not
+drawn for the map before is let go first: DK_COMMAND_HUD_FORGET) */
+struct dk_hud_sheet
+{
+	uint32_t asset;
+	/* guest addresses: the PNG, and the bitmap's tag name (for the log) */
+	uint32_t png;
+	uint32_t png_size;
+	uint32_t tag;
+};
+
+struct dk_command_hud_prepare
+{
+	struct dk_command_header header;
+	uint32_t count;
+	struct dk_hud_sheet sheets[];
+};
+
+/* image id made from the sheet's decoded levels, which the host lets go:
+sent once host_dk_hud_ready says they are */
+struct dk_command_hud_image
+{
+	struct dk_command_header header;
+	uint32_t id;
+	/* (the sheet again, should the host have let it go since: decoded then) */
+	struct dk_hud_sheet sheet;
+};
+
+/* the host's (host_imports.list): 1 the sheet decoded, and an image of it
+may be asked for; 0 not yet (queued if it was not); -1 never. png and tag
+are the sheet's, as struct dk_hud_sheet's */
+int host_dk_hud_ready(unsigned int asset, unsigned int png, unsigned int png_size, unsigned int tag);
+
+/* the sheets decoded and not drawn let go, those still to decode dropped
+(the map is unloaded) */
+struct dk_command_hud_forget
+{
+	struct dk_command_header header;
 };
 
 /* writes rows [top, top + rows) of one level of 2D BGRA image id (made by
@@ -387,6 +459,17 @@ struct dk_command_visibility_end
 	uint32_t index;
 };
 
+/* the part of the frame the game is drawing (render.c's steps: the sky,
+the objects' shadows, the fog...), for the host's record of the commands
+it ran (host_dk.c, debug.gpu_trace); it draws nothing */
+#define DK_MARKER_NAME_SIZE 24
+
+struct dk_command_marker
+{
+	struct dk_command_header header;
+	char name[DK_MARKER_NAME_SIZE];
+};
+
 /* the four texture stages' images and samplers, for the draws that follow */
 struct dk_command_textures
 {
@@ -464,6 +547,14 @@ reads, from the first one it reads (the host reads them where they are,
 cleaning the CPU's cache, or copies them if they are not in one chunk of the
 window). If inline_bytes is not 0 the draw's one stream, immediate mode's, is
 not at an address but follows the pairs, in the command itself. */
+/* index_address: the indices are in the command. The Xbox's
+DrawIndexedVertices copied a draw's indices into the push buffer as it was
+made, and the game reuses the memory at once - in split screen it builds
+the second view's lists of a level's visible triangles where the first's
+were - so indices the game may write again are read when the draw is made,
+not when the host or the GPU get to it */
+#define DK_INDEX_INLINE 1u
+
 struct dk_command_draw
 {
 	struct dk_command_header header;
@@ -472,13 +563,21 @@ struct dk_command_draw
 	/* vertices, or indices */
 	uint32_t count;
 	/* 0: not indexed. Else the guest address of the draw's count 16-bit
-	indices, and the number added to the vertex each names (the streams start
-	at the lowest vertex the draw reads) */
+	indices, or DK_INDEX_INLINE: they follow the streams (after any inline
+	bytes, at a multiple of 4); and the number added to the vertex each names
+	(the streams start at the lowest vertex the draw reads) */
 	uint32_t index_address;
 	int32_t vertex_offset;
 	uint32_t inline_bytes;
 	uint32_t stream_count;
 	uint32_t streams[][2];
 };
+
+/* mod textures' bytes kept in the host's memory, outside the Xbox window
+(port/switch/host/host_texture_cache.c; port/linux/game/mod_bitmaps.c
+declares them too): by a key, 1 and the bytes copied if kept */
+int host_texture_cache_get(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_put(uint64_t key, uint32_t buffer, uint32_t size);
+void host_texture_cache_clear(void);
 
 #endif

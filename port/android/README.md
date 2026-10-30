@@ -4,7 +4,8 @@
 `ninja android_apk` makes an app from it:
 `port/android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The game shows its graphics with OpenGL ES 3. It plays sound through SDL3
+The game shows its graphics with Vulkan (the default) or OpenGL ES 3
+(refer to "Graphics: OpenGL ES and Vulkan"). It plays sound through SDL3
 (AAudio). It accepts input from game controllers, for example a PlayStation
 5 DualSense on Bluetooth, and from the touchscreen (refer to "Controls").
 The app needs Android 9 (API 28) or later. It operates on 64-bit-only
@@ -29,8 +30,8 @@ ninja) and these items:
   The option `--android-ndk` selects a different NDK.
 - CMake, and a JDK 17 or later for Gradle.
 - A network connection for the first build. `configure.py` downloads musl
-  1.2.5 and SDL 3.4.16 to `build/android/third_party`. Gradle downloads the
-  Android Gradle Plugin.
+  1.2.5 (checked against its SHA-256) and SDL 3.4.16 to
+  `build/android/third_party`. Gradle downloads the Android Gradle Plugin.
 
 On Windows, build in WSL2 (Ubuntu 24.04). The Android build does not run
 on Windows itself. Enter
@@ -212,13 +213,21 @@ The buttons at the top of the screen:
 
 - "Hide" removes the controls (and stops the gyroscope aiming and the
   vibration) until you push "Touch"; the app remembers it.
+
+Aiming with the phone's gyroscope is in the game's settings, as on the
+Switch: open a profile, **GAMEPADS**, then **GYRO AIM**. ON aims with it all
+the time, ONLY ON ZOOM only while you are zoomed in (a scope), for fine
+aiming; OFF (the default) is the swipe and the stick only. The same screen
+sets its sensitivity and invert each way (`1` is the phone's own turn).
+These are `input.gyro_aim` and the four after it in `config.toml`. The
+gyroscope aims while the touch controls show.
 - "Options" opens these items:
   - "General": the phone's vibration (on by default; it follows the
-    vibration setting of the game's profile), aiming with the gyroscope
-    (off by default), a floating move stick (off by default: the stick goes
+    vibration setting of the game's profile), a floating move stick (off by default: the stick goes
     where your thumb lands in the lower left of the screen), the opacity of
-    the controls, "Held buttons don't aim" (off by default: a finger
-    that swipes from a button only holds it),
+    the controls, how many fingers tap together to open the cheat menu
+    (three, the default, or four), "Held buttons don't aim" (off by
+    default: a finger that swipes from a button only holds it),
     "Hide or add buttons" (hide a button, add a copy of a
     button) and "Edit buttons size".
   - "Edit buttons layout": drag the controls, and the "Options" button
@@ -250,10 +259,10 @@ the paths. Refer to [port/linux/README.md](../linux/README.md#settings).
 Some video settings also apply on Android, with these notes; the first three
 have rows of their own in Video Setup:
 
-- `display.resolution_scaling` (`RESOLUTION` in the menus) is `"original"`
-  (the default) for the Xbox's 640x480 scaled up, or `"native"` for the
-  display's own resolution: sharper, but more work for the GPU, and the
-  display must fit in the GPU's largest render target.
+- `display.resolution_limit` (`MAXIMUM RESOLUTION` in the menus) is the
+  most lines the game draws at, no more than the screen has: `"native"`, or
+  `"2160"`, `"1440"`, `"1080"`, `"720"` or `"480"`. More are sharper, but more
+  work for the GPU.
 - `display.max_fps` (`FRAME RATE LIMIT`) limits the frame rate while
   `display.vsync` is off: `0` (the default) is twice the display's refresh
   rate, `-1` no limit, or the most frames each second.
@@ -269,16 +278,16 @@ These settings are only for Android:
 | `input.touch_controls` | The touch controls in a game. `"auto"` (the default): shown on a touchscreen while no controller is connected. `"on"`: also shown with a controller. `"off"`: never shown. A device without a touchscreen never shows them. The carnage report's CONTINUE and LEAVE buttons follow the same rule (otherwise it shows its A and B prompt). The menus take taps in any case. |
 | `display.screen_width` | The number of columns of the 480-line picture. `0` (the default): the shape of the display (1068 on a 20:9 phone). `640`: the 4:3 shape of the Xbox. |
 | `display.stats_log` | `false` (the default): `true` writes a line a second to the log with the frame rate, the mode, the map, the renderer and the size of the 3D view, for a bug report or to compare two builds. |
-| `display.resolution_scaling` | Also Linux's, with another default on Android. `"original"` (the default): the game draws the 480 lines of the Xbox, which the display scales up. `"native"`: the game draws at the display's resolution (1080 lines on a 1080p phone). `"75%"`, `"50%"` or `"25%"`: that part of the display's resolution each way, scaled up: less for the GPU to draw, for more frames a second and less heat. Video Setup's Resolution Scaling sets it, from the next frame. |
 | `debug.sample_seconds` | Refer to "Find problems". |
+| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Under OpenGL ES, geometry is streamed in either mode. Refer to "Limits". |
 | `debug.profile_hz` | Refer to "Find problems". |
+| `debug.profile_run` | `true`: each start records a profile of the run into its own folder, `Download/halo_profiles/DDMMYYYY_HHMMSS` (the day and time it started), to send as it is. Refer to "Find problems". `false` (the default): none. Takes effect the next time the game starts. |
 | `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
-| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. `"auto"`: Turnip on an Adreno, which the app downloads (refer to "Turn on Turnip"). `"custom"`: the driver archive you imported (`vk_driver_custom.zip` in the data folder; refer to "Import a driver or switch to OpenGL ES"). Otherwise the file name of a driver archive in the data folder. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK), `"auto"` (TURNIP) or `"custom"` (IMPORTED). |
+| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. `"auto"`: Turnip on an Adreno, which the app downloads (refer to "Turn on Turnip"). Otherwise the file name of a driver archive in the data folder. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK) or `"auto"` (TURNIP). |
 | `debug.vk_probe` | Refer to "Find problems". |
 | `debug.vk_validation` | Refer to "Find problems". |
 | `debug.vk_present_marker` | Under the Vulkan renderer, draws a red square at the top left and a green one at the top right of the picture, so that a screenshot shows which way up it is. Default `false`. |
 | `debug.vk_self_test` | Under the Vulkan renderer, at start-up tries the renderer's clears and the copying of a draw's data (rewritten buffers, data larger than the command stream) on small targets of its own; the log says `clears self-test: ok` and `data self-test: id N ok`, or `FAILED`. Default `false`. |
-| `debug.memory_watch` | `true` (the default): the app notices the game's writes to cached textures by page protection. `false`: it compares page contents once a frame instead, which is slower. Geometry uses the streaming path in either mode. Refer to "Limits". |
 
 ## Graphics: OpenGL ES and Vulkan
 
@@ -297,10 +306,9 @@ If Vulkan cannot start on a phone, the game uses OpenGL ES.
    **VIDEO SETUP**.
 2. At the top of the screen:
    - **GRAPHICS BACKEND:** `VULKAN` or `OPENGL` (OpenGL ES).
-   - **VULKAN DRIVER:** `STOCK` (the phone's own driver), `TURNIP`
-     (refer to "Turn on Turnip") or `IMPORTED` (a driver you added: refer to
-     "Import a driver or switch to OpenGL ES"). This row shows only when the
-     backend is `VULKAN`.
+   - **VULKAN DRIVER:** `STOCK` (the phone's own driver) or `TURNIP`
+     (refer to "Turn on Turnip"). This row shows only when the backend is
+     `VULKAN`.
 3. Select **OK**. The menu writes `display.renderer` and
    `display.vk_driver` in `config.toml`.
 4. Close the game and start it again. The renderer and the driver change
@@ -321,27 +329,6 @@ To see which renderer and driver run, look at the main menu: the line
 below the game's version number (`01.01.14.2342`, at the lower right) says
 `OpenGL ES`, `Vulkan`, or `Vulkan` and the name of the driver. Refer to
 "Make sure that it operates".
-
-### Import a driver or switch to OpenGL ES
-
-In the game, a small faint gear at the top right (touch it) opens the graphics
-screen, including on launchers that do not show the **Halo Graphics** icon
-or the long-press **Graphics** shortcut. The **Graphics** button shown after
-a failed start also opens it. Its buttons work with a gamepad:
-
-- **OpenGL ES (no Vulkan)**: the game does not use the Vulkan renderer.
-- **Vulkan, the phone's own driver**, or **Vulkan, Turnip (Adreno GPU)**.
-- **Vulkan, import a driver (zip)...**: choose a driver archive in the
-  system file picker. It must be an adrenotools archive, a zip with a
-  `meta.json` that names the driver's library (`libraryName`) and the
-  library itself, as the Turnip releases are made; 256 MB at most. It is
-  copied to the data folder as `vk_driver_custom.zip` and
-  `display.vk_driver = "custom"` is set. Importing another one replaces it.
-  Without the archive, `"custom"` falls back to the phone's own driver.
-
-The screen is also the way back when the game does not start with the
-current choice. VIDEO SETUP offers OpenGL ES, Vulkan and Turnip; importing
-a driver archive uses this Android screen. Changes apply at the next start.
 
 ### Find your GPU
 
@@ -598,11 +585,30 @@ The guest is the game, the platform layer and a small runtime:
 
 The APK contains the image as an asset.
 
+`ARM64_32` in `tools/guest_arch.py` holds what in these steps is particular
+to the processor: the target and its options, the defines, the conversion
+of the assembly, the linker's emulation, the image's address, the
+builtins, the instructions of the import stubs and the calling convention
+of the host for the OpenGL stubs. The Android build and the desktop guest
+builds (`tools/linux_guest_build.py`) take it; the 64-bit x86 Linux build
+takes `X32` instead ("64-bit x86" in [port/linux/README.md](../linux/README.md#64-bit-x86)).
+`tools/guest_image_check.py` checks each linked image: no thread-local
+storage, no use of the thread pointer, nothing outside its range.
+
 The C library of the guest is a part of musl for a new `arm64_32`
-architecture (`guest/libc/arch/arm64_32`). It has ILP32 types and a 32-bit
-`time_t`, as in the MSVC runtime of the game. Its system calls go to the
-host (`syscall_arch.h`). `guest/runtime/guest_thread.c` makes the threads
+architecture (`guest/libc/arch/arm64_32`; `x32` for the x86-64 guest). It
+has ILP32 types and a 32-bit `time_t`, as in the MSVC runtime of the game.
+Its system calls go to the host (`guest/libc/arch/generic/syscall_arch.h`). `guest/runtime/guest_thread.c` makes the threads
 and supplies the thread pointer and TLS.
+
+The system calls have an interface of their own, the same for every guest
+architecture (`include/halo_guest_syscall.h`, and for musl
+`guest/libc/arch/generic`): AArch64's numbers, kernel `stat` and open
+flags, with `_llseek` in place of `lseek` so that a 64-bit file offset
+fits the guest's 32-bit result. The host translates each call to its own
+kernel's (`host/host_syscall.c`), so the same guest runs on an AArch64 or
+an x86-64 host. `tools/test_host_syscall.py` tests the translation on the
+build machine.
 
 ### The host library
 
@@ -612,7 +618,11 @@ and supplies the thread pointer and TLS.
 - Reserves the address space of the guest below 4 GB: the Xbox memory at
   `0x80000000`, the image, and pools for the memory of the guest
   (`host/host_memory.c`). Refer to "The fixed addresses".
-- Loads the image and fills its import table (`host/host_loader.c`).
+- Loads the image and fills its import table (`host/host_loader.c`). The
+  image must be a static executable of the host's guest (a 64-bit AArch64
+  ELF file of `arm64_32` code), whose segments, header and import table lie
+  in the file and in the image's reserved range; the loader checks each
+  before it uses it.
 - Starts the `main` of the game and each guest thread on a stack in guest
   memory, because ILP32 code keeps stack addresses in 32-bit registers
   (`host/host_thread.c`).
@@ -623,8 +633,14 @@ and supplies the thread pointer and TLS.
   UPnP and DTLS functions of `port/linux/src/posix_*.c` (DTLS with Mbed TLS,
   for internet play with browsers: `posix_dtls.c`).
 
-The guest calls the host through stubs (`tools/android_imports.py`). The
-two ABIs use the same registers for 32-bit integers, floats and pointers.
+The guest calls the host through stubs (`tools/android_imports.py`, with the
+instructions of `import_stub` in `tools/guest_arch.py`). The two ABIs use
+the same registers for 32-bit integers, floats and pointers.
+`host_imports.list` lists every guest's imports, `android_imports.list` the
+app's own (its folders, gesture edges and touch controls).
+`tools/check_host_imports.py` checks the lists against their declarations,
+and that every argument has a register on each host (on x86-64, six for
+integers and pointers: a later one may be an integer, never a pointer).
 `tools/android_gl_stubs.py` makes the OpenGL ES stubs from
 `port/linux/src/gl.h`. `tools/android_posix_stubs.py` makes the stubs of the
 `posix_*` functions, which copy the `errno` of the host.
@@ -716,22 +732,29 @@ floating-point contraction, as on x86.
 
 ### Game source changes
 
-The port's code tells three things apart, each its own macro, which the
+The port's code tells these things apart, each its own macro, which the
 Android build defines all of (`tools/android_build.py`):
 
-- `HALO_ARM64_GUEST`: the guest's ABI (ILP32 AArch64 code in a 64-bit
-  process);
+- `HALO_GUEST`: the game is an ILP32 guest in a 64-bit process (its
+  memory, its host imports, the SDL it reaches). The instruction set is the
+  compiler's own macro, `__aarch64__`;
+- `HALO_GUEST_MACHO`: the guest is compiled for clang's Darwin target
+  (`arm64_32`), whose Mach-O objects are converted afterwards;
 - `HALO_GLES`: the OpenGL ES renderer;
 - `HALO_ANDROID`: the app (its display, input, files and lifecycle).
 
+`HALO_ARM64_GUEST`, the name of `HALO_GUEST` before, is still defined:
+`HALO_GUEST` on AArch64.
+
 The x86 inline assembly is replaced by C (refer to
 [port/linux/README.md](../linux/README.md#game-source-changes)).
-These changes are in `#ifdef HALO_ARM64_GUEST`:
+These changes, which the Linux arm64 build shares, are:
 
-- Seven `#pragma bss_seg(".bss")` lines are removed. The Darwin target does
-  not accept them.
-- A stack walker follows the AArch64 frame records. Thus the log of an
-  assertion (`debug.txt`) shows the call sites.
+- Seven `#pragma bss_seg(".bss")` lines are removed (`#ifndef
+  HALO_GUEST_MACHO`). The Darwin target does not accept them.
+- A stack walker follows the 64-bit frame records (`__aarch64__`, and
+  `__x86_64__`'s, which are alike). Thus the log of an assertion
+  (`debug.txt`) shows the call sites.
 
 The musl of the guest uses its C math, not the AArch64 assembly. The only
 assembly of the port is necessary:
@@ -793,7 +816,9 @@ and reload, address reuse and allocation failure.
 
 - Enter `adb logcat -s halo` to see the log of the port and the errors of
   the game. `files/debug.txt` is the log of the game.
-- If the guest code stops, the log shows the registers and the frame chain.
+- If the guest code stops, the log shows the registers and the frame chain
+  (`host/host_arch.c`), from a stack of the signal handler's own, so a
+  stack overflow is reported too.
   To find the functions, enter
   `llvm-symbolizer --obj=build/android/halo_guest.elf <address>`.
 - Set `sample_seconds = <seconds>` in `[debug]` of `config.toml`. The log
@@ -801,6 +826,8 @@ and reload, address reuse and allocation failure.
   at this interval. This finds hangs on devices without root access.
 - Set `gl_debug = true` in `[debug]` of `config.toml`. The log then shows
   the OpenGL ES errors.
+- The log says which write tracking the app uses: "page protection"
+  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 - Set `profile_hz = 1000` in `[debug]` of `config.toml` to profile. Every
   game thread is interrupted 1000 times a second, and every ten seconds the
   app appends the samples (the program counter, the link register and the
@@ -812,6 +839,31 @@ and reload, address reuse and allocation failure.
   driver and everything else, and the milliseconds of CPU for each frame.
   `--from` and `--to` select seconds of the run. Set `gpu_stats = true` too,
   for the frames per second.
+- Set `profile_run = true` in `[debug]` of `config.toml` to profile a
+  player's run without adb. Each start then makes a folder,
+  `Download/halo_profiles/DDMMYYYY_HHMMSS`, that a file manager or a USB
+  cable reaches, and the game writes into it:
+  - `profile.bin`: the samples of `profile_hz` (500 a second if it is `0`),
+    and the length of each frame shown;
+  - `gpu.txt`: under Vulkan, every 300 frames, the GPU's time for each
+    rendering, by what it draws into (its size, colour and depth) and by
+    the part of the frame it began in (the sky, the objects, the HUD...),
+    the time between renderings (copies and barriers), the renderings a
+    frame and the time between presents. A phone's GPU gives every
+    timestamp inside a rendering the same time, so the parts within one
+    are not told apart;
+  - `halo.log`: the log of the run, as logcat has it;
+  - `run.txt` and `config.toml`: the build, the phone, its GPU and driver,
+    and the settings.
+
+  Android 9 and 10 ask once for access to the storage; without it, the
+  folder is `files/halo_profiles/` in the data folder. The player sends
+  the folder, and `tools/android_profile_report.py <folder>` prints the
+  same report as for `profile.bin`, with the slowest frames and where each
+  thread was during each. It needs the game image of the same build:
+  `--apk` takes it from that build's APK (a release's, from its zip), or
+  `--elf` names it (`halo_guest_vk.elf`, or `halo_guest.elf` for OpenGL ES). The
+  profile costs some speed: compare runs with it on.
 - Set `vk_probe = "all"` in `[debug]` of `config.toml` to run the Vulkan
   probe (port/android/VULKAN.md, phase 0) instead of the game. The value
   can be a list of `caps`, `memory`, `compile`, `pipelines`, `draw` and `present`.
@@ -837,8 +889,6 @@ and reload, address reuse and allocation failure.
   `HALO_APPLICATION_ID_SUFFIX=.vk` when you run `ninja android_apk`. The
   package is then `com.halo.decomp.vk`, with a data folder of its own, which
   needs a copy of `maps/`.
-- The log says which write tracking the app uses: "page protection"
-  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 
 ## Limits
 

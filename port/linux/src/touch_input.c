@@ -12,6 +12,7 @@ finger down (host_gesture_insets).
 #include "touch_input.h"
 #include "touch_menu.h"
 #include "port_config.h"
+#include "halo_overlay_menu.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -26,6 +27,12 @@ void host_touch_look_read(float *delta);
 void host_touch_rumble(unsigned int low, unsigned int high);
 void host_touch_scene(int scene);
 void host_touch_bindings(const int *controls);
+#ifdef HALO_ANDROID
+int host_touch_menu_fingers(void);
+#endif
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+void host_touch_gyro_mode(int mode);
+#endif
 #endif
 #ifdef HALO_ANDROID
 int host_touch_devices(void);
@@ -109,6 +116,24 @@ static void refresh_zones(int width, int height)
 	menu.settings.height = (float)height;
 }
 
+/* the fingers on the screen: three or four down together (the last within
+TOUCH_OVERLAY_TAP_NS of the first, so that a player's thumbs and a finger
+held in play are none) open the overlay menu, or close it
+(halo_overlay_menu.h), as they do on TouchControls.java's touch controls */
+static int fingers_down;
+static Uint64 fingers_first_down_ns;
+#define TOUCH_OVERLAY_TAP_NS 250000000ULL
+
+/* how many: the touch controls' General option on Android, three elsewhere */
+static int overlay_fingers(void)
+{
+#ifdef HALO_ANDROID
+	return host_touch_menu_fingers();
+#else
+	return 3;
+#endif
+}
+
 void touch_input_event(unsigned int type, const SDL_TouchFingerEvent *finger)
 {
 	int width = 0, height = 0;
@@ -124,15 +149,27 @@ void touch_input_event(unsigned int type, const SDL_TouchFingerEvent *finger)
 	case SDL_EVENT_FINGER_DOWN:
 		refresh_zones(width, height);
 		touch_menu_down(&menu, finger->fingerID, x, y);
+		/* (by the events' own times, in nanoseconds) */
+		if (++fingers_down == 1)
+			fingers_first_down_ns = finger->timestamp;
+		if (fingers_down == overlay_fingers() && finger->timestamp - fingers_first_down_ns <= TOUCH_OVERLAY_TAP_NS)
+		{
+			/* (and the fingers, let go, tap nothing) */
+			overlay_menu_toggle_request();
+			touch_menu_cancel(&menu);
+		}
 		break;
 	case SDL_EVENT_FINGER_MOTION:
 		touch_menu_move(&menu, finger->fingerID, x, y);
 		break;
 	case SDL_EVENT_FINGER_UP:
 		touch_menu_up(&menu, finger->fingerID, x, y);
+		if (fingers_down > 0)
+			fingers_down--;
 		break;
 	case SDL_EVENT_FINGER_CANCELED:
 		touch_menu_cancel(&menu);
+		fingers_down = 0;
 		break;
 	}
 }
@@ -244,6 +281,10 @@ enum
 	_touch_scene_off = 1 << 3,
 };
 
+/* the bit of the menu fingers on the touch controls in their buttons
+(TouchControls.java's MENU_BIT) */
+#define TOUCH_OVERLAY_BUTTON_BIT 15
+
 /* the touch controls' stick at port 0's last read, -1..1, y down */
 static float move_x, move_y;
 
@@ -321,6 +362,16 @@ void touch_input_controls(XINPUT_GAMEPAD *pad, int menus)
 		host_touch_bindings(bindings);
 	}
 	host_touch_read(state);
+	/* (the menu fingers on the touch controls, bit 15, past SDL's buttons: they
+	open the overlay menu as they go down) */
+	{
+		static int overlay_button_was;
+		int overlay_button = (state[6] & (1 << TOUCH_OVERLAY_BUTTON_BIT)) != 0;
+
+		if (overlay_button && !overlay_button_was)
+			overlay_menu_toggle_request();
+		overlay_button_was = overlay_button;
+	}
 	/* the stick moves the player through the game's input state, whatever
 	the profile's sticks do (touch_input_move), not as the left stick */
 	move_x = state[0] / 32767.0f;
@@ -372,6 +423,17 @@ int touch_input_move(float *forward, float *strafe)
 	*forward = -y;
 	*strafe = -x;
 	return TRUE;
+}
+
+/* the Gyro Aim mode, for the overlay, which runs the phone's gyroscope only
+while it is wanted (Android's; the web's overlay has its own switch) */
+void touch_input_gyro_mode(int mode)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	host_touch_gyro_mode(mode);
+#else
+	(void)mode;
+#endif
 }
 
 void touch_input_look(float scale, float *yaw, float *pitch, float *gyro_yaw, float *gyro_pitch)

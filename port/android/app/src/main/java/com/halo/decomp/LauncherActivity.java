@@ -1,13 +1,17 @@
 package com.halo.decomp;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.widget.ScrollView;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
@@ -25,6 +29,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.channels.FileChannel;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /**
  * Starts the game once its data is in place.
@@ -44,6 +51,7 @@ import java.nio.channels.FileChannel;
  */
 public class LauncherActivity extends Activity {
     private static final int PICK_IMAGE = 1;
+    private static final int PROFILE_STORAGE = 2;
     /** set by the "Import disc image" launcher shortcut: import even with data in place */
     static final String EXTRA_IMPORT = "com.halo.decomp.IMPORT";
     /** set by the "Graphics" launcher shortcut: GraphicsActivity (OpenGL ES or Vulkan, and its driver) */
@@ -294,15 +302,85 @@ public class LauncherActivity extends Activity {
     }
 
     private boolean gameStarted;
+    private boolean profileStorageAsked;
 
     private void startGame() {
         if (gameStarted)
             return;
+        if (!profileFolderReady())
+            return;
         gameStarted = true;
-        // the menus in French when the maps are (MenuTranslation)
         MenuTranslation.sync(this, dataRoot);
         startActivity(new Intent(this, HaloActivity.class));
         finish();
+    }
+
+    /* ---------- a profiled run's folder (debug.profile_run) */
+
+    /**
+     * The run's profile folder made and named for the game, when the settings ask for one; false while storage is
+     * being asked for (Android 9 and 10: the answer starts the game, whatever it is).
+     */
+    private boolean profileFolderReady() {
+        File config = dataRoot != null ? new File(dataRoot, "config.toml") : null;
+        File named = dataRoot != null ? new File(dataRoot, "profile_folder.txt") : null;
+        String value = config != null && config.isFile() ? Updater.readSetting(config, "debug", "profile_run") : null;
+
+        if (named == null)
+            return true;
+        named.delete();
+        if (value == null || !value.startsWith("true"))
+            return true;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+            && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+            && !profileStorageAsked) {
+            profileStorageAsked = true;
+            requestPermissions(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, PROFILE_STORAGE);
+            return false;
+        }
+        String stamp = new SimpleDateFormat("ddMMyyyy_HHmmss", Locale.US).format(new Date());
+        File folder = new File(new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "halo_profiles"), stamp);
+        // (not made: the game makes one in the data folder, and its log says so)
+        if (!folder.mkdirs() && !folder.isDirectory())
+            return true;
+        String text = "Halo for Android, build " + BuildConfig.HALO_BUILD_NUMBER + " (" + BuildConfig.VERSION_NAME + ")\n"
+            + "started " + stamp + "\n"
+            + "phone: " + Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.DEVICE + ")\n"
+            + "android: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n"
+            + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? "soc: " + Build.SOC_MANUFACTURER + " " + Build.SOC_MODEL + "\n" : "")
+            + "abis: " + String.join(", ", Build.SUPPORTED_ABIS) + "\n";
+        try (OutputStream out = new FileOutputStream(new File(folder, "run.txt"))) {
+            out.write(text.getBytes("UTF-8"));
+        } catch (java.io.IOException e) {
+            return true;
+        }
+        copyFile(config, new File(folder, "config.toml"));
+        try (OutputStream out = new FileOutputStream(named)) {
+            out.write(folder.getAbsolutePath().getBytes("UTF-8"));
+        } catch (java.io.IOException e) {
+            named.delete();
+        }
+        return true;
+    }
+
+    private static void copyFile(File from, File to) {
+        try (FileInputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
+            byte[] buffer = new byte[65536];
+            int got;
+
+            while ((got = in.read(buffer)) > 0)
+                out.write(buffer, 0, got);
+        } catch (java.io.IOException e) {
+            // (the settings are in the game's log too)
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == PROFILE_STORAGE)
+            startGame();
     }
 
     /* ---------- the Vulkan driver, before the game */
