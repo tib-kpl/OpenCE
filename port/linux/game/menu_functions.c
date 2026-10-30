@@ -3494,6 +3494,10 @@ static struct
 	char chosen_name[NETWORK_REPLAY_NAME_SIZE];
 	unsigned long refreshed;
 	boolean listed;
+	/* the folder's replays (all of them, not only those listed) and their
+	bytes, as of the last refresh */
+	long total;
+	unsigned long long bytes;
 	/* why the last A could not play its replay (and what DELETE did),
 	until another is chosen */
 	char why[160];
@@ -3516,6 +3520,9 @@ static void theater_refresh(void)
 		return;
 	theater.listed = TRUE;
 	theater.refreshed = now;
+	/* (the folder looked at here, every few seconds: not each frame, which
+	read every replay's size from the card 60 times a second) */
+	network_replay_summary(&theater.total, &theater.bytes);
 	count = network_replay_list(names, THEATER_REPLAYS);
 	for (index = 0; index < count; index++)
 	{
@@ -3614,6 +3621,8 @@ static void theater_update(struct widget_instance *list)
 	long count;
 
 	theater_refresh();
+	count = theater.total;
+	bytes = theater.bytes;
 #ifdef LINK_PAGE
 	/* (the replay page, while the Theater is up) */
 	network_replay_page_wanted();
@@ -3680,7 +3689,6 @@ static void theater_update(struct widget_instance *list)
 	}
 	if (!details)
 		return;
-	network_replay_summary(&count, &bytes);
 	if (count)
 	{
 		snprintf(line, sizeof(line), "%ld replay%s, %llu.%llu MB", count, count == 1 ? "" : "s",
