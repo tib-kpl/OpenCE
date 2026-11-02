@@ -367,6 +367,10 @@ flare's slot is read only once a count of the flare's own tests has come
 (rasterizer_lights.c; d3d8_gl.c) */
 unsigned long long xgpu_visibility_tests_ended(unsigned long index);
 unsigned long long xgpu_visibility_test_counted(unsigned long index);
+/* Android: the map's tags are let go, and with them every range above (its
+BSP's among them, which the game lets go only later, after the next map's
+data may have been read over it) */
+void xgpu_static_forget_all(void);
 /* fills the corners x0, y0 to x1, y1 of the window (row 0 at the bottom)
 with color, as it is (an HDR display's scRGB framebuffer: linear, 1.0 at 80
 nits), or only the ring ring[0], ring[1] (its centre in the window), from
