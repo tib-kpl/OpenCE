@@ -371,6 +371,7 @@ struct vk_command_visibility_end
 	struct vk_command_header header;
 	uint32_t index;
 	float area;
+	uint64_t test; /* the slot's test number, kept with its count */
 };
 
 /* ---------- the mip composite (phase 6, step 5)

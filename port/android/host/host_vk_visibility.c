@@ -41,6 +41,7 @@ struct test
 	uint32_t index;
 	float area;
 	uint32_t group, parts;
+	uint64_t test;
 };
 
 static struct
@@ -61,8 +62,12 @@ static struct
 	uint32_t *mapped[HOST_VK_FRAMES];
 	/* the latest count of each of the game's slots */
 	uint32_t latest[SLOTS];
+	uint64_t counted[SLOTS];
 	unsigned reported_over;
 } V;
+/* Results cross threads as a pair. This lock never covers command recording,
+image acquisition or presentation, which hold B.lock on the render thread. */
+static pthread_mutex_t visibility_results_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* the query pool and each frame slot's result buffer; B.lock is held. Without them the tests report 0 */
 void host_vk_visibility_start(void)
@@ -157,6 +162,7 @@ void host_vk_visibility_end(const struct vk_command_visibility_end *end)
 	V.active = 0;
 	V.current.index = end->index % SLOTS;
 	V.current.area = end->area;
+	V.current.test = end->test;
 	if (!V.current.parts)
 		return;
 	if (V.count[slot] == V.capacity[slot])
@@ -208,6 +214,7 @@ void host_vk_visibility_retired(unsigned slot)
 
 	if (!V.ready)
 		return;
+	pthread_mutex_lock(&visibility_results_lock);
 	for (index = 0; index < V.count[slot]; index++)
 	{
 		const struct test *test = &V.tests[slot][index];
@@ -218,14 +225,22 @@ void host_vk_visibility_retired(unsigned slot)
 		/* a count in the target's pixels, to the game's (a screen drawn larger than the game's 480 lines) */
 		if (test->area > 1.0f)
 			samples = (uint64_t)((float)samples / test->area + 0.5f);
-		__atomic_store_n(&V.latest[test->index], samples > 0xffffffffu ? 0xffffffffu : (uint32_t)samples, __ATOMIC_RELAXED);
+		V.latest[test->index] = samples > 0xffffffffu ? 0xffffffffu : (uint32_t)samples;
+		V.counted[test->index] = test->test;
 	}
 	V.count[slot] = 0;
+	pthread_mutex_unlock(&visibility_results_lock);
 }
 
 /* the guest asks (D3DDevice_GetVisibilityTestResult): never waits */
-uint32_t host_vk_visibility(uint32_t index)
+uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out)
 {
-	/* (without the lock, which the render thread holds while it runs a stream: the latest count, a word) */
-	return __atomic_load_n(&V.latest[index % SLOTS], __ATOMIC_RELAXED);
+	uint32_t result;
+
+	pthread_mutex_lock(&visibility_results_lock);
+	result = V.latest[index % SLOTS];
+	if (counted_out)
+		*(uint64_t *)(uintptr_t)counted_out = V.counted[index % SLOTS];
+	pthread_mutex_unlock(&visibility_results_lock);
+	return result;
 }

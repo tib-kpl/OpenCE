@@ -318,7 +318,7 @@ uint32_t host_vk_bc_supported(void);
 multisampling); 1 if it cannot multisample them */
 uint32_t host_vk_samples_supported(uint32_t samples);
 /* the latest count of the game's visibility test slot, in the game's pixels (host_vk_visibility.c); never waits */
-uint32_t host_vk_visibility(uint32_t index);
+uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out);
 /* the name of the Vulkan driver archive in use (meta.json's), written into the guest's buffer at out of size bytes; an empty string
 for the phone's own driver (host_vk_driver.c). Returns its length */
 uint32_t host_vk_driver_name(uint32_t out, uint32_t size);
