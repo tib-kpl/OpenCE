@@ -9,6 +9,7 @@ from pathlib import Path
 
 import ce_menus
 import port_settings
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1] / "port/assets/menus"
 BASE_FRAMES = {
@@ -37,6 +38,13 @@ def main():
                 original.append(f'\t\t<frame png="ce/{relative}__{number}.png" width="512" height="256"/>\n')
         text = text[:match.start()] + match[1] + "".join(original) + match[3] + text[match.end():]
     bitmaps.write_text(text, encoding="utf-8", newline="\n")
+    logo = ROOT / f"ce/port/{port_settings.CREDITS}/credits_logo.png"
+    logo.parent.mkdir(parents=True, exist_ok=True)
+    artwork = Image.open(ROOT.parent / "icon/opence-icon.png").convert("RGBA")
+    artwork = ImageOps.contain(artwork, (160, 160), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (256, 256))
+    canvas.alpha_composite(artwork, ((256 - artwork.width) // 2, (256 - artwork.height) // 2))
+    canvas.save(logo, optimize=True)
     manifest = ROOT / "menus.json"
     data = json.loads(manifest.read_text(encoding="utf-8"))
     data["files"] = sorted(set(data["files"]) | {f"ce/{p.name}" for p in folder.glob("*.xml")})

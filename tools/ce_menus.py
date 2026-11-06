@@ -102,7 +102,7 @@ CHILD_OFFSETS = {
      "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_gametypes_item"): (0, 358),
     ("ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_select_screen",
      "ui\\shell\\main_menu\\blueline"): (64, 349),
-    # the profile settings' rows, ten in the nine's room
+    # the profile settings' rows, eleven in the nine's room
     # (port_settings.PROFILE_ROWS)
     **{("ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_edit\\profile_edit_select_list",
         f"ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_edit\\{row}"):
@@ -176,7 +176,7 @@ XBOX_FRAMES = {
 PLACEHOLDER_SCALE = 2
 # the menus' rows with an icon of their own (port/assets/menus/menu_icons): its frame, its file and the margin around
 # its artwork, which is 302 across in all of them; and where the artwork goes in the frame, the middle of the panel it
-# is drawn in, as About's logo (tools/slipstream_icon.py), and clear of the description's text. (Multiplayer's picture
+# is drawn in, as About's logo (tools/regenerate_port_menus.py), and clear of the description's text. (Multiplayer's picture
 # had three frames for its seven rows: MENU_EXTRA_FRAMES)
 MENU_ICONS = {
     "shell/main_menu/settings_select/player_setup/player_profile_edit/profile_options__4": ("audio.svg", 24),
@@ -755,6 +755,12 @@ def main() -> None:
     lines.append(art.port_picture("mods/status", port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide")))
     lines.append(art.port_picture("mods/status_small",
                                   port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide", 16)))
+    # (Credits' logo, already drawn: tools/regenerate_port_menus.py)
+    logo = f"{port_settings.CREDITS}/credits_logo"
+    art.pngs.append(f"ce/port/{logo}.png")
+    lines += [f"\t<bitmap{attributes([('name', logo)])}>",
+              f"\t\t<frame{attributes([('png', f'ce/port/{logo}.png'), ('width', 256), ('height', 256)])}/>",
+              "\t</bitmap>"]
     # (the button-layout overlay's controllers, AL2009man's Gamepad Asset
     # Pack's, beside the pictures that draw them: port_settings.CONTROLLERS)
     (MENUS / "port_svg/controllers").mkdir(parents=True, exist_ok=True)
