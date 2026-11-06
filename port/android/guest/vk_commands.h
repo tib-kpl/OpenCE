@@ -265,6 +265,8 @@ struct vk_command_visibility_end
 	struct vk_command_header header;
 	uint32_t index;
 	float area;
+	/* the slot's test number, kept with its count until the GPU finishes */
+	uint64_t test;
 };
 
 /* ---------- the mip composite (phase 6, step 5)

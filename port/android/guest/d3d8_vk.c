@@ -1165,9 +1165,22 @@ latest count of the slot: from this test, or from an earlier one while the GPU i
 
 #define VISIBILITY_TEST_SLOTS 4096
 
-uint32_t host_vk_visibility(uint32_t index);
+uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out);
 
 static BOOL visibility_pending[VISIBILITY_TEST_SLOTS];
+/* xgpu.h: a reused flare slot may read only its new owner's own tests. */
+static uint64_t visibility_ended[VISIBILITY_TEST_SLOTS];
+static uint64_t visibility_counted[VISIBILITY_TEST_SLOTS];
+
+unsigned long long xgpu_visibility_tests_ended(unsigned long index)
+{
+	return visibility_ended[index % VISIBILITY_TEST_SLOTS];
+}
+
+unsigned long long xgpu_visibility_test_counted(unsigned long index)
+{
+	return visibility_counted[index % VISIBILITY_TEST_SLOTS];
+}
 
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
@@ -1185,10 +1198,9 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 		return S_OK;
 	device.visibility_test_active = FALSE;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 	command = stream_command(VK_COMMAND_VISIBILITY_END, sizeof(*command));
 	command->index = (uint32_t)index;
+	command->test = ++visibility_ended[index];
 	/* the target's pixels to a game pixel: the count is of the game's pixels (visibility_unscaled in d3d8_gl.c), which the game
 	divides by its own test's area (lens flares, rasterizer_lights.c), a split-screen window's or the screen's alike */
 	command->area = target_scale[0] * target_scale[1];
@@ -1201,8 +1213,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (time_stamp)
 		*time_stamp = 0;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 	if (!device.video_ready || !visibility_pending[index])
 	{
 		if (result)
@@ -1210,7 +1220,7 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		return S_OK;
 	}
 	if (result)
-		*result = host_vk_visibility((uint32_t)index);
+		*result = host_vk_visibility((uint32_t)index, (uint32_t)(uintptr_t)&visibility_counted[index]);
 	return S_OK;
 }
 

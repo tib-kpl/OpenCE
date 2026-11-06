@@ -32,6 +32,7 @@ struct test
 	uint32_t index;
 	float area;
 	uint32_t group, parts;
+	uint64_t test;
 };
 
 static struct
@@ -50,6 +51,7 @@ static struct
 	uint32_t *mapped[HOST_VK_FRAMES];
 	/* the latest count of each of the game's slots */
 	uint32_t latest[SLOTS];
+	uint64_t counted[SLOTS];
 	unsigned reported_over;
 } V;
 
@@ -130,6 +132,7 @@ void host_vk_visibility_end(const struct vk_command_visibility_end *end)
 	V.active = 0;
 	V.current.index = end->index % SLOTS;
 	V.current.area = end->area;
+	V.current.test = end->test;
 	if (!V.current.parts)
 		return;
 	if (V.count[slot] == V.capacity[slot])
@@ -192,17 +195,20 @@ void host_vk_visibility_retired(unsigned slot)
 		if (test->area > 1.0f)
 			samples = (uint64_t)((float)samples / test->area + 0.5f);
 		V.latest[test->index] = samples > 0xffffffffu ? 0xffffffffu : (uint32_t)samples;
+		V.counted[test->index] = test->test;
 	}
 	V.count[slot] = 0;
 }
 
 /* the guest asks (D3DDevice_GetVisibilityTestResult): never waits */
-uint32_t host_vk_visibility(uint32_t index)
+uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out)
 {
 	uint32_t result;
 
 	pthread_mutex_lock(&B.lock);
 	result = V.latest[index % SLOTS];
+	if (counted_out)
+		*(uint64_t *)(uintptr_t)counted_out = V.counted[index % SLOTS];
 	pthread_mutex_unlock(&B.lock);
 	return result;
 }
