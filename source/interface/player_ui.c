@@ -1257,13 +1257,14 @@ void player_ui_button_preset_preferences(
 
 		/* port: Bumper Jumper: jump on the left bumper and melee on the right,
 		action and reload on B, the flashlight on A, grenades on the left trigger */
+		/* port: retain the fork's MCC Bumper Jumper grenade and flashlight bindings. */
 		case _button_preset_bumper_jumper:
 			preferences.game_control_to_xbox_buttons[0] = _gamepad_analog_button_white;
-			preferences.game_control_to_xbox_buttons[1] = _gamepad_analog_button_x;
+			preferences.game_control_to_xbox_buttons[1] = _gamepad_analog_button_a;
 			preferences.game_control_to_xbox_buttons[2] = _gamepad_analog_button_b;
 			preferences.game_control_to_xbox_buttons[3] = _gamepad_analog_button_y;
 			preferences.game_control_to_xbox_buttons[4] = _gamepad_analog_button_black;
-			preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_a;
+			preferences.game_control_to_xbox_buttons[5] = _gamepad_analog_button_x;
 			preferences.game_control_to_xbox_buttons[6] = _gamepad_analog_button_left_trigger;
 			preferences.game_control_to_xbox_buttons[7] = _gamepad_analog_button_right_trigger;
 			preferences.game_control_to_xbox_buttons[8] = _gamepad_binary_button_start;

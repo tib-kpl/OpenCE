@@ -1407,10 +1407,10 @@
 		<string text="Internet play, updates and the\nmultiplayer HUD.\n\nProfile:"/>
 		<string text="Change the current profile's\nfree-for-all multiplayer color.\n\nProfile:" map="7"/>
 		<string text="How players and the AI fall:\nthe animation, or a ragdoll.\n\nProfile:"/>
-		<string text="SlipstreamCE, a fork of OpenCE.\nHalo: Combat Evolved on your\nSwitch\nProfile:" platform="switch"/>
-		<string text="SlipstreamCE, a fork of OpenCE.\nHalo: Combat Evolved on your\nPS5\nProfile:" platform="ps5"/>
-		<string text="SlipstreamCE, a fork of OpenCE.\nHalo: Combat Evolved on your\nAndroid Device\nProfile:" platform="android"/>
-		<string text="SlipstreamCE, a fork of OpenCE.\nHalo: Combat Evolved on your\nComputer\nProfile:" platform="desktop web"/>
+		<string text="OpenCE.\nHalo: Combat Evolved on your\nSwitch\nProfile:" platform="switch"/>
+		<string text="OpenCE.\nHalo: Combat Evolved on your\nPS5\nProfile:" platform="ps5"/>
+		<string text="OpenCE.\nHalo: Combat Evolved on your\nAndroid Device\nProfile:" platform="android"/>
+		<string text="OpenCE.\nHalo: Combat Evolved on your\nComputer\nProfile:" platform="desktop web"/>
 		<string text="The people behind the game, and\nthe licenses of what it uses.\n\nProfile:"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_options" map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_edit_options">

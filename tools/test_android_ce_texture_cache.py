@@ -102,6 +102,9 @@ struct vk_command_texture_free { uint32_t id; };
 static struct vk_command_texture_free freed_image;
 static void *vk_stream_command(unsigned int type, unsigned long size) { return &freed_image; }
 static uint32_t hud_image(long asset, unsigned long *levels) { return 0; }
+static int hud_image_ready(long asset) { return 0; }
+static int hud_image_failed(long asset) { return 1; }
+static uint32_t custom_edition_texels_swizzle(unsigned long address) { return 0; }
 '''
         code += gpu[gpu.index('struct texture_entry\n'):gpu.index('/* ---------- high-res replacements')]
         names = ('texture_size_supported', 'android_ce_texture_gpu_forget')

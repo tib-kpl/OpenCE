@@ -1007,6 +1007,15 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         description="ANDROID GRADLE $out",
         pool="console",
     )
-    n.build(outputs=apk, rule="android_gradle", inputs=staged_all, implicit=[stamp, sdl_android_mouse_listener])
+    # Java, resources and translated menus can change without rebuilding a
+    # native library. Let Gradle see those changes on an incremental build.
+    app_inputs = sorted((PORT_DIR / "app" / "src" / "main").rglob("*"))
+    menu_inputs = sorted(Path("port/assets/menus/ce").glob("*.xml"))
+    menu_inputs += sorted(Path("port/assets/menus/lang").rglob("*"))
+    gradle_inputs = [path for path in app_inputs + menu_inputs if path.is_file()]
+    gradle_inputs += [PORT_DIR / "build.gradle", PORT_DIR / "app" / "build.gradle",
+                      Path("tools/translate_menus.py")]
+    n.build(outputs=apk, rule="android_gradle", inputs=staged_all,
+            implicit=[stamp, sdl_android_mouse_listener, *gradle_inputs])
     n.build(outputs="android_apk", rule="phony", inputs=apk)
     n.newline()

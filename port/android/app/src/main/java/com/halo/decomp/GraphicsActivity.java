@@ -34,7 +34,7 @@ import java.util.zip.ZipFile;
  * game). It writes display.renderer and display.vk_driver in config.toml
  * (port/linux/src/port_config.c); the game reads them when it starts. An
  * imported archive is copied to the data folder as vk_driver_custom.zip, which
- * display.vk_driver = "custom" names (port/android/host/host_vk_driver.c).
+ * display.vk_driver = "vk_driver_custom.zip" names (port/android/host/host_vk_driver.c).
  *
  * Every button is a plain Button, for a gamepad.
  */
@@ -59,6 +59,7 @@ public class GraphicsActivity extends Activity {
         config = dataRoot != null ? new File(dataRoot, "config.toml") : null;
         // (done before the choice is made: the launcher does it once, and a "gl" chosen here must stay)
         Updater.moveToVulkanDefault(dataRoot);
+        Updater.migrateLegacyDriver(dataRoot);
         buildInterface();
     }
 
@@ -125,7 +126,7 @@ public class GraphicsActivity extends Activity {
         button(layout, t("Vulkan, pilote du téléphone", "Vulkan, the phone's own driver"),
             () -> choose("vulkan", ""));
         button(layout, t("Vulkan, Turnip (GPU Adreno)", "Vulkan, Turnip (Adreno GPU)"),
-            () -> choose("vulkan", "auto"));
+            this::chooseTurnip);
         button(layout, t("Vulkan, importer un pilote (zip)...", "Vulkan, import a driver (zip)..."), () -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -171,18 +172,32 @@ public class GraphicsActivity extends Activity {
         if (renderer.equals("gl")) {
             text = t("Actuel : OpenGL ES", "Now: OpenGL ES");
         } else {
-            String which = driver.equals("auto") ? "Turnip"
-                : driver.equals("custom") ? t("pilote importé", "imported driver")
-                : t("pilote du téléphone", "the phone's own driver");
+            String which = driver.isEmpty() ? t("pilote du téléphone", "the phone's own driver") : driver;
             text = t("Actuel : Vulkan, ", "Now: Vulkan, ") + which;
-            if (driver.equals("custom") && !new File(dataRoot, CUSTOM_ARCHIVE).isFile())
-                text += t(" (aucun pilote importé : celui du téléphone sera utilisé)",
-                    " (none imported: the phone's own is used)");
         }
         current.setText(text);
     }
 
-    /** renderer "gl" or "vulkan", and for Vulkan display.vk_driver: "" (the phone's), "auto" (Turnip) or "custom" */
+    private void chooseTurnip() {
+        status.setText(t("Préparation de Turnip...", "Preparing Turnip..."));
+        new Thread(() -> {
+            try {
+                if (dataRoot == null)
+                    throw new java.io.IOException(t("pas de dossier de données", "no data folder"));
+                Updater.Choice choice = Updater.driverChoose(dataRoot);
+                if (choice == null || choice.driver == null)
+                    throw new java.io.IOException(t("aucun pilote Turnip compatible", "no compatible Turnip driver"));
+                if (!Updater.driverPresent(dataRoot, choice.driver))
+                    Updater.driverDownload(dataRoot, choice.driver, choice.gpu, (received, total) -> {});
+                handler.post(() -> choose("vulkan", choice.driver.name));
+            } catch (Exception exception) {
+                handler.post(() -> status.setText(t("Turnip indisponible : ", "Turnip unavailable: ")
+                    + exception.getMessage()));
+            }
+        }, "Turnip selection").start();
+    }
+
+    /** renderer "gl" or "vulkan", and for Vulkan display.vk_driver: "" (the phone's), an archive file name */
     private void choose(String renderer, String driver) {
         if (config == null || !Updater.writeSetting(config, "display", "renderer", "\"" + renderer + "\"")
             || (renderer.equals("vulkan") && !Updater.writeSetting(config, "display", "vk_driver", "\"" + driver + "\""))) {
@@ -207,7 +222,7 @@ public class GraphicsActivity extends Activity {
                 String name = importDriver(archive);
 
                 handler.post(() -> {
-                    choose("vulkan", "custom");
+                    choose("vulkan", CUSTOM_ARCHIVE);
                     status.setText(t("Pilote importé : ", "Driver imported: ") + name
                         + t("\nIl s'applique au prochain démarrage du jeu.",
                             "\nIt applies the next time the game starts."));
@@ -227,7 +242,10 @@ public class GraphicsActivity extends Activity {
     private String importDriver(Uri source) throws Exception {
         if (dataRoot == null)
             throw new java.io.IOException(t("pas de dossier de données", "no data folder"));
-        File partial = new File(dataRoot, CUSTOM_ARCHIVE + ".partial");
+        File drivers = new File(dataRoot, Updater.DRIVER_FOLDER);
+        if (!drivers.isDirectory() && !drivers.mkdirs())
+            throw new java.io.IOException(t("dossier de pilotes inaccessible", "driver folder unavailable"));
+        File partial = new File(drivers, CUSTOM_ARCHIVE + ".partial");
 
         try {
             long total = 0;
@@ -276,7 +294,7 @@ public class GraphicsActivity extends Activity {
                     throw new java.io.IOException(library + t(" manque dans l'archive", " is not in the archive"));
                 name = json.optString("name", library);
             }
-            File target = new File(dataRoot, CUSTOM_ARCHIVE);
+            File target = new File(drivers, CUSTOM_ARCHIVE);
 
             target.delete();
             if (!partial.renameTo(target))

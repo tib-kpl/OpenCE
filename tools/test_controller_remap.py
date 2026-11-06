@@ -199,6 +199,9 @@ typedef enum {SDL_GAMEPAD_BUTTON_DPAD_UP,SDL_GAMEPAD_BUTTON_DPAD_DOWN,
  SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER} SDL_GamepadButton;
 enum {SDL_GAMEPAD_AXIS_LEFT_TRIGGER,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,SDL_GAMEPAD_AXIS_LEFTX,
  SDL_GAMEPAD_AXIS_LEFTY,SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY};
+#define INPUT_GAMEPAD 100
+#define INPUT_GAMEPAD_LEFT_TRIGGER 114
+#define INPUT_GAMEPAD_RIGHT_TRIGGER 115
 typedef struct {short axes[6];int buttons[14];} SDL_Gamepad;
 static int SDL_GetGamepadButton(SDL_Gamepad *p,int b){return p->buttons[b];}
 static short SDL_GetGamepadAxis(SDL_Gamepad *p,int a){return p->axes[a];}
@@ -214,8 +217,8 @@ int main(void) {
   for(i=0;i<6;i++)device.axes[i]=(short)(n*931+i*9271);
   device.axes[0]&=32767;device.axes[1]&=32767;
   for(i=0;i<14;i++)device.buttons[i]=(n>>(i%7))&1;
-  sdl_gamepad_state(&device,&old);
-  sdl_gamepad_state(&device,&physical);
+  sdl_gamepad_state(&device,&old,NULL,FALSE,FALSE);
+  sdl_gamepad_state(&device,&physical,NULL,FALSE,FALSE);
   assert(!controller_remap_input(0,&physical,1));
   controller_remap_merge(&physical,&current);
   assert(!memcmp(&old,&current,sizeof(old)));
@@ -563,15 +566,17 @@ static struct {int open;unsigned long opening_buttons;} chat_keyboard;
 static struct {short local_player_index;} players[4]={{0},{1},{2},{3}};
 static long occupants[4]={0x10004,0x20005,0x30006,0x40007};
 #define player_get(p) (&players[((p)&65535)-4])
-static short local_player_get_next(short p){return p<0?0:NONE;}
+static short local_player_get_next(short p){return p<3?p+1:NONE;}
 static long local_player_get_player_index(short p){return p>=0&&p<4?occupants[p]:NONE;}
+#define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
+static int game_in_progress(void){return 1;}
 short controller_remap_local_player(short p){return p;}
 struct key_stroke{int key;};
 static int input_get_key(struct key_stroke *key){return 0;}
 static WORD chat_held_buttons[4];
 static unsigned char chat_held_analog[4];
 '''
-    code+='\n'.join(function(chat,n) for n in ['chat_speaker','chat_input_begin','network_chat_controller','chat_input_end','chat_keyboard_buttons'])
+    code+='\n'.join(function(chat,n) for n in ['chat_controller_local_player','chat_speaker','chat_input_begin','network_chat_controller','chat_input_end','chat_keyboard_buttons'])
     code+=function(xinput,'chat_pad_hold_over')+r'''
 int main(void) {
  XINPUT_GAMEPAD p0={0},p2={0};

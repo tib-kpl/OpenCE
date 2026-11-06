@@ -38,6 +38,21 @@ def main():
                 original.append(f'\t\t<frame png="ce/{relative}__{number}.png" width="512" height="256"/>\n')
         text = text[:match.start()] + match[1] + "".join(original) + match[3] + text[match.end():]
     bitmaps.write_text(text, encoding="utf-8", newline="\n")
+    strings_file = folder / "strings.xml"
+    strings = strings_file.read_text(encoding="utf-8")
+    for name, values in port_settings.STRING_OVERRIDES.items():
+        pattern = r'(<strings name="' + re.escape(name) + r'"[^>]*>\n).*?(\t</strings>)'
+        match = re.search(pattern, strings, re.S)
+        if not match:
+            continue
+        originals = port_settings.OVERRIDE_ORIGINALS.get(name, [None] * len(values))
+        lines = []
+        for value, original in zip(values, originals):
+            for platform, words in (value.items() if isinstance(value, dict) else [(None, value)]):
+                attributes = ce_menus.attributes([("text", words), ("map", original), ("platform", platform)])
+                lines.append(f"\t\t<string{attributes}/>\n")
+        strings = strings[:match.start()] + match[1] + "".join(lines) + match[2] + strings[match.end():]
+    strings_file.write_text(strings, encoding="utf-8", newline="\n")
     logo = ROOT / f"ce/port/{port_settings.CREDITS}/credits_logo.png"
     logo.parent.mkdir(parents=True, exist_ok=True)
     artwork = Image.open(ROOT.parent / "icon/opence-icon.png").convert("RGBA")

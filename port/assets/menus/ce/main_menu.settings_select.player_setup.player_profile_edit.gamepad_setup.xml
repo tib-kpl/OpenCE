@@ -22,6 +22,8 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_layout" x="54" y="223"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_gyro" x="54" y="248" platform="android switch ps5"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_dead_zones" x="54" y="273"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_controller_remapping" x="54" y="298"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_controller_appearance" x="54" y="323"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
@@ -107,6 +109,22 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/dead_zones_label" type="text" controller="1" width="512" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="8" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_controller_remapping" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/controller_remapping/controller_remapping_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/controller_remapping/controller_remapping_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/controller_remapping_label"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/controller_remapping_label" type="text" controller="1" width="512" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="9" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_controller_appearance" width="512" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/option_bkds" color="#FF2896FF">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/controller_appearance/controller_appearance_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/controller_appearance/controller_appearance_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/controller_appearance_label"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/controller_appearance_label" type="text" controller="1" width="512" height="22" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="10" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="4">
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/button_defaults" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" string_list="strings/common_button_captions" string_index="3" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port settings defaults"/>
 		<on event="start" run="port settings defaults"/>
@@ -127,6 +145,8 @@
 		<string text="BUTTON LAYOUT:"/>
 		<string text="GYRO AIM:"/>
 		<string text="STICK DEAD ZONES"/>
+		<string text="BUTTON REMAPPING"/>
+		<string text="BUTTON APPEARANCE"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/help_strings">
 		<string text=""/>
@@ -139,5 +159,7 @@
 		<string text="See what each button does in each layout,\nand choose one."/>
 		<string text="Turn the view with the gyroscope,\nas well as the stick."/>
 		<string text="How far each stick moves before it does\nanything."/>
+		<string text="Custom button layouts for P1-P4.\nUse / Reload stays combined."/>
+		<string text="Controller artwork and bumper style.\nRequires High-Res HUD in Graphics."/>
 	</strings>
 </menus>

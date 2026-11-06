@@ -2656,12 +2656,6 @@ void platform_binding_capture_begin(void)
 	halo_gamepad_capture_begin();
 }
 
-void platform_binding_capture_cancel(void)
-{
-	pthread_mutex_lock(&input_lock);
-	binding_capture = _binding_capture_idle;
-	pthread_mutex_unlock(&input_lock);
-}
 
 void platform_binding_capture_cancel(void)
 {

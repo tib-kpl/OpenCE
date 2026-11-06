@@ -375,7 +375,7 @@ SCREENS = {
     },
     "controller_remapping": {
         "screen": "controller_remapping_screen", "spacing": 30,
-        "dynamic_help": True,
+        "dynamic_help": True, "help_top": 320, "help_height": 90,
         "header": ("header_profile_controller_setting", f"{PE}/controller_edit/header_profile_controller_setting"),
         "rows": [],
     },
@@ -859,6 +859,14 @@ STRING_OVERRIDES = {
 }
 
 
+# Keep the existing controller editors beside the gyro and layout screens.
+for _category in [("BUTTON REMAPPING", "controller_remapping",
+                        "Custom button layouts for P1-P4.\nUse / Reload stays combined."),
+                       ("BUTTON APPEARANCE", "controller_appearance",
+                        "Controller artwork and bumper style.\nRequires High-Res HUD in Graphics.")]:
+    if not any(row[1] == _category[1] for row in SCREENS["gamepad_setup"]["categories"]):
+        SCREENS["gamepad_setup"]["categories"].append(_category)
+
 def attributes(pairs: list) -> str:
     return "".join(f" {key}={quoteattr(str(value))}" for key, value in pairs if value is not None)
 
@@ -1259,7 +1267,7 @@ def _controller_screen() -> list:
     base = f"{PE}/{folder}"
     rows, extra = [], []
     for key, label, choices in [("player", "PLAYER:", "P1|P2|P3|P4"),
-                                ("group", "SHOW:", "MOVEMENT / ACTIONS|COMBAT")]:
+                                ("group", "SHOW:", "MOVEMENT|COMBAT|GENERAL|COMMUNICATION|DEBUG")]:
         row = f"{base}/op_{key}"
         rows.append((row, None))
         extra += _widget(row, [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
@@ -1280,22 +1288,27 @@ def _controller_screen() -> list:
         extra += _widget(row, [("width", 512), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
                                ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
                          ['<on event="a start" run="port controller bind"/>',
+                          '<on event="x" run="port controller clear"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>',
                           '<on event="left" run="port controller left"/>',
                           '<on event="right" run="port controller right"/>',
                           f'<child widget="{base}/pad_action"/>',
                           f'<child widget="{base}/pad_binding" x="220"/>'])
     extra += _widget(f"{base}/pad_action", [("type", "text"), ("controller", 1), ("width", 220),
-                     ("height", 22), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
+                     ("height", 22), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
                      ("text_x", 13), ("text_y", 4)], [])
     extra += _widget(f"{base}/pad_binding", [("type", "text"), ("controller", 1), ("width", 280),
                      ("height", 22), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
                      ("align", "center"), ("text_y", 4), ("text_flags", "no_focus_test")], [])
     extra += _button(f"{base}/button_defaults", 3, ['<on event="a start" run="port controller defaults"/>'])
     extra += _button(f"{base}/button_ok", 1, ['<on event="a start" run="port controller save" back="true"/>'])
-    return _screen(folder, SCREENS[folder], rows, ["port controller update"],
+    lines = _screen(folder, SCREENS[folder], rows, ["port controller update"],
                    ['<on event="created" run="port controller init"/>',
                     '<on event="deleted" run="port controller close"/>'], extra)
+
+    return [line.replace('<on event="b" back="true"/>', '<on event="b" run="port controller cancel" back="true"/>')
+            .replace('<on event="back" back="true"/>', '<on event="back" run="port controller cancel" back="true"/>')
+            for line in lines]
 
 
 def settings_files() -> dict:

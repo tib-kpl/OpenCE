@@ -269,7 +269,7 @@ static void tell_cache(void)
 	long index;
 
 	for (index = 0; index < OBJECTS; index++)
-		object_bounds_cache_update(OBJECT_INDEX(index), &objects[index].object.bounding_sphere_center,
+		object_bounds_cache_update(OBJECT_INDEX(index), objects[index].object.type, &objects[index].object.bounding_sphere_center,
 			objects[index].object.bounding_sphere_radius);
 }
 
@@ -381,7 +381,7 @@ int main(int argc, char **argv)
 				struct collision_result collision;
 
 				if (objects[index].object.parent_object_index != NONE ||
-					!object_bounds_cache_missed_by_vector(OBJECT_INDEX(index), &queries[query].point, &vector))
+					!object_bounds_cache_vector_misses(OBJECT_INDEX(index), ~0UL, 0, &queries[query].point, &vector))
 					continue;
 				missed++;
 				collision.t = 1.0f;

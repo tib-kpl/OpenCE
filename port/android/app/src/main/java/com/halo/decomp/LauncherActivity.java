@@ -307,6 +307,7 @@ public class LauncherActivity extends Activity {
     private void startGame() {
         if (gameStarted)
             return;
+        Updater.migrateLegacyDriver(dataRoot);
         if (!profileFolderReady())
             return;
         gameStarted = true;

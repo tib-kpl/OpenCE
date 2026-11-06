@@ -17,6 +17,8 @@ typedef struct { real_vector3d n; real d; } real_plane3d;
 #define PIN(x, a, b) MIN(MAX(x, a), b)
 #define D3DLOCK_READONLY 16
 #define __cdecl
+#define VERTEX_BUFFER_HARDWARE_FORMAT(b) ((b)->hardware_format)
+#define TRIANGLE_BUFFER_HARDWARE_FORMAT(b) ((b)->hardware_format)
 #include "types.inc"
 typedef struct real_matrix4x3 real_matrix4x3;
 

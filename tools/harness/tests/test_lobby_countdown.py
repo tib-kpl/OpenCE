@@ -41,7 +41,7 @@ CONSTANTS = (
 NEGATIVE_CONTROLS = {
     "one-player-only": (
         ("else if ((short)player->machine_index != first_machine_index)", "else"),
-        "server_players_on_one_machine", "split-screen-start-now",
+        "server_players_on_one_machine", "split-screen-team-game-one-team",
     ),
     "machines-ignored": (
         ("else if ((short)player->machine_index != first_machine_index)", "else if (0)"),
@@ -96,7 +96,7 @@ NEGATIVE_CONTROLS = {
         "server_director_ok_to_countdown", "dedicated-director-refuses",
     ),
     "dedicated-start-now-starts-countdown": (
-        ("if (!halo_server_mode() &&", "if (1 &&"),
+        ("if (halo_server_mode())\n\t\t\t\t\t\treturn;", "if (0) return;"),
         "network_game_server_update_countdown", "dedicated-start-now-five-seconds",
     ),
     "host-takes-five-seconds": (

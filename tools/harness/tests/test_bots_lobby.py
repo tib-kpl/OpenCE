@@ -11,15 +11,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["fills", "room", "fewer", "even", "against", "follows-players", "never-network", "slayer-only",
+CASES = ["fills", "room", "fewer", "even", "against", "follows-players", "never-network", "lan-game", "private-game", "client-game", "supported-modes",
          "not-once-started", "no-player-no-bots", "names-and-machines"]
 GAME_MANAGER_FUNCTIONS = ("network_game_invalidate_player", "network_player_is_valid", "network_game_player_is_valid",
                           "network_game_add_player", "network_game_remove_player")
 
 # a fault in network_game_server_port_bots, and the case that must catch it
 NEGATIVE_CONTROLS = {
-    "bots-in-network-games": (("network_game_is_splitscreen_local() && ", ""), "never-network"),
-    "bots-in-any-gametype": ((" && server->game.variant.game_engine_index == game_engine_slayer", ""), "slayer-only"),
+    "bots-in-network-games": (("bots_game_allowed() && ", ""), "never-network"),
+    "bots-in-any-gametype": (("server->game.variant.game_engine_index == game_engine_king", "TRUE"), "supported-modes"),
     "bots-once-started": (("server->state != _network_game_server_state_pregame || server->sent_start_game_message",
                            "server->state != _network_game_server_state_pregame"), "not-once-started"),
     "teams-not-evened": (("team_counts[1] < team_counts[0] ? 1 : 0", "1"), "even"),
@@ -55,6 +55,7 @@ def generated(fault=None):
         code += function(manager, name) + "\n"
     for name in ("bots_machine_is_bot", "bots_network_player"):
         code += function(bots, name) + "\n"
+    code += function(bots, "bots_game_allowed") + "\n"
     lobby = function(server, "network_game_server_port_bots")
     if fault:
         lobby = mutated(lobby, *fault)

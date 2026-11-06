@@ -63,6 +63,11 @@ static int config_write_file(const char *path, const char *text)
 	return 1;
 }
 
+/* These cases exercise the global file with no player profile active. */
+static struct { char folder[1]; } config_profiles[1];
+static int config_profile_slot(long index) { (void)index; return -1; }
+static int config_profile_write_locked(const char *folder, long index, const char *value)
+{ (void)folder; (void)index; (void)value; abort(); }
 #include "under_test.inc"
 
 /* the file's line for the key, NULL if none */

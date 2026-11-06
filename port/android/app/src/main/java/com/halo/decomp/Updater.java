@@ -153,6 +153,24 @@ final class Updater {
         return null;
     }
 
+    /** Preserve driver choices written by the French fork's older graphics screen. */
+    static void migrateLegacyDriver(File root) {
+        if (root == null)
+            return;
+        File config = new File(root, "config.toml");
+        String value = config.isFile() ? readSetting(config, "display", "vk_driver") : null;
+        if ("\"custom\"".equals(value)) {
+            writeSetting(config, "display", "vk_driver", "\"" + GraphicsActivity.CUSTOM_ARCHIVE + "\"");
+        } else if ("\"auto\"".equals(value)) {
+            List<String> lines = readLines(new File(root, AUTO_FILE));
+            if (!lines.isEmpty()) {
+                Driver driver = driverNamed(lines.get(0).trim());
+                if (driver != null && driverPresent(root, driver))
+                    writeSetting(config, "display", "vk_driver", "\"" + driver.name + "\"");
+            }
+        }
+    }
+
     /** whether this phone's archive was decided and is in the data folder at root (or it has none) */
     static boolean driverReady(File root) {
         if (root == null)

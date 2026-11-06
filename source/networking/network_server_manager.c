@@ -3759,7 +3759,8 @@ boolean server_ok_to_countdown(
 	host nobody else has joined). It can count down with the players who
 	are here, even on one team, and even under the variant's minimum. A
 	second machine still has to fill both teams and that minimum. */
-	boolean here_only = network_game_server_get_client_machine_count(server) <= 1;
+	/* port: a local-only lobby must still contain a player. */
+	boolean here_only = server_players_on_one_machine(server);
 
 	/* port: a dedicated server's lobby, whose own machine has no player:
 	its director's rules, server.min_players and server.team_start
