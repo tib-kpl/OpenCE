@@ -622,6 +622,8 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
             sdk_flags,
         ])
         posix_cflags = " ".join(POSIX_FLAGS + target + [f"-I{platform_dir}"])
+        # The native 32-bit process owns replay storage itself.
+        add_object(Path("port/android/host/host_replay.c"), posix_cflags, posix=True)
         # (with Mbed TLS's own locks, as built from its unchanged config by
         # these defines: on Linux the self-updater's thread (posix_update.c)
         # and internet play's (posix_dtls.c) both use it, and two threads

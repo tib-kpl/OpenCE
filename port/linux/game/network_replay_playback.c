@@ -173,8 +173,10 @@ boolean hud_hires_prompt_draw(char const *name, real x, real y, real size, pixel
 
 /* the simulation's and the netcode's variables outside the game state, all
 together (port/android/guest/guest.ld's .replay_data and .replay_bss) */
+#if defined(HALO_GUEST)
 extern byte __replay_data_start[], __replay_data_end[];
 extern byte __replay_bss_start[], __replay_bss_end[];
+#endif
 
 /* a keyframe: the game's tick it was taken at, where the file's records
 were then, and the game state and those variables, compressed */
@@ -1384,6 +1386,7 @@ static short playback_keyframe_regions(
 	byte **regions,
 	unsigned long *sizes)
 {
+#if defined(HALO_GUEST)
 	void *cpu, *gpu;
 	long cpu_size, gpu_size;
 
@@ -1397,6 +1400,14 @@ static short playback_keyframe_regions(
 	regions[3] = __replay_bss_start;
 	sizes[3] = (unsigned long)(__replay_bss_end - __replay_bss_start);
 	return 4;
+#else
+	/* Native executables and WebAssembly have no partition of simulation
+	globals. A partial snapshot would corrupt restoration; keep playback
+	available, without guest-only keyframes, until their layout is defined. */
+	(void)regions;
+	(void)sizes;
+	return 0;
+#endif
 }
 
 /* the keyframes' compressor: a thread of its own, so that the game goes on
@@ -1519,6 +1530,11 @@ static boolean playback_keyframe_take(
 	short count = playback_keyframe_regions(regions, sizes);
 	short index;
 
+	if (!count)
+	{
+		playback.keyframes_full = TRUE;
+		return FALSE;
+	}
 	if (playback.keyframe_count >= REPLAY_MAXIMUM_KEYFRAMES || playback.keyframe_memory >= REPLAY_KEYFRAME_MEMORY)
 	{
 		if (!playback.keyframes_full)
@@ -1910,6 +1926,7 @@ boolean network_replay_playback_idle(
 		playback.watched = playback_next_player(playback.watched, TRUE);
 	/* (the d-pad: a tap skips, held it scrubs; while one way is held the
 	other is not heard) */
+	if (playback.keyframe_count)
 	{
 		boolean left = playback_pressed(_gamepad_binary_button_dpad_left);
 		boolean right = playback_pressed(_gamepad_binary_button_dpad_right);
@@ -3964,7 +3981,9 @@ void network_replay_playback_draw(
 		{ { _gamepad_binary_button_right_thumb, NONE }, L"RESET" },
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_white,
 			FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_black }, L"SPEED" },
+#if defined(HALO_GUEST)
 		{ { _gamepad_binary_button_dpad_left, NONE }, L"SEEK" },
+#endif
 		{ { _gamepad_binary_button_back, NONE }, L"SCORES" },
 		{ { FIRST_GAMEPAD_ANALOG_BUTTON + _gamepad_analog_button_b, NONE }, L"HIDE" },
 		{ { _gamepad_binary_button_start, NONE }, L"PAUSE" },

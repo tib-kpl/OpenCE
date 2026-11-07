@@ -418,7 +418,7 @@ void terminal_status_printf(
 	...)
 {
 	struct output_line_datum *line = NULL;
-	char *arglist;
+	va_list arglist; /* port: variadic arguments use the target's ABI, including WebAssembly. */
 	int count;
 
 	if (!terminal_globals.initialized)

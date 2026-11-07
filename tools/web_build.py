@@ -274,6 +274,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     for source in sorted((PORT_DIR / "src").glob("*.c")):
         add_object(source, posix_cflags if source.name in WEB_POSIX_SOURCES else platform_cflags)
     add_object(WATCH_HASH, " ".join([abi, "-std=gnu11", "-w"]))
+    add_object(ANDROID_DIR / "host" / "host_replay.c", posix_cflags)
 
     # ---------- third-party libraries, as the other builds have them
 

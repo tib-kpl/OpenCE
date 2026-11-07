@@ -404,6 +404,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             f"-include {prefix_header}",
             f"-include {tags_header}",
             f"-I{crt_include}",
+            f"-I{posix_include}",
             f"-I{PORT_DIR / 'include'}",
             # the shared port headers (halo_port_window.h and the capacity
             # limits they build on) are reached by a quoted include, as below
@@ -461,6 +462,8 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         ])
         replaced = set(config.get("replaced_platform_sources", []))
         mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
+        # The native 32-bit process owns replay storage itself.
+        add_object(Path("port/android/host/host_replay.c"), platform_cflags)
         for source in sorted(linux_platform.glob("*.c")):
             if source.name in replaced:
                 continue

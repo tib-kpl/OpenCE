@@ -10,6 +10,14 @@ direction is right. What follows fits it to this netcode
 
 ## What a replay is here
 
+The guest builds (Android, Switch, PS5 and the Linux guest hosts) have linker
+sections that collect the simulation globals for in-memory keyframes. The
+native 32-bit Linux/Windows and web builds currently record and play replays
+without those keyframes or seeking. They must not restore only the game-state
+allocation while leaving the simulation globals at a different tick. The
+record storage itself is shared with the guest host and linked into these
+32-bit builds directly.
+
 The Xbox's films replayed each tick's input, which works only because the
 Xbox played in lockstep: every machine simulated the whole game from the
 same inputs. The native builds no longer do (NETCODE.md, "Distributed
