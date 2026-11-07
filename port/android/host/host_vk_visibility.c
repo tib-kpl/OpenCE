@@ -18,7 +18,9 @@ At the frame's end the results are copied (vkCmdCopyQueryPoolResults, outside re
 host-visible buffer of the frame's slot; when that frame's fence has next passed, each test's samples are divided by the
 target's scale area (visibility_unscaled in d3d8_gl.c: the game divides by its own test's area, so a count at the screen's scale
 would make flares too bright) and kept as the slot's latest count. host_vk_visibility gives the latest count and never waits, as
-d3d8_gl.c's query buffer path: the latest from this test, or from an earlier one while the GPU is behind.
+d3d8_gl.c's query buffer path: the latest from this test, or from an earlier one while the GPU is behind. With it, in the same word,
+goes the number the guest gave the test (VISIBILITY_END's), so the guest knows whose count it is: a dropped test (the frame's
+groups all taken, no draw in it, left open at the frame's end) never gives its number.
 */
 
 #include "host.h"
@@ -41,7 +43,12 @@ struct test
 	uint32_t index;
 	float area;
 	uint32_t group, parts;
+<<<<<<< HEAD
 	uint64_t test;
+=======
+	/* the guest's number of the test (VISIBILITY_END's) */
+	uint32_t number;
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 };
 
 static struct
@@ -60,9 +67,14 @@ static struct
 	VkBuffer buffer[HOST_VK_FRAMES];
 	VkDeviceMemory memory[HOST_VK_FRAMES];
 	uint32_t *mapped[HOST_VK_FRAMES];
+<<<<<<< HEAD
 	/* the latest count of each of the game's slots */
 	uint32_t latest[SLOTS];
 	uint64_t counted[SLOTS];
+=======
+	/* the latest count of each of the game's slots (the low 32 bits) and the number of its test (the high) */
+	uint64_t latest[SLOTS];
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 	unsigned reported_over;
 } V;
 /* Results cross threads as a pair. This lock never covers command recording,
@@ -162,7 +174,11 @@ void host_vk_visibility_end(const struct vk_command_visibility_end *end)
 	V.active = 0;
 	V.current.index = end->index % SLOTS;
 	V.current.area = end->area;
+<<<<<<< HEAD
 	V.current.test = end->test;
+=======
+	V.current.number = end->test;
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 	if (!V.current.parts)
 		return;
 	if (V.count[slot] == V.capacity[slot])
@@ -225,14 +241,20 @@ void host_vk_visibility_retired(unsigned slot)
 		/* a count in the target's pixels, to the game's (a screen drawn larger than the game's 480 lines) */
 		if (test->area > 1.0f)
 			samples = (uint64_t)((float)samples / test->area + 0.5f);
+<<<<<<< HEAD
 		V.latest[test->index] = samples > 0xffffffffu ? 0xffffffffu : (uint32_t)samples;
 		V.counted[test->index] = test->test;
+=======
+		__atomic_store_n(&V.latest[test->index],
+			(uint64_t)test->number << 32 | (samples > 0xffffffffu ? 0xffffffffu : (uint32_t)samples), __ATOMIC_RELAXED);
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 	}
 	V.count[slot] = 0;
 	pthread_mutex_unlock(&visibility_results_lock);
 }
 
 /* the guest asks (D3DDevice_GetVisibilityTestResult): never waits */
+<<<<<<< HEAD
 uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out)
 {
 	uint32_t result;
@@ -243,4 +265,10 @@ uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out)
 		*(uint64_t *)(uintptr_t)counted_out = V.counted[index % SLOTS];
 	pthread_mutex_unlock(&visibility_results_lock);
 	return result;
+=======
+uint64_t host_vk_visibility(uint32_t index)
+{
+	/* (without the lock, which the render thread holds while it runs a stream: the latest count and its number, a word) */
+	return __atomic_load_n(&V.latest[index % SLOTS], __ATOMIC_RELAXED);
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 }

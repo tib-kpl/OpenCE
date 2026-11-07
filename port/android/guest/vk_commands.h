@@ -385,7 +385,12 @@ struct vk_command_visibility_end
 	struct vk_command_header header;
 	uint32_t index;
 	float area;
+<<<<<<< HEAD
 	uint64_t test; /* the slot's test number, kept with its count */
+=======
+	/* the test's number at its slot (the low 32 bits), which host_vk_visibility gives with its count */
+	uint32_t test;
+>>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 };
 
 /* ---------- the mip composite (phase 6, step 5)

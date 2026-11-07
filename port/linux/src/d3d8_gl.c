@@ -7822,8 +7822,8 @@ static void frame_end_buffers(void)
 		{
 			device.visibility_latest[device.ring_tests[ring][test][0]] =
 				device.counter_values[device.ring_tests[ring][test][1]];
-				device.visibility_counted[device.ring_tests[ring][test][0]] =
-					device.ring_test_numbers[ring][test];
+			device.visibility_counted[device.ring_tests[ring][test][0]] =
+				device.ring_test_numbers[ring][test];
 		}
 		device.ring_test_count[ring] = 0;
 	}
