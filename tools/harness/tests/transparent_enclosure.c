@@ -11,6 +11,9 @@ typedef void real_matrix4x3;
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define VALID_INDEX(i,n) ((i) >= 0 && (i) < (n))
 #define square_root sqrt
+#define VERTEX_BUFFER_HARDWARE_FORMAT(b) ((b)->hardware_format)
+#define TRIANGLE_BUFFER_HARDWARE_FORMAT(b) ((b)->hardware_format)
+#define TAG_BLOCK_ADDRESS(block) ((block).address)
 #include "types.inc"
 
 static struct model model;

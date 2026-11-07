@@ -256,6 +256,24 @@ void recorded_animations_dispose(
 	return;
 }
 
+/* port: a thread's place in its animation's event stream, which is the
+map's tag data (game_state.c's game_state_image_relocate) */
+boolean recorded_animations_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	long index;
+
+	for (index = 0; index < animation_threads->maximum_count; index++)
+	{
+		struct animation_thread *thread = game_state_relocation_element(relocation, animation_threads, index);
+
+		if (thread)
+			game_state_relocate(relocation, &thread->event_stream);
+	}
+
+	return TRUE;
+}
+
 void recorded_animations_dispose_from_old_map(
 	void)
 {
@@ -308,7 +326,7 @@ void recorded_animations_update(
 						&thread->controller,
 						relative_ticks,
 						&thread->event_stream,
-						(byte const *)animation->event_stream.address + animation->event_stream.size);
+						(byte const *)TAG_DATA_ADDRESS(animation->event_stream) + animation->event_stream.size);
 				}
 				else
 				{
@@ -495,7 +513,7 @@ void recorded_animation_verify(
 	long ticks_left;
 	boolean finished;
 
-	stream = animation->event_stream.address;
+	stream = TAG_DATA_ADDRESS(animation->event_stream);
 	playback_stream = stream;
 	size = animation->event_stream.size;
 	ticks_left = (word)animation->length_in_ticks;
@@ -742,7 +760,7 @@ static boolean recorded_animation_play_internal(
 						&thread->controller,
 						&thread->event_stream,
 						animation->unit_control_data_version,
-						(byte const *)animation->event_stream.address + animation->event_stream.size);
+						(byte const *)TAG_DATA_ADDRESS(animation->event_stream) + animation->event_stream.size);
 
 					unit_set_actively_controlled(unit_index, TRUE);
 					SET_FLAG(
@@ -806,7 +824,7 @@ static boolean recorded_animation_playable(
 {
 	struct unit_control_data controller;
 	byte animation_state[0xC];
-	byte *stream = animation->event_stream.address;
+	byte *stream = TAG_DATA_ADDRESS(animation->event_stream);
 
 	if (animation->version == 0 ||
 		animation->version > RECORDED_ANIMATION_VERSION ||
@@ -830,7 +848,7 @@ static boolean recorded_animation_stream_holds(
 	struct recorded_animation_definition const *animation,
 	byte const *event_stream)
 {
-	byte const *stream = animation->event_stream.address;
+	byte const *stream = TAG_DATA_ADDRESS(animation->event_stream);
 
 	return stream &&
 		animation->event_stream.size > 0 &&

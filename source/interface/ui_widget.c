@@ -1353,6 +1353,9 @@ static void widget_instance_set_focused_child_by_index(
 	short child_index);
 static void widget_instance_go_back_to_previous(
 	struct widget_instance *widget);
+/* port: Back that closes the last screen (ui_widget.c) */
+static void widget_back_left_nothing(
+	short widget_stack);
 static __inline struct widget_instance *widget_instance_find_by_tag_index(
 	long tag_index);
 static void widget_instance_reload_recursive(
@@ -1451,6 +1454,8 @@ static void widget_instance_process_one_event_recursive(
 	boolean *return_widget_deleted);
 static boolean ui_check_for_pause_game(
 	void);
+static short spinner_string_list_extra_kind(
+	long string_list_index);
 static long spinner_string_list_extra_count(
 	long string_list_index);
 static wchar_t *spinner_string_list_get_string(
@@ -1468,7 +1473,24 @@ Edition maps' display indices (custom_edition_maps.c keeps them below 0x7000) */
 
 /* port: the strings a spinner's string list has past the tag's own, as more
 items: the higher kills to win of the Slayer game type editor
-(ui_widget_event_handler_functions.c saves and loads them) */
+(ui_widget_event_handler_functions.c saves and loads them), and on Android
+Video Setup's VULKAN DRIVER's driver archives (menu_functions.c's
+vk_driver_list, read again as the spinner is made) */
+enum
+{
+	_spinner_extra_none,
+	_spinner_extra_kills_to_win,
+	_spinner_extra_vk_drivers,
+};
+#define KILLS_TO_WIN_STRINGS \
+	"ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\playlist_edit\\slayer_edit\\var_kills_to_win"
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+#define VK_DRIVER_STRINGS \
+	"pc\\main_menu\\settings_select\\player_setup\\player_profile_edit\\video_settings\\vk_driver_spinner strings"
+void vk_driver_list_read(void);
+short vk_driver_list_count(void);
+wchar_t const *vk_driver_list_label(short index);
+#endif
 static wchar_t const *const kills_to_win_extra_strings[] =
 {
 	L"75", L"100", L"150", L"200", L"250", L"500",
@@ -2269,7 +2291,7 @@ void ui_widget_delete(
 		handler_index++)
 	{
 		struct ui_widget_event_handler_reference *handler =
-			(struct ui_widget_event_handler_reference *)definition->event_handlers.address + handler_index;
+			(struct ui_widget_event_handler_reference *)TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 
 		if (handler->event_type == _widget_event_deleted &&
 			TEST_FLAG(handler->flags, _event_handler_run_function_bit))
@@ -2577,9 +2599,17 @@ static void widget_instance_refocus_passthrough(
 	struct widget_instance *child;
 	long flags;
 
-	if (!widget || widget->focused_child || widget_instance_can_handle_events(widget))
+	if (!widget || widget->focused_child)
 		return;
 	flags = ui_widget_definition_get(widget->definition_tag_index)->flags;
+	/* port: horizontal child lists (Mods/Cinema button bars) need their
+	button focus restored too; their list type keeps the selection artwork. */
+	if (widget_instance_can_handle_events(widget) &&
+		!(widget->type == _ui_widget_type_column_list &&
+			TEST_FLAG(flags, _widget_dpad_leftright_tabs_thru_children_bit)))
+	{
+		return;
+	}
 	if (!TEST_FLAG(flags, _widget_pass_unhandled_events_to_children_bit) ||
 		TEST_FLAG(flags, _widget_dont_focus_a_specific_child_bit))
 	{
@@ -2913,6 +2943,16 @@ boolean widget_event_function_list_widget_goto_previous_item(
 			{
 				child = widget->child;
 				item_index = 0;
+				/* port: a list can have no children on this platform (the
+				Theater's button bar on the consoles), as goto_next_item allows */
+				if (!child)
+				{
+					error(
+						_error_silent,
+						"failed to set focus to the previous list item of a column widget");
+
+					return FALSE;
+				}
 				while (child->next)
 				{
 					child = child->next;
@@ -3263,6 +3303,37 @@ static void widget_instance_set_focused_child_by_index(
 	return;
 }
 
+/* port: the postgame map select is opened on the main menu's map with no
+screen behind it. Its wrapper has no B handler, so B is Back, which deletes
+that screen and leaves the menu background. The carnage report's other
+button leaves the match for the main menu. A match's pause menu closes the
+same way, and no widgets there is the game being played. */
+static void widget_back_left_nothing(
+	short widget_stack)
+{
+	long widget_index;
+
+	if (widget_stack < 0 || widget_stack >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+		return;
+	if (!we_are_at_the_main_menu)
+		return;
+	if (widget_globals.widget_stack[widget_stack])
+		return;
+	for (widget_index = 0;
+		widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
+		widget_index++)
+	{
+		if (widget_globals.active_widgets[widget_index])
+			return;
+	}
+	if (global_network_game_server_get() || global_network_game_client_get())
+		network_game_abort();
+	else
+		main_goto_main_menu();
+
+	return;
+}
+
 static void widget_instance_go_back_to_previous(
 	struct widget_instance *widget)
 {
@@ -3301,6 +3372,7 @@ static void widget_instance_go_back_to_previous(
 				data.focused_child_index);
 		}
 	}
+	widget_back_left_nothing(widget_stack);
 
 	return;
 }
@@ -3581,7 +3653,7 @@ static void event_handler_dispatch(
 				conditional_index++)
 			{
 				struct ui_widget_conditional_reference *conditional =
-					(struct ui_widget_conditional_reference *)definition->conditional_widgets.address +
+					(struct ui_widget_conditional_reference *)TAG_BLOCK_ADDRESS(definition->conditional_widgets) +
 					conditional_index;
 
 				if (function_failed == TRUE &&
@@ -3643,6 +3715,11 @@ static boolean ui_widget_load_children_recursive(
 			definition->text_label_string_list.index != NONE,
 			"_list_items_generated_from_string_list_tag flag was set but no string list tag was specified");
 		string_list = unicode_string_list_definition_get(definition->text_label_string_list.index);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+		/* port: the driver archives there now */
+		if (spinner_string_list_extra_kind(definition->text_label_string_list.index) == _spinner_extra_vk_drivers)
+			vk_driver_list_read();
+#endif
 		widget_globals.dont_load_children_recursive = TRUE;
 		for (string_index = 0;
 			string_index < string_list->strings.count +
@@ -3673,7 +3750,7 @@ static boolean ui_widget_load_children_recursive(
 		child_index++)
 	{
 		struct ui_widget_child_reference *reference =
-			(struct ui_widget_child_reference *)definition->child_widgets.address + child_index;
+			(struct ui_widget_child_reference *)TAG_BLOCK_ADDRESS(definition->child_widgets) + child_index;
 		short controller_index = widget->local_player_index;
 
 		if (TEST_FLAG(reference->flags, _child_widget_use_custom_controller_index_bit))
@@ -3776,6 +3853,18 @@ static boolean ui_widget_load_children_recursive(
 	return result;
 }
 
+/* port: the main menu's background is the menu map, and it runs while the
+clock does. The settings screens pause that clock, which stops it. At the
+main menu they do not, so it keeps playing. In a game they still pause,
+which holds the pause the pause menu started. */
+static boolean main_menu_settings_screen(
+	long tag_index)
+{
+	char const *name = tag_get_name(tag_index);
+
+	return we_are_at_the_main_menu && name && strstr(name, "\\player_profile_edit\\");
+}
+
 static void widget_instance_initialize(
 	struct widget_instance *widget,
 	struct widget_instance *parent,
@@ -3834,7 +3923,7 @@ static void widget_instance_initialize(
 		handler_index++)
 	{
 		struct ui_widget_event_handler_reference *handler =
-			(struct ui_widget_event_handler_reference *)definition->event_handlers.address + handler_index;
+			(struct ui_widget_event_handler_reference *)TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 
 		if (handler->event_type == _widget_event_created)
 		{
@@ -3930,7 +4019,7 @@ boolean ui_widget_port_dispatch_event(
 	for (handler_index = 0; handler_index < definition->event_handlers.count; handler_index++)
 	{
 		struct ui_widget_event_handler_reference *handler =
-			(struct ui_widget_event_handler_reference *)definition->event_handlers.address + handler_index;
+			(struct ui_widget_event_handler_reference *)TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 
 		if (handler->event_type == event_type)
 		{
@@ -4173,6 +4262,11 @@ static void render_state_bitmap(
 	return;
 }
 
+/* port: where the last draw_string_and_hack_in_icons left its cursor (the
+right of its last line), for a caller that centres what it drew
+(port/linux/game/network_replay_playback.c) */
+short draw_string_and_hack_in_icons_port_end_x;
+
 void draw_string_and_hack_in_icons(
 	rectangle2d *bounds,
 	rectangle2d *clip,
@@ -4319,6 +4413,7 @@ void draw_string_and_hack_in_icons(
 	}
 	if (current)
 		render_state_text(bounds, &cursor_bounds, current);
+	draw_string_and_hack_in_icons_port_end_x = cursor_bounds.x0;
 	draw_string_set_indents(0, 0);
 
 	return;
@@ -4742,23 +4837,21 @@ void network_game_reset_to_pregame_ui(
 	ui_widgets_close_all();
 	if (network_game_is_splitscreen_local())
 	{
-		if (network_game_is_quickstart_local())
+		/* port: the Xbox's split-screen postgame screens are not in a game
+		map, and the PC menus are what this build shows. The machine is the
+		host, so it gets the lobby. That screen's created event lets the
+		countdown run; the map select screen does not, so a match opened
+		there never starts. If the lobby is not there, the main menu:
+		staying in the match with no screen cannot be left. */
+		char const *widget_name = pc_menus_screen(
+			"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen");
+
+		if (global_network_game_server_get())
+			network_game_server_pause_countdown(global_network_game_server_get(), TRUE);
+		if (!ui_widget_load_by_name_or_tag(widget_name, NONE, NULL, NONE, NONE, NONE, NONE))
 		{
-			if (!ui_widget_load_by_name_or_tag(
-				"ui\\shell\\main_menu\\multiplayer_type_select\\split_screen\\pregame\\splitscreen_pregame_wrapper_normal",
-				NONE, NULL, NONE, NONE, NONE, NONE))
-			{
-				error(_error_silent, "failed to load pregame screen after quickstart match");
-			}
-		}
-		else
-		{
-			if (!ui_widget_load_by_name_or_tag(
-				"ui\\shell\\main_menu\\multiplayer_type_select\\split_screen\\splitscreen_map_select_postgame_wrapper",
-				NONE, NULL, NONE, NONE, NONE, NONE))
-			{
-				error(_error_silent, "failed to load map select postgame screen");
-			}
+			error(_error_silent, "failed to load split screen postgame screen");
+			main_goto_main_menu();
 		}
 	}
 	else
@@ -5031,9 +5124,19 @@ void main_screen_shell_load(
 		/* port: the menus' main menu, when they are there (port/linux/game/menu_tags.c) */
 		{
 			extern char const *pc_menus_root_name(void);
+			extern boolean network_replay_theater_wanted(void);
 
 			if (!ui_widget_load_by_name_or_tag(pc_menus_root_name(), NONE, NULL, NONE, NONE, NONE, NONE))
 				error(_error_silent, "failed to load main screen shell window");
+			/* (port: back from a replay, the Theater it was played from,
+			over the main menu, which B goes back to:
+			port/linux/game/network_replay_playback.c) */
+			else if (network_replay_theater_wanted() &&
+				!ui_widget_load_by_name_or_tag("pc\\main_menu\\theater\\theater_screen", NONE, NULL, NONE,
+					widget_globals.active_widgets[0]->definition_tag_index, NONE, NONE))
+			{
+				error(_error_silent, "failed to load the theater");
+			}
 		}
 		if (widget_globals.main_menu_deferred_error_code != NONE)
 		{
@@ -5354,7 +5457,7 @@ static void widget_instance_render_text_box(
 	{
 		struct ui_widget_search_and_replace_reference *reference =
 			(struct ui_widget_search_and_replace_reference *)
-				definition->search_and_replace_functions.address +
+				TAG_BLOCK_ADDRESS(definition->search_and_replace_functions) +
 			search_index;
 
 		if (reference && reference->search_string[0])
@@ -5518,9 +5621,9 @@ static void widget_instance_render_spinner_list(
 
 		csmemset(&parameters, 0, sizeof(parameters));
 		bounds = definition->list_header_bounds;
-		/* port: a spinner with extra items is wider, to the left, its arrow
-		with it */
-		if (spinner_string_list_extra_count(definition->text_label_string_list.index))
+		/* port: a spinner with extra kills to win is wider, to the left, its
+		arrow with it */
+		if (spinner_string_list_extra_kind(definition->text_label_string_list.index) == _spinner_extra_kills_to_win)
 		{
 			bounds.x0 -= SPINNER_EXTRA_WIDTH;
 			bounds.x1 -= SPINNER_EXTRA_WIDTH;
@@ -5591,7 +5694,7 @@ static void widget_instance_render_spinner_list(
 				{
 					struct ui_widget_search_and_replace_reference *reference =
 						(struct ui_widget_search_and_replace_reference *)
-							definition->search_and_replace_functions.address +
+							TAG_BLOCK_ADDRESS(definition->search_and_replace_functions) +
 						search_index;
 
 					if (reference && reference->search_string[0])
@@ -5644,9 +5747,10 @@ static void widget_instance_render_spinner_list(
 				bounds.y1 += offset.y;
 				bounds.x0 += offset.x;
 				bounds.y0 += offset.y;
-				/* port: a spinner with extra items (three digits) is wider, to the
-				left */
-				if (spinner_string_list_extra_count(definition->text_label_string_list.index))
+				/* port: a spinner with extra kills to win (three digits) is wider,
+				to the left */
+				if (spinner_string_list_extra_kind(definition->text_label_string_list.index) ==
+					_spinner_extra_kills_to_win)
 				{
 					bounds.x0 -= SPINNER_EXTRA_WIDTH;
 					clip.x0 -= SPINNER_EXTRA_WIDTH;
@@ -5985,6 +6089,10 @@ static short ui_mouse_key_button(
 		{ "white_butn", _gamepad_analog_button_white },
 		{ "start_butn", _gamepad_binary_button_start },
 		{ "back_butn", _gamepad_binary_button_back },
+		/* port: the d-pad's up and down, the port's own screens' scroll
+		arrows (the news's: tools/port_settings.py's _news_screen) */
+		{ "dpad_up_butn", _gamepad_binary_button_dpad_up },
+		{ "dpad_down_butn", _gamepad_binary_button_dpad_down },
 	};
 	char const *name = tag_get_name(widget->definition_tag_index);
 	char const *leaf = name ? strrchr(name, '\\') : NULL;
@@ -6878,7 +6986,15 @@ static void ui_widgets_process_mouse(
 	boolean keyboard_active;
 
 	ui_debug_frame++;
-	pointer_active = halo_ui_pointer_update(ui_mouse_menus_active(), &pointer) != 0;
+	/* port: the overlay menu takes the pointer while it is open, over the
+	menus or the game (port/linux/game/overlay_menu.c) */
+	pointer_active = halo_ui_pointer_update(ui_mouse_menus_active() || overlay_menu_open(), &pointer) != 0;
+	if (overlay_menu_open())
+	{
+		if (pointer_active)
+			overlay_menu_pointer(&pointer);
+		pointer_active = FALSE;
+	}
 	if (pointer_active)
 		ui_mouse_pointer_is_touch = pointer.touch != 0;
 	if (pointer_active && ui_debug_targets_enabled())
@@ -7121,7 +7237,7 @@ static void widget_instance_render_recursive(
 	{
 		struct ui_widget_game_data_input_reference *input =
 			(struct ui_widget_game_data_input_reference *)
-				definition->game_data_inputs.address +
+				TAG_BLOCK_ADDRESS(definition->game_data_inputs) +
 			input_index;
 
 		ui_widget_game_data_function_invoke(widget, input->function);
@@ -7138,6 +7254,30 @@ static void widget_instance_render_recursive(
 		definition->background_bitmap.index,
 		0,
 		frame_index);
+	/* port: the color and profile screens' Spartan, the model and not its
+	picture (port/linux/game/menu_chief.c; the profile screen's picture is
+	also the split-screen lobby's, which keeps it) */
+	if (bitmap && widget->name &&
+		(!strcmp(widget->name, "color_right_pic") ||
+			(!strcmp(widget->name, "qtr_screen_profile_color_pic") && widget->parent && widget->parent->name &&
+				!strcmp(widget->parent->name, "player_profile_right_item"))))
+	{
+		extern boolean menu_chief_draw(short x0, short y0, short x1, short y1, short color_index, boolean controlled);
+		/* (neither screen's picture is in the middle of its panel, as he, with
+		what he holds out to one side, must be) */
+		short chief_left = (short)(definition->bounds.x0 + offset.x + halo_screen_ui_offset_current() -
+			(widget->name[0] == 'q' ? 20 : 5));
+		short chief_top = (short)(definition->bounds.y0 + offset.y);
+
+		if (menu_chief_draw(chief_left, chief_top,
+				(short)(chief_left + definition->bounds.x1 - definition->bounds.x0),
+				(short)(chief_top + definition->bounds.y1 - definition->bounds.y0),
+				frame_index,
+				widget->name[0] == 'c'))
+		{
+			bitmap = NULL;
+		}
+	}
 	if (bitmap)
 	{
 		real alpha = alpha_modifier;
@@ -7401,6 +7541,27 @@ void render_ui_widgets_postgame(
 	return;
 }
 
+/* port: a screen laid out for the whole frame (the pause menu, and the
+settings it opens), while each player is drawing into a pane of it. A
+layout already as short as one pane stays there. */
+static boolean widget_fullscreen_over_split(
+	struct widget_instance *widget)
+{
+	struct ui_widget_definition *definition;
+	short screen_height;
+	short design_height;
+
+	if (local_player_count() <= 1 || !widget)
+		return FALSE;
+	definition = ui_widget_definition_get(widget->definition_tag_index);
+	if (!definition)
+		return FALSE;
+	screen_height = rasterizer_globals.reserved04.screen_bounds.y1 -
+		rasterizer_globals.reserved04.screen_bounds.y0;
+	design_height = definition->bounds.y1 - definition->bounds.y0;
+	return screen_height > 0 && design_height > screen_height / 2 + 8;
+}
+
 /* renders the active widgets for one local player's viewport (or the whole
 screen), noting and settling the first player's tap targets in the frame's
 first render that can, and draws the debug view of the targets and the
@@ -7459,6 +7620,9 @@ void render_ui_widgets(
 					should_render = TRUE;
 				}
 			}
+			/* port: drawn once, over every pane, after the windows */
+			if (should_render && widget_fullscreen_over_split(widget))
+				should_render = FALSE;
 			if (should_render)
 			{
 				point2d offset;
@@ -7544,16 +7708,92 @@ void render_ui_widgets(
 	return;
 }
 
+/* port: the pause screen and the settings it opens are a full 640x480 frame.
+Drawn in a pane, the other pane covers the rest. Drawn once the panes are
+done, on the whole screen, so the whole menu shows. */
+void render_ui_widgets_over_split_screen(
+	void)
+{
+	rectangle2d saved;
+	rectangle2d full;
+	rectangle2d bounds;
+	point2d offset;
+	long widget_index;
+	boolean any;
+
+	if (local_player_count() <= 1)
+		return;
+	any = FALSE;
+	for (widget_index = 0;
+		widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
+		widget_index++)
+	{
+		if (widget_fullscreen_over_split(widget_globals.active_widgets[widget_index]))
+			any = TRUE;
+	}
+	if (!any)
+		return;
+	saved = global_window_parameters.camera.viewport_bounds;
+	full = rasterizer_globals.reserved04.screen_bounds;
+	rasterizer_port_set_viewport(&full);
+	halo_screen_ui_offset(TRUE);
+	bounds.x0 = 0;
+	bounds.y0 = 0;
+	bounds.x1 = full.x1 - full.x0;
+	bounds.y1 = full.y1 - full.y0;
+	offset.x = 0;
+	offset.y = 0;
+	for (widget_index = 0;
+		widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
+		widget_index++)
+	{
+		struct widget_instance *widget = widget_globals.active_widgets[widget_index];
+
+		if (!widget_fullscreen_over_split(widget))
+			continue;
+		ui_mouse_noting_targets = !ui_mouse_targets_settled &&
+			(widget->local_player_index == NONE || widget->local_player_index == 0);
+		widget_instance_render_recursive(
+			widget,
+			&bounds,
+			offset,
+			TRUE,
+			FALSE);
+		ui_mouse_noting_targets = FALSE;
+	}
+	halo_screen_ui_offset(FALSE);
+	rasterizer_port_set_viewport(&saved);
+	return;
+}
+
 /* ---------- private code */
 
+
+static short spinner_string_list_extra_kind(
+	long string_list_index)
+{
+	if (string_list_index == NONE)
+		return _spinner_extra_none;
+	if (!csstrcmp(tag_get_name(string_list_index), KILLS_TO_WIN_STRINGS))
+		return _spinner_extra_kills_to_win;
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	if (!csstrcmp(tag_get_name(string_list_index), VK_DRIVER_STRINGS))
+		return _spinner_extra_vk_drivers;
+#endif
+	return _spinner_extra_none;
+}
 
 static long spinner_string_list_extra_count(
 	long string_list_index)
 {
-	if (string_list_index != NONE && !csstrcmp(tag_get_name(string_list_index),
-		"ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\playlist_edit\\slayer_edit\\var_kills_to_win"))
+	switch (spinner_string_list_extra_kind(string_list_index))
 	{
+	case _spinner_extra_kills_to_win:
 		return NUMBEROF(kills_to_win_extra_strings);
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	case _spinner_extra_vk_drivers:
+		return vk_driver_list_count();
+#endif
 	}
 	return 0;
 }
@@ -7592,6 +7832,10 @@ static wchar_t *spinner_string_list_get_string(
 	if (string_list && string_index >= string_list->strings.count &&
 		string_index - string_list->strings.count < spinner_string_list_extra_count(string_list_index))
 	{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+		if (spinner_string_list_extra_kind(string_list_index) == _spinner_extra_vk_drivers)
+			return (wchar_t *)vk_driver_list_label((short)(string_index - string_list->strings.count));
+#endif
 		return (wchar_t *)kills_to_win_extra_strings[string_index - string_list->strings.count];
 	}
 	return unicode_string_list_get_string(string_list_index, string_index);
@@ -7604,6 +7848,10 @@ static void widget_instance_render_column_list(
 	point2d offset,
 	boolean focus)
 {
+	/* port: inactive button bars get no input update; refresh their frames
+	when drawn too, so leaving one removes its old selection outline. */
+	if (TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit))
+		column_list_update(widget, definition);
 	if (widget->parameters.list.extended_description)
 	{
 		widget->parameters.list.extended_description->alpha_modifier =
@@ -7669,17 +7917,33 @@ static __inline void spinner_list_update(
 
 /* the definition is passed by January's only call site but is not read; the
 spinner list and the column list keep separate updaters rather than sharing one
-parameterised helper */
+parameterised helper. port: the horizontal bars below read its flags. */
 
 static void column_list_update(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition)
 {
 	struct widget_instance *child;
+	boolean focused = TRUE;
+
+	/* port: horizontal button bars remember their last button, but only
+	the bar on the active focus path draws its selection frame. */
+	if (TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit))
+	{
+		struct widget_instance *ancestor;
+		for (ancestor = widget; ancestor->parent; ancestor = ancestor->parent)
+		{
+			if (ancestor->parent->focused_child != ancestor)
+			{
+				focused = FALSE;
+				break;
+			}
+		}
+	}
 
 	for (child = widget->child; child; child = child->next)
 	{
-		if (child == widget->focused_child)
+		if (focused && child == widget->focused_child)
 		{
 			if (child->animation.number_of_sprite_frames == 2)
 				child->animation.current_frame_index = 1;
@@ -7913,7 +8177,7 @@ static void widget_instance_process_one_event_recursive(
 				{
 					struct ui_widget_event_handler_reference *handler =
 						(struct ui_widget_event_handler_reference *)
-							definition->event_handlers.address + handler_index;
+							TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 
 					if (handler->event_type == _widget_event_back_button)
 					{
@@ -7930,7 +8194,7 @@ static void widget_instance_process_one_event_recursive(
 				{
 					struct ui_widget_event_handler_reference *handler =
 						(struct ui_widget_event_handler_reference *)
-							definition->event_handlers.address + handler_index;
+							TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 
 					if (handler->event_type == _widget_event_b_button)
 					{
@@ -7945,9 +8209,15 @@ static void widget_instance_process_one_event_recursive(
 			}
 			if (!handled_by_event_handler)
 			{
-				widget_instance_go_back_to_previous(widget);
+				/* port: a custom-map folder, or this Map screen's
+				difficulty list, steps back and the screen stays
+				(menu_functions.c) */
+				if (!menu_port_back(widget))
+				{
+					widget_instance_go_back_to_previous(widget);
+					widget_deleted = TRUE;
+				}
 				audio_feedback = _ui_audio_feedback_back;
-				widget_deleted = TRUE;
 				event_handled = TRUE;
 			}
 		}
@@ -7991,8 +8261,12 @@ static void widget_instance_process_one_event_recursive(
 				widget->focused_child &&
 				!widget_deleted)
 			{
+				/* port: a list whose d-pad up and down are its own
+				handlers' (the server browser's sort): the stick alone goes
+				through its rows (port/linux/game/menu_functions.c) */
 				if (event->type == _event_type_button &&
-					event->data.button.value == 1)
+					event->data.button.value == 1 &&
+					!ui_widget_port_dpad_updown_taken(widget))
 				{
 					switch (event->data.button.index)
 					{
@@ -8200,7 +8474,7 @@ static void widget_instance_process_one_event_recursive(
 			if (widget_deleted)
 				break;
 			handler = (struct ui_widget_event_handler_reference *)
-				definition->event_handlers.address + handler_index;
+				TAG_BLOCK_ADDRESS(definition->event_handlers) + handler_index;
 			switch (event->type)
 			{
 			case _event_type_left_stick:
@@ -8431,9 +8705,23 @@ static boolean ui_check_for_pause_game(
 							NONE,
 							NONE))
 					{
-						error(
-							_error_silent,
-							"failed to load multiplayer pause game window");
+						/* port: a custom map often has only the one-player
+						pause screen. Without a fallback the split-screen
+						match has no pause menu, and no way out of it. */
+						if (local_player_count <= 1 ||
+							!ui_widget_load_by_name_or_tag(
+								"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game",
+								NONE,
+								NULL,
+								controller_index,
+								NONE,
+								NONE,
+								NONE))
+						{
+							error(
+								_error_silent,
+								"failed to load multiplayer pause game window");
+						}
 					}
 				}
 				else
@@ -8759,6 +9047,7 @@ void process_ui_widgets(
 					}
 				}
 			}
+			widget_back_left_nothing((short)widget_index);
 		}
 	}
 	if (widgets_processed)

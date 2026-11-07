@@ -189,7 +189,7 @@ static const char shader_helpers[] =
 	"}\n";
 
 char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask)
+	unsigned long packed_attribute_mask, const struct nv2a_vertex_lighting *lighting)
 {
 	struct xgpu_text text = { 0 };
 	unsigned long index;
@@ -221,6 +221,11 @@ char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long 
 		"layout(location = %d) out float xFog;\n",
 		VK_LOCATION_D0, VK_LOCATION_D1, VK_LOCATION_B0, VK_LOCATION_B1,
 		VK_LOCATION_T0, VK_LOCATION_T1, VK_LOCATION_T2, VK_LOCATION_T3, VK_LOCATION_FOG);
+	/* (the pixel shader's model_lighting, nv2a_psh_vk.c; the normal's length in w) */
+	if (lighting)
+		xgpu_text_append(&text, "layout(location = %d) out vec4 xWorldNormal;\n", VK_LOCATION_WORLD_NORMAL);
+	if (lighting && lighting->lights == 2)
+		xgpu_text_append(&text, "layout(location = %d) out vec3 xWorldPosition;\n", VK_LOCATION_WORLD_POSITION);
 	xgpu_text_append(&text, "invariant gl_Position;\n%s", shader_helpers);
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
@@ -268,6 +273,14 @@ char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long 
 		char mask[5];
 
 		xgpu_text_append(&text, "\t/* %lu */\n", index);
+		/* the lighting's normal and position, before the program reuses them */
+		if (lighting && index == lighting->normal_instruction)
+		{
+			xgpu_text_append(&text, "\txWorldNormal = vec4(r%lu.xyz, length(r%lu.xyz));\n",
+				lighting->normal_register, lighting->normal_register);
+		}
+		if (lighting && lighting->lights == 2 && index == lighting->position_instruction)
+			xgpu_text_append(&text, "\txWorldPosition = r%lu.xyz;\n", lighting->position_register);
 		xgpu_text_append(&text, "\tA = "); operand(&text, instruction, 'A', relative); xgpu_text_append(&text, ";\n");
 		xgpu_text_append(&text, "\tB = "); operand(&text, instruction, 'B', relative); xgpu_text_append(&text, ";\n");
 		xgpu_text_append(&text, "\tC = "); operand(&text, instruction, 'C', relative); xgpu_text_append(&text, ";\n");
@@ -394,5 +407,45 @@ char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long 
 		"}\n",
 		XGPU_VERTEX_CONSTANT_BIAS - 38, XGPU_VERTEX_CONSTANT_BIAS - 37
 		);
+	return text.buffer;
+}
+
+/* the fixed-function pipeline's (the loading screen's draws, nv2a_vsh.c's nv2a_fixed_function_glsl): positions already in
+Direct3D's clip space, which the generated shaders' positions are in too (the viewport makes the flip) */
+char *nv2a_vk_fixed_function_glsl(void)
+{
+	struct xgpu_text text = { 0 };
+	unsigned long index;
+
+	xgpu_text_append(&text, "#version 450\n");
+	xgpu_text_append(&text,
+		"layout(location = %d) out vec4 xD0;\n"
+		"layout(location = %d) out vec4 xD1;\n"
+		"layout(location = %d) out vec4 xB0;\n"
+		"layout(location = %d) out vec4 xB1;\n"
+		"layout(location = %d) out vec4 xT0;\n"
+		"layout(location = %d) out vec4 xT1;\n"
+		"layout(location = %d) out vec4 xT2;\n"
+		"layout(location = %d) out vec4 xT3;\n"
+		"layout(location = %d) out float xFog;\n",
+		VK_LOCATION_D0, VK_LOCATION_D1, VK_LOCATION_B0, VK_LOCATION_B1,
+		VK_LOCATION_T0, VK_LOCATION_T1, VK_LOCATION_T2, VK_LOCATION_T3, VK_LOCATION_FOG);
+	xgpu_text_append(&text, "invariant gl_Position;\n");
+	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		xgpu_text_append(&text, "layout(location = %lu) in vec4 v%lu_in;\n", index, index);
+	xgpu_text_append(&text,
+		"void main()\n{\n"
+		"\tgl_Position = v0_in;\n"
+		"\tgl_PointSize = 1.0;\n"
+		"\txD0 = clamp(v3_in, 0.0, 1.0);\n"
+		"\txD1 = clamp(v4_in, 0.0, 1.0);\n"
+		"\txB0 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+		"\txB1 = vec4(0.0, 0.0, 0.0, 1.0);\n"
+		"\txT0 = v9_in;\n"
+		"\txT1 = v10_in;\n"
+		"\txT2 = v11_in;\n"
+		"\txT3 = v12_in;\n"
+		"\txFog = 1.0;\n"
+		"}\n");
 	return text.buffer;
 }

@@ -4,8 +4,15 @@ HOST_VK_VISIBILITY.C
 The Vulkan renderer's host half, phase 6, step 6 (port/android/VULKAN.md): the game's visibility tests (lens flares), as
 occlusion queries. The guest sends VK_COMMAND_VISIBILITY_BEGIN where the game begins a test and VK_COMMAND_VISIBILITY_END (the
 game's slot and the pixels each of the game's pixels covers in the target) where it ends it; the draws between are the test's. A query may
-not span a rendering's end, so a test takes a group of four query slots (reset together at its beginning, outside rendering) and
-each rendering it spans uses one of them (more than four are not counted: said once); the parts are added up.
+not span a rendering's end, so a test takes a group of four query slots and each rendering it spans uses one of them (more than
+four are not counted: said once); the parts are added up.
+
+Each frame slot has half the pool's groups, all reset as its command buffer begins (host_vk_visibility_frame_begin), outside any
+rendering, and a test takes the next of them: a test begins inside the rendering it is in. It used to reset its group as it began,
+which must be outside a rendering: each test ended the screen's rendering and began it again, and on a phone's GPU that is the
+screen stored out of tile memory and loaded back - in a10's cryo bay, a hundred lens flares a frame, 90 of a 95 ms frame on an
+Adreno 840 at 2464x1848 with 4x MSAA. A frame with more tests than its half has leaves the rest untested (their latest counts
+stay), said once.
 
 At the frame's end the results are copied (vkCmdCopyQueryPoolResults, outside rendering, waiting on the queries) into a
 host-visible buffer of the frame's slot; when that frame's fence has next passed, each test's samples are divided by the
@@ -26,6 +33,8 @@ d3d8_gl.c's query buffer path: the latest from this test, or from an earlier one
 #define SLOTS 4096
 #define PARTS 4
 #define GROUPS (SLOTS / PARTS)
+/* each frame slot's groups */
+#define FRAME_GROUPS (GROUPS / HOST_VK_FRAMES)
 
 struct test
 {
@@ -42,7 +51,9 @@ static struct
 	/* the test being made */
 	int active, open;
 	struct test current;
-	uint32_t next_group;
+	/* the groups each frame slot has taken since its command buffer began */
+	uint32_t frame_groups[HOST_VK_FRAMES];
+	unsigned reported_frame_full;
 	/* each frame slot's tests and the buffer their results are copied into */
 	struct test *tests[HOST_VK_FRAMES];
 	unsigned count[HOST_VK_FRAMES], capacity[HOST_VK_FRAMES];
@@ -54,6 +65,9 @@ static struct
 	uint64_t counted[SLOTS];
 	unsigned reported_over;
 } V;
+/* Results cross threads as a pair. This lock never covers command recording,
+image acquisition or presentation, which hold B.lock on the render thread. */
+static pthread_mutex_t visibility_results_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* the query pool and each frame slot's result buffer; B.lock is held. Without them the tests report 0 */
 void host_vk_visibility_start(void)
@@ -105,20 +119,36 @@ void host_vk_visibility_draw(VkCommandBuffer command)
 	V.open = 1;
 }
 
+/* the frame slot's command buffer just begun: its groups reset, outside any rendering */
+void host_vk_visibility_frame_begin(unsigned slot, VkCommandBuffer command)
+{
+	if (!V.ready)
+		return;
+	vkCmdResetQueryPool(command, V.pool, slot * FRAME_GROUPS * PARTS, FRAME_GROUPS * PARTS);
+	V.frame_groups[slot] = 0;
+}
+
 void host_vk_visibility_begin(void)
 {
-	VkCommandBuffer command;
+	unsigned slot;
 
 	if (!V.ready)
 		return;
 	if (V.active)
 		host_vk_visibility_close(host_vk_frame_command());
-	/* the group's queries are reset outside a rendering */
-	host_vk_rendering_end();
-	command = host_vk_frame_command();
+	/* (the frame's command buffer begun, and so its groups reset) */
+	host_vk_frame_command();
+	slot = (unsigned)B.frame;
+	V.active = 0;
+	if (V.frame_groups[slot] >= FRAME_GROUPS)
+	{
+		if (!V.reported_frame_full++)
+			host_logf(HOST_LOG_WARN, "vk: more than %d visibility tests in a frame; the rest keep their latest counts",
+				FRAME_GROUPS);
+		return;
+	}
 	memset(&V.current, 0, sizeof(V.current));
-	V.current.group = V.next_group++ % GROUPS;
-	vkCmdResetQueryPool(command, V.pool, V.current.group * PARTS, PARTS);
+	V.current.group = slot * FRAME_GROUPS + V.frame_groups[slot]++;
 	V.active = 1;
 }
 
@@ -184,6 +214,7 @@ void host_vk_visibility_retired(unsigned slot)
 
 	if (!V.ready)
 		return;
+	pthread_mutex_lock(&visibility_results_lock);
 	for (index = 0; index < V.count[slot]; index++)
 	{
 		const struct test *test = &V.tests[slot][index];
@@ -198,6 +229,7 @@ void host_vk_visibility_retired(unsigned slot)
 		V.counted[test->index] = test->test;
 	}
 	V.count[slot] = 0;
+	pthread_mutex_unlock(&visibility_results_lock);
 }
 
 /* the guest asks (D3DDevice_GetVisibilityTestResult): never waits */
@@ -205,10 +237,10 @@ uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out)
 {
 	uint32_t result;
 
-	pthread_mutex_lock(&B.lock);
+	pthread_mutex_lock(&visibility_results_lock);
 	result = V.latest[index % SLOTS];
 	if (counted_out)
 		*(uint64_t *)(uintptr_t)counted_out = V.counted[index % SLOTS];
-	pthread_mutex_unlock(&B.lock);
+	pthread_mutex_unlock(&visibility_results_lock);
 	return result;
 }

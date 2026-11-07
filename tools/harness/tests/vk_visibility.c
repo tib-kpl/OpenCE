@@ -1,6 +1,8 @@
 /* Vulkan query retirement, using the real host function without a GPU. */
 #include "harness.h"
 #include <stdint.h>
+#include <pthread.h>
+static pthread_mutex_t visibility_results_lock = PTHREAD_MUTEX_INITIALIZER;
 
 #define PARTS 4
 struct test

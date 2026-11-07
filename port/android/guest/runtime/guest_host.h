@@ -3,7 +3,10 @@ GUEST_HOST.H
 
 The host services the guest imports (the guest's view; the host defines
 them in port/android/host). Every name here must also be listed in
-port/android/host_imports.list, which generates the import stubs.
+port/android/host_imports.list, or for the Android app's own (the last two
+sections) in port/android/android_imports.list, or for the Switch's own in
+port/switch/host_imports.list; the lists generate the import stubs, and
+tools/check_host_imports.py checks them against this file.
 
 Parameter types follow the rules in halo_android_abi.h: 32-bit values are
 int or unsigned int, 64-bit values long long, and pointers are passed as
@@ -80,10 +83,11 @@ void host_sdl_scancode_name(int scancode, char *buffer, unsigned int size);
 int host_sdl_scancode_from_name(const char *name);
 int host_sdl_show_toast(const char *message, int duration, int gravity, int x, int y);
 int host_sdl_show_simple_message_box(unsigned int flags, const char *title, const char *message);
-/* SDL_ShowMessageBox of up to three buttons (SDL_MessageBoxData has not the
-guest's layout): the index of the one chosen, else -1 */
-int host_sdl_show_message_box(unsigned int flags, const char *title, const char *message, int default_index,
-	const char *button0, const char *button1, const char *button2);
+/* SDL_ShowMessageBox: the question as guest_sdl.c's struct message_box (the
+host's struct host_message_box), since SDL_MessageBoxData has not the
+guest's layout and a call of seven arguments would put a pointer on the
+stack; 1 and the button chosen in the structure, else 0 */
+int host_sdl_show_message_box(void *box);
 int host_sdl_get_gamepads(unsigned int *ids, int capacity);
 unsigned int host_sdl_open_gamepad(unsigned int id);
 unsigned int host_sdl_gamepad_from_id(unsigned int id);
@@ -91,6 +95,10 @@ int host_sdl_gamepad_axis(unsigned int gamepad, int axis);
 int host_sdl_gamepad_button(unsigned int gamepad, int button);
 int host_sdl_gamepad_type(unsigned int gamepad);
 int host_sdl_rumble_gamepad(unsigned int gamepad, unsigned int low, unsigned int high, unsigned int milliseconds);
+/* the Switch host only (port/switch/host_imports.list): the controller's turn
+since the last call, in radians, into yaw and pitch. Other hosts do not
+provide it. */
+void host_sdl_gamepad_gyro(unsigned int gamepad, float *yaw, float *pitch);
 void host_sdl_close_gamepad(unsigned int gamepad);
 /* callback: void (*)(void *userdata, unsigned int stream, int additional, int total),
 called on the audio thread */
@@ -118,7 +126,7 @@ the GPU to finish the work last fenced for a slot */
 void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
 
-/* ---------- Android */
+/* ---------- Android (android_imports.list) */
 
 /* SoC classification for the immutable rendering policy. */
 int host_android_chip_family(void);
@@ -130,7 +138,35 @@ void host_android_path(int which, char *buffer, unsigned int size);
 in pixels of the current orientation, into insets[4]; all 0 when unknown */
 void host_gesture_insets(int *insets);
 
-/* ---------- the on-screen touch controls (host_touch.c) */
+/* the system's folder picker, after which the app copies the replays in
+folder (a path) to the folder chosen (HaloActivity.exportReplays); returns
+at once, the copy done on the app's own thread */
+void host_android_export_replays(const char *folder);
+
+/* the system's file picker, after which the app copies the replays chosen
+into folder (a path; HaloActivity.importReplays); returns at once, the copy
+done on the app's own thread */
+void host_android_import_replays(const char *folder);
+
+/* the system's file picker, after which the app takes each .zip file chosen
+into a folder of its name in folder (a path: the mods folder;
+HaloActivity.importMods); returns at once, the copy done on the app's own
+thread */
+void host_android_import_mods(const char *folder);
+
+/* the system's file picker, after which the app copies each Vulkan driver
+archive chosen (an adrenotools zip) into folder (a path: freedreno_drivers;
+HaloActivity.importVkDrivers); returns at once, the copy done on the app's
+own thread */
+void host_android_import_vk_drivers(const char *folder);
+
+/* the system's file picker, after which the app copies each Custom Edition
+map chosen, or each in a .zip file chosen, into folder (a path: custom_maps;
+HaloActivity.importMaps); returns at once, the copy done on the app's own
+thread */
+void host_android_import_maps(const char *folder);
+
+/* ---------- the on-screen touch controls (host_touch.c, android_imports.list) */
 
 /* the overlay's controller: the SDL axes (left x, y, right x, y, left
 trigger, right trigger) and the SDL button bits, into state[7] */
@@ -145,16 +181,49 @@ void host_touch_scene(int scene);
 /* the game control on each of the 16 controller buttons (touch_game.c),
 for the overlay's labels */
 void host_touch_bindings(const int *controls);
+/* the game's Gyro Aim for the overlay, which runs the phone's gyroscope: 0
+off, 1 on, 2 only while zoomed in */
+void host_touch_gyro_mode(int mode);
+/* the fingers that tap together to open the overlay menu (3 or 4), the
+overlay's General option */
+int host_touch_menu_fingers(void);
 /* the overlay's devices: 1, a touchscreen; 2, a game controller; 0 until it
 has looked */
 int host_touch_devices(void);
+/* a replay's buttons on the screen, for the overlay to press: count of
+them, each five ints (x0, y0, x1, y1 in ten-thousandths of the screen, and
+the game's controller button it holds down) */
+void host_touch_targets(const int *targets, int count);
 
 /* ---------- the server browser's master servers (host_https.c) */
 
+/* host_https_get's buffers' sizes and its answer, 32-bit members alone (the
+hosts' struct host_https_sizes): a call of nine arguments would put pointers
+on the stack */
+struct host_https_sizes
+{
+	int headers_size;
+	int body_capacity;
+	int error_size;
+	/* the answer: its status, and how much of the body came */
+	int status;
+	int body_size;
+};
 /* a GET of an https:// url (port/linux/src/master_list.c): 1 with the
 status, the headers ("Name: value" lines) and up to body_capacity bytes of
 the body (its size in body_size), else 0 and why in error */
-int host_https_get(const char *url, int *status, char *headers, int headers_size, char *body, int body_capacity,
-	int *body_size, char *error, int error_size);
+int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes);
+
+/* ---------- a replay's records, kept in the host's memory (host_replay.c;
+port/linux/game/network_replay_playback.c) */
+
+/* size bytes at data added to the kept replay's end: 1, or 0 if the host has
+not the memory */
+int host_replay_store_append(unsigned int data, unsigned int size);
+/* up to size bytes of the kept replay from offset copied to destination; how
+many */
+unsigned int host_replay_store_read(unsigned int offset, unsigned int destination, unsigned int size);
+/* the kept replay let go */
+void host_replay_store_free(void);
 
 #endif

@@ -6,8 +6,10 @@ The native ports' settings (port_config.h), parsed with tomlc17
 type, default, the HALO_* environment variable that overrides it and the
 comment written into a new file. The file is read once, on the first
 question; unknown keys and values of the wrong type are reported in the log
-and the defaults used instead, and the file itself is never rewritten once
-it exists, so that the player's edits and comments stay.
+and the defaults used instead. A missing setting is added to an existing
+file, and a section that was opened twice is joined into one (a repeated
+key keeps its earlier line). Anything else is left as it is, so the
+player's edits and comments stay.
 */
 
 #include "platform.h"
@@ -27,6 +29,17 @@ it exists, so that the player's edits and comments stay.
 #include <string.h>
 #ifndef _WIN32
 #include <unistd.h>
+#endif
+#ifdef HALO_SWITCH
+/* the guest's write is not on the card until the host commits it
+(port/switch/host/host_main.c) */
+void host_storage_commit(void);
+#endif
+
+#ifdef HALO_CONFIG_SECTIONS_TEST
+/* platform.h declares this. Repeated so the section check can be compiled
+without that header */
+void platform_log(const char *format, ...);
 #endif
 
 /* ---------- the settings */
@@ -61,10 +74,41 @@ enum
 	_platform_windows = 4,
 	/* (the web build, which has the desktop's settings, and these) */
 	_platform_web = 8,
+	/* (the Linux builds whose game runs as a guest of the Android port's
+	host, port/linux/host, which have the desktop's settings, and the
+	host's own) */
+	_platform_guest = 16,
+#ifdef HALO_PS5
+	/* (the PS5's, port/ps5: a guest build, with the console's own rows and
+	the Vulkan renderer's debugging rows, which its host reads) */
+	_platform_ps5 = 32,
+#endif
 	/* (a dedicated server's, of the Linux and Windows builds: written into
 	config.toml only in server mode) */
-	_platform_server = 16,
+	_platform_server = 64,
 };
+
+/* the Vulkan renderer's debugging rows: Android's, and the PS5's */
+#ifdef HALO_PS5
+#define PLATFORM_VULKAN (_platform_android | _platform_ps5)
+#else
+#define PLATFORM_VULKAN _platform_android
+#endif
+
+/* the rows the hosts read: Android's and the Switch's, and the PS5's */
+#ifdef HALO_PS5
+#define PLATFORM_HOST (_platform_android | _platform_ps5)
+#else
+#define PLATFORM_HOST _platform_android
+#endif
+
+/* the gyroscope's rows: Android's (the phone's, and the Switch's controllers),
+and the PS5's (the DualSense's) */
+#ifdef HALO_PS5
+#define PLATFORM_GYRO _platform_ps5
+#else
+#define PLATFORM_GYRO _platform_android
+#endif
 
 struct config_setting
 {
@@ -87,14 +131,6 @@ Ctrl+D, which moving and crouching would press, from the browser) */
 #define CROUCH_KEYS "\"Left Ctrl, C\""
 #endif
 
-/* display.resolution_scaling's default: on Android the Xbox's 480 lines, which
-a phone's GPU draws with time to spare, elsewhere the window's resolution */
-#ifdef HALO_ANDROID
-#define RESOLUTION_SCALING "\"original\""
-#else
-#define RESOLUTION_SCALING "\"native\""
-#endif
-
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -109,19 +145,26 @@ static const struct config_setting config_settings[] =
 		"What fullscreen and borderless draw at: \"native\", the display's own, or\n"
 		"\"<width>x<height>\" (\"1920x1080\"), 640x480 or more. Fullscreen sets the\n"
 		"display to it; borderless draws it scaled to the display." },
-	{ "display.resolution_scaling", _config_string, RESOLUTION_SCALING, "HALO_RESOLUTION_SCALING", _environment_value,
-		_platform_all,
+	{ "display.resolution_scaling", _config_string, "\"native\"", "HALO_RESOLUTION_SCALING", _environment_value,
+		_platform_desktop,
 		"\"native\" draws at the window's resolution (fullscreen, the display's or\n"
-		"display.resolution; on Android, the display's); \"75%\", \"50%\" or \"25%\"\n"
-		"draw that part of it each way and scale it up; \"original\" draws the\n"
-		"Xbox's 480 lines (640x480; on Android, at the display's shape) and\n"
-		"scales them up, as Android does unless this is set." },
+		"display.resolution); \"original\" draws the Xbox's 640x480 and scales it\n"
+		"up." },
 	{ "display.window_size", _config_string, "\"\"", "HALO_WINDOW_SIZE", _environment_value, _platform_desktop,
 		"The window's size, \"<width>x<height>\" (\"1920x1080\"), 640x480 or more (it\n"
 		"can be resized). Empty: display.window_scale's." },
 	{ "display.window_scale", _config_integer, "2", "HALO_WINDOW_SCALE", _environment_value, _platform_desktop,
 		"Where display.window_size is empty: the window's size as a multiple of\n"
 		"640x480." },
+#ifdef HALO_PS5
+	/* (the Switch's setting, with the PS5's values: port/ps5/host/host_main.c
+	reads it, at the start and when the file changes) */
+	{ "display.resolution_limit", _config_string, "\"2160\"", "HALO_RESOLUTION_LIMIT", _environment_value,
+		_platform_ps5,
+		"The PS5's: the most lines the game draws at, \"2160\" (3840x2160), \"1440\"\n"
+		"(2560x1440) or \"1080\" (1920x1080), no more than the display shows (the\n"
+		"console's video output), which the picture is scaled to. Changes at once." },
+#endif
 	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_android,
 		"Columns of the 480-line picture: 0 for the display's shape, 640 for the\n"
 		"Xbox's 4:3." },
@@ -129,17 +172,17 @@ static const struct config_setting config_settings[] =
 	/* read by the Android host (port/android/host/host_vk_driver.c) */
 	{ "display.vk_driver", _config_string, "\"\"", "HALO_VK_DRIVER", _environment_value, _platform_android,
 		"The Vulkan driver the Vulkan renderer runs on: empty for the phone's own;\n"
-		"\"auto\" for Turnip, the open-source driver, on an Adreno GPU (the app\n"
-		"downloads the build for its series; the phone's own on any other GPU); or the\n"
-		"name of a driver archive (an adrenotools zip) left in the game's folder. One\n"
-		"that does not load is logged and the phone's own is used." },
+		"or the name of a driver archive (an adrenotools zip) in freedreno_drivers\n"
+		"in the game's folder, which Video Setup lists: the Turnip build the app\n"
+		"downloads on an Adreno GPU, and any other put or imported there. One that\n"
+		"does not load is logged and the phone's own is used." },
 	/* read by the Android host before the game starts, to choose the game
 	image built with that renderer (port/android/VULKAN.md) */
 	{ "display.renderer", _config_string, "\"vulkan\"", "HALO_RENDERER", _environment_value, _platform_android,
 		"How the game draws: \"vulkan\" (over display.vk_driver; OpenGL ES if Vulkan\n"
-		"cannot start) or \"gl\" (OpenGL ES over the phone's driver). Takes effect the\n"
-		"next time the game starts. See the Android README, \"Graphics: OpenGL ES and\n"
-		"Vulkan\"." },
+		"cannot start, which sets this to \"gl\") or \"gl\" (OpenGL ES over the\n"
+		"phone's driver). Takes effect the next time the game starts. See the Android\n"
+		"README, \"Graphics: OpenGL ES and Vulkan\"." },
 #endif
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
@@ -171,7 +214,7 @@ static const struct config_setting config_settings[] =
 		"The menus' pointer for the mouse: the game's blue arrow, \"small\",\n"
 		"\"medium\", \"large\" or \"extra_large\" (18, 24, 32 or 40 of the menus'\n"
 		"480 lines tall, at any resolution), or \"off\" for the system's pointer." },
-	{ "display.direct_camera", _config_boolean, "true", "HALO_DIRECT_CAMERA", _environment_value, _platform_desktop,
+	{ "display.direct_camera", _config_boolean, "true", "HALO_DIRECT_CAMERA", _environment_value, _platform_desktop | _platform_android,
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
 		"not up to two ticks (66 ms) later." },
@@ -229,6 +272,37 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
 		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." },
+#ifdef HALO_SWITCH
+	{ "display.big_sprite_limit", _config_integer, "8", "HALO_BIG_SPRITE_LIMIT", _environment_value, _platform_all,
+#else
+	{ "display.big_sprite_limit", _config_integer, "11", "HALO_BIG_SPRITE_LIMIT", _environment_value, _platform_all,
+#endif
+		"The most sprites (particles, mist, smoke) drawn in a frame that each\n"
+		"cover more than half the view; the others are left out. 11 as on the\n"
+		"Xbox; fewer for less overdraw where effects pile up close (the Switch's\n"
+		"8: the falls of the Halo level). Changes at once." },
+	{ "debug.show_resolution", _config_boolean, "false", "HALO_SHOW_RESOLUTION", _environment_value, _platform_all,
+		"Show the frames a second and the resolution the game draws at, in the\n"
+		"bottom right corner (\"(dynamic)\" while display.dynamic_resolution has\n"
+		"dropped a step). Changes at once." },
+	{ "display.shadow_limit", _config_integer, "16", "HALO_SHADOW_LIMIT", _environment_value, _platform_all,
+		"The most objects' shadows drawn at once: the biggest on the screen keep\n"
+		"theirs, and the rest fade out as the crowd moves. 0 for no limit, as on\n"
+		"the Xbox (each shadow redraws the level under it: a crowd of them is\n"
+		"the most of a busy frame). Changes at once." },
+	{ "display.dynamic_light_limit", _config_integer, "8", "HALO_DYNAMIC_LIGHT_LIMIT", _environment_value, _platform_all,
+		"The most dynamic lights (muzzle flashes, plasma, explosions) that light\n"
+		"the level at once: the biggest on the screen keep their light on the\n"
+		"walls and floor, the rest light only the objects near them. 0 for no\n"
+		"limit, as on the Xbox (each redraws the level it reaches twice: a\n"
+		"firefight of many is the most of a busy frame's GPU time). Changes at\n"
+		"once." },
+	{ "display.specular_light_limit", _config_integer, "2", "HALO_SPECULAR_LIGHT_LIMIT", _environment_value, _platform_all,
+		"Of those, the most that add their specular highlights (the shine on\n"
+		"metal and wet floors): the biggest on the screen, the first-person\n"
+		"weapon's first. The others still light the level, without the shine.\n"
+		"0 for no limit, as on the Xbox (a near light's highlights cover most\n"
+		"of the screen: the costliest pass of a firefight). Changes at once." },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
@@ -394,6 +468,18 @@ static const struct config_setting config_settings[] =
 		"The touch controls' swipe aiming gets a controller's aim assist: the\n"
 		"aim slows over a target and follows a moving one. false: none, as a\n"
 		"mouse (the bullets' own autoaim stays)." },
+	{ "input.stick_sensitivity_horizontal", _config_real, "0.0", "HALO_STICK_SENSITIVITY_HORIZONTAL",
+		_environment_value, _platform_all,
+		"Horizontal stick sensitivity, 1 to 10. 0 keeps the saved player's\n"
+		"look sensitivity. Stored per player profile when set in the menus." },
+	{ "input.stick_sensitivity_vertical", _config_real, "0.0", "HALO_STICK_SENSITIVITY_VERTICAL",
+		_environment_value, _platform_all,
+		"Vertical stick sensitivity, 1 to 10. 0 keeps the saved player's\n"
+		"look sensitivity. Halo's stock vertical speed is half its horizontal." },
+	{ "input.stick_equal_axes", _config_boolean, "false", "HALO_STICK_EQUAL_AXES", _environment_value, _platform_all,
+		"Use the same speed scale for both stick axes: true doubles the\n"
+		"stock vertical rate. false keeps Halo's original half-speed pitch.\n"
+		"Mouse, touch swipes, gyroscope and vehicle seat limits are unchanged." },
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"How far the view turns for the mouse's movement." },
 	{ "input.playstation_kernel_driver", _config_boolean, "false", "HALO_PLAYSTATION_KERNEL_DRIVER",
@@ -486,7 +572,11 @@ static const struct config_setting config_settings[] =
 	{ "controls.screenshot", _config_string, "\"F10\"", "HALO_KEY_SCREENSHOT", _environment_value, _platform_all,
 		"Save a PNG screenshot beside maps/ (press once per capture)." },
 	{ "controls.push_to_talk", _config_string, "\"V\"", "HALO_KEY_PUSH_TO_TALK", _environment_value, _platform_all,
-		"Voice chat: talk while it is held (audio.voice_chat \"push_to_talk\")." },
+		"Voice chat: talk while it is held (audio.voice_chat \"push_to_talk\"); in a\n"
+		"game a controller's D-pad Down talks too, as its D-pad Up opens the text\n"
+		"chat. A controller's button may be bound too (\"Gamepad DPad Down\", \"Gamepad LB\";\n"
+		"Settings > Controls Setup takes one pressed), which the game then ignores\n"
+		"(not a replay's playback, whose controls take every button)." },
 	{ "controls.chat", _config_string, "\"T\"", "HALO_KEY_CHAT", _environment_value, _platform_all,
 		"Network games' text chat: type a line to everyone (Enter sends it,\n"
 		"Escape lets it go)." },
@@ -498,6 +588,37 @@ static const struct config_setting config_settings[] =
 	{ "controls.vote_no", _config_string, "\"F2\"", "HALO_KEY_VOTE_NO", _environment_value, _platform_all,
 		"Network games' votes: vote no in the vote running." },
 
+#if defined(HALO_SWITCH) || defined(HALO_PS5)
+	/* (the link page: port/linux/src/link_page.c) */
+	{ "network.link_page", _config_boolean, "true", "HALO_LINK_PAGE", _environment_value, _platform_all,
+		"While Join Game > Direct Link is open, serve a page on the local network\n"
+		"(its QR code and address are on that page) where a phone or a computer\n"
+		"pastes an invite link for the console to join; nothing is served\n"
+		"otherwise. false: none." },
+#endif
+	{ "game.overlay_menu", _config_boolean, "true", "HALO_OVERLAY_MENU", _environment_value, _platform_all,
+		"Holding L and R and pressing the d-pad's down opens the game's overlay\n"
+		"menu, and closes it: cheats, the game's speed, the HUD, the camera and\n"
+		"the renderer's switches, in a panel at the left of the screen (on\n"
+		"Android also three or four fingers on the screen together). While it is open\n"
+		"the game gets no input; it is not paused.\n"
+		"false: the buttons do not open it." },
+#if defined(HALO_SWITCH) || defined(HALO_PS5)
+	{ "display.xbox_buttons", _config_boolean, "false", "HALO_XBOX_BUTTONS", _environment_value, _platform_all,
+		"Draw the controller's buttons as the Xbox's (the green A, the red B...)\n"
+		"in the menus, the game's prompts and the text, instead of this\n"
+		"console's own. Changes at the next map (or the next start)." },
+#endif
+#ifdef HALO_SWITCH
+	{ "controls.nintendo_menu_buttons", _config_boolean, "true", "HALO_NINTENDO_MENU_BUTTONS", _environment_value,
+		_platform_all,
+		"The menus' buttons as the Switch's own menus have them: the button\n"
+		"marked A (on the right) chooses and the one marked B (at the bottom)\n"
+		"goes back. false: as on an Xbox controller, the bottom button chooses\n"
+		"and the right one goes back. A game's controls are the same either\n"
+		"way. The buttons change at once; the menus' button pictures at the\n"
+		"next map (or the next start)." },
+#endif
 	{ "game.console_log", _config_string, "\"none\"", "HALO_CONSOLE_LOG", _environment_value, _platform_all,
 		"What the game's console shows on screen of what it logs: \"important\"\n"
 		"(bans, players dropped for cheating, what refuses a command, and the\n"
@@ -523,6 +644,28 @@ static const struct config_setting config_settings[] =
 		"false: the original animations, which freeze the legs and stand a\n"
 		"rider up (the turning, which moves where shots go, stays on in a\n"
 		"network game for every player)." },
+	{ "game.ragdoll", _config_string, "\"none\"", "HALO_RAGDOLL", _environment_value, _platform_all,
+		"The older ragdoll setting. When game.ragdoll_players or game.ragdoll_ai\n"
+		"is not in this file, that one takes this (\"woody\", \"halo2\" or \"none\").\n"
+		"A new file has \"none\", so both stay off. Once each has its own line,\n"
+		"this is not read." },
+	{ "game.ragdoll_players", _config_string, "\"none\"", "HALO_RAGDOLL_PLAYERS", _environment_value, _platform_all,
+		"How a player's body falls, in a campaign or a multiplayer game:\n"
+		"\"none\" (the original death animations), \"woody\" (a ragdoll of light,\n"
+		"freely swinging limbs) or \"halo2\" (a ragdoll as Halo 2's: a heavy\n"
+		"torso, limbs that keep out of it, joints that drag, thrown further by\n"
+		"blasts). Settings > Gameplay, or here. A cinematic keeps its own. On a\n"
+		"client, and in a game of one machine, the ragdoll moves the body; the\n"
+		"host of a network game leaves its bodies as the stock game moves them\n"
+		"and only draws them as their ragdolls lie. Each machine draws its own." },
+	{ "game.ragdoll_ai", _config_string, "\"none\"", "HALO_RAGDOLL_AI", _environment_value, _platform_all,
+		"How an AI's body falls, the same choices as game.ragdoll_players.\n"
+		"Settings > Gameplay, or here. A cinematic keeps its own." },
+	{ "game.terminal_output", _config_string, "\"menus\"", "HALO_TERMINAL_OUTPUT", _environment_value, _platform_all,
+		"The game's messages at the bottom left of the screen (\"Shaders\n"
+		"preloaded.\", what the console's commands print): \"none\", \"menus\" (in\n"
+		"the main menu, not in a campaign or multiplayer game) or \"always\".\n"
+		"While the console is open they are shown. Settings > Gameplay, or here." },
 	{ "game.custom_edition", _config_boolean, "true", "HALO_CUSTOM_EDITION", _environment_value, _platform_all,
 		"Load and run Halo Custom Edition maps (not those that need OpenSauce):\n"
 		"put them and Custom Edition's bitmaps.map, sounds.map and loc.map in\n"
@@ -531,9 +674,12 @@ static const struct config_setting config_settings[] =
 		"as the game's own maps' are before they run; false refuses them\n"
 		"(docs/custom_edition_caches.md)." },
 	{ "bots.count", _config_integer, "0", "HALO_BOTS", _environment_value, _platform_all,
-		"Computer players (bots) in a local (split screen) Slayer game: 0 to 15\n"
-		"join its lobby with the players, as far as the game has room. Not in\n"
-		"system link or internet games. 0: none, as in the stock game." },
+		"Computer players (bots) in a Slayer, Capture the Flag or King of the Hill\n"
+		"game hosted here, local (split screen), system link or a private\n"
+		"internet one (not a public one, which the server browser lists): 0 to\n"
+		"63 join its lobby with the players, as far as the game has room. In a\n"
+		"game, the console's add_bot and drop_bot (add_bot_red, drop_bot_blue...)\n"
+		"add or take one. 0: none, as in the stock game." },
 	{ "bots.skill", _config_string, "\"normal\"", "HALO_BOT_SKILL", _environment_value, _platform_all,
 		"How well the bots play: \"recruit\", \"easy\", \"normal\", \"heroic\",\n"
 		"\"veteran\" or \"legendary\" (how soon they react, how well they aim,\n"
@@ -541,6 +687,15 @@ static const struct config_setting config_settings[] =
 	{ "bots.teams", _config_string, "\"even\"", "HALO_BOT_TEAMS", _environment_value, _platform_all,
 		"In team games: \"even\" puts the bots on both teams, evening them with\n"
 		"the players; \"against\" puts them all on the team the players are not on." },
+	{ "bots.vehicles", _config_integer, "1", "HALO_BOT_VEHICLES", _environment_value, _platform_all,
+		"1: the bots drive and ride the map's vehicles (Warthogs, Ghosts and\n"
+		"Scorpions) to goals a long way off, and man its turrets; 0: they stay\n"
+		"on foot." },
+	{ "bots.routes", _config_string, "\"direct\"", "HALO_BOT_ROUTES", _environment_value, _platform_all,
+		"The ways the bots go to their goals (port/linux/game/bots_routes.c):\n"
+		"\"direct\" (everyone the shortest way, down the middle into one fight),\n"
+		"\"lanes\" (the attackers spread over the map's side lanes, flanking) or\n"
+		"\"mixed\" (most direct, a few on the side lanes)." },
 	{ "display.viewmodel_shield", _config_boolean, "false", "HALO_VIEWMODEL_SHIELD", _environment_value, _platform_all,
 		"The energy shield's flare on the first-person arms too, as on the body\n"
 		"(the stock game draws it on the body only)." },
@@ -584,6 +739,16 @@ static const struct config_setting config_settings[] =
 		"every map. A downloaded map's scripts may not change the player's\n"
 		"settings or other players' games (debug.txt names what they were\n"
 		"refused)." },
+
+	{ "game.maps.path", _config_string, "\"\"", "HALO_MAPS_PATH", _environment_value, _platform_all,
+		"The folder the game's maps are read from; empty for the maps folder in\n"
+		"the data folder. A relative path is under the data folder. Read once,\n"
+		"at the start. The disc's maps are only ever unpacked into the data\n"
+		"folder's maps, so a folder named here must hold them already." },
+	{ "game.custom_maps.path", _config_string, "\"\"", "HALO_CUSTOM_MAPS_PATH", _environment_value, _platform_all,
+		"The folder Custom Edition maps are read from (and map sharing's\n"
+		"downloads go to); empty for the custom_maps folder in the data folder.\n"
+		"A relative path is under the data folder. Read once, at the start." },
 
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
@@ -629,6 +794,28 @@ static const struct config_setting config_settings[] =
 		"drops it (5 to 300; the stock game's 15). Longer keeps players whose\n"
 		"connection stalls (a browser tab in the background) at the cost of\n"
 		"frozen players for longer when one really goes." },
+	{ "network.record_replays", _config_boolean, "false", "HALO_NET_RECORD_REPLAYS", _environment_value,
+		_platform_all,
+		"Each network game is recorded to the data folder's replays/, which\n"
+		"the main menu's Theater plays (port/linux/REPLAY.md): a host's, all of\n"
+		"it (what a client that sees everything is sent); a client's, what its\n"
+		"host sends it (far players less often) and its own input. Read at a\n"
+		"game's start; the overlay's System folder has it too." },
+	{ "network.replay_hints", _config_boolean, "true", "HALO_NET_REPLAY_HINTS", _environment_value,
+		_platform_all,
+		"Watching a replay with a controller: the bars of the buttons and of the\n"
+		"camera's controls over the seek bar. The replay's pause menu turns them\n"
+		"on and off (the north button: Y, the Switch's X, the PS5's triangle)." },
+	{ "network.full_detail_to_clients", _config_boolean, "false", "HALO_NET_FULL_DETAIL_TO_CLIENTS",
+		_environment_value, _platform_all,
+		"Hosting: send every client every player every tick (not those far\n"
+		"from its own, or out of their sight, less often) and every damage\n"
+		"event (not only those near its players), so that a client's replay\n"
+		"holds all of the game. More to send: a client's download grows with\n"
+		"the players. Read each tick." },
+	{ "network.replays_kept", _config_integer, "30", "HALO_NET_REPLAYS_KEPT", _environment_value, _platform_all,
+		"How many replays the replays/ folder keeps: the oldest are deleted as a\n"
+		"recording starts; 0 keeps them all." },
 	{ "network.allow_upnp", _config_boolean, "true", "HALO_NET_ALLOW_UPNP", _environment_value, _platform_all,
 		"Let internet play ask the router (UPnP) to forward its port, for\n"
 		"networks whose NAT stops connections: when a player joins this\n"
@@ -815,7 +1002,7 @@ static const struct config_setting config_settings[] =
 	{ "network.browser_source", _config_string, "\"all\"", "HALO_NET_BROWSER_SOURCE", _environment_value,
 		_platform_all,
 		"The server browser's games: \"all\" (ALL GAMES: the dedicated\n"
-		"servers first, then the games players host), \"dedicated\" (the\n"
+		"servers and the games players host), \"dedicated\" (the\n"
 		"master servers' dedicated servers) or \"players\" (P2P GAMES: games\n"
 		"players host). Its top-left tab changes it." },
 	{ "network.browser_show_empty", _config_boolean, "true", "HALO_NET_BROWSER_SHOW_EMPTY", _environment_value,
@@ -831,12 +1018,12 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The server browser lists games of one kind only: \"any\", \"ctf\",\n"
 		"\"slayer\", \"oddball\", \"king\" or \"race\" (its Filters screen)." },
-	{ "network.browser_sort", _config_string, "\"servers\"", "HALO_NET_BROWSER_SORT", _environment_value,
+	{ "network.browser_sort", _config_string, "\"players\"", "HALO_NET_BROWSER_SORT", _environment_value,
 		_platform_all,
-		"The server browser's order: \"servers\" (dedicated servers first, then by\n"
-		"players), \"players\", \"name\", \"map\", \"type\" or \"locked\" (a password's\n"
-		"first); \"-\" before one reverses it (\"-players\"). A column title sorts by\n"
-		"it, and again the other way." },
+		"The server browser's order: \"players\" (the most players first),\n"
+		"\"servers\" (dedicated servers first, then by players), \"name\", \"map\",\n"
+		"\"type\" or \"locked\" (a password's first); \"-\" before one reverses it\n"
+		"(\"-players\"). A column title sorts by it, and again the other way." },
 	{ "network.stun_servers", _config_string, "\"stun.l.google.com:19302,stun.cloudflare.com:3478\"",
 		"HALO_NET_STUN", _environment_value, _platform_all,
 		"Public STUN servers that tell this machine its internet address;\n"
@@ -1108,6 +1295,49 @@ static const struct config_setting config_settings[] =
 		"Sentry project (port/windows/src/win32_crash.c): \"yes\" sends them, \"no\"\n"
 		"never does, \"ask\" asks at the next crash and writes the answer here." },
 
+#ifdef HALO_SWITCH
+	{ "display.particle_limit", _config_integer, "2048", "HALO_PARTICLE_LIMIT", _environment_value, _platform_all,
+#else
+	{ "display.particle_limit", _config_integer, "4096", "HALO_PARTICLE_LIMIT", _environment_value, _platform_all,
+#endif
+		"The most particles (sparks, smoke, casings, debris) alive at once; past\n"
+		"it the oldest goes to make room for each new one. The Xbox's limit was\n"
+		"1024. 0 for the port's own 8192 (a 64-player firefight fills them, and\n"
+		"every one costs the processor and the GPU: 2048 on the Switch, 4096\n"
+		"elsewhere). Changes at once." },
+	{ "debug.original_particles", _config_boolean, "false", "HALO_ORIGINAL_PARTICLES", _environment_value, _platform_all,
+		"Move the particles that are not attached to an object (sparks, casings,\n"
+		"debris) at every frame drawn, as before, rather than once a 30 Hz tick\n"
+		"as on the Xbox and drawn between their ticks (which spares the CPU two\n"
+		"in three of their collision tests at 60 frames a second, more at 120).\n"
+		"Takes effect at the next map." },
+	{ "debug.benchmark", _config_string, "\"\"", "HALO_BENCHMARK", _environment_value, _platform_all,
+		"A benchmark run, the same each time (port/linux/game/benchmark.c):\n"
+		"\"standard\" plays a10, a30, b30, c10 and c40 30 seconds each and Blood\n"
+		"Gulch, Damnation, Sidewinder and Chill Out 15 seconds each with 63\n"
+		"bots, the view turning, and\n"
+		"writes the frame rates to benchmark.txt (in the data folder, or the\n"
+		"run's profile folder: debug.profile_run); or a list of map:seconds\n"
+		"(\"a30:30,bloodgulch:15\"). Empty: none, the game as it is." },
+	{ "debug.benchmark_bots", _config_integer, "63", "HALO_BENCHMARK_BOTS", _environment_value, _platform_all,
+		"The computer players in the benchmark's multiplayer games: 63, with the\n"
+		"player 64 in all; 0 to 63." },
+	{ "debug.benchmark_manual", _config_boolean, "false", "HALO_BENCHMARK_MANUAL", _environment_set_is_true,
+		_platform_all,
+		"The benchmark leaves the player's view to the player rather than turning\n"
+		"it, to measure the game as it is played (the player still cannot be hurt)." },
+	{ "debug.benchmark_quit", _config_boolean, "true", "HALO_BENCHMARK_QUIT", _environment_value, _platform_all,
+		"Quit the game once the benchmark is done; false goes back to the main\n"
+		"menu." },
+	{ "debug.core_dump_tick", _config_integer, "0", "HALO_CORE_DUMP_TICK", _environment_value, _platform_all,
+		"A core of the first level played (d:\\core\\game_state_<address>.bin,\n"
+		"named for where the game state is) written at this game tick, for\n"
+		"comparing saved games across runs; 0 for none." },
+	{ "debug.core_load", _config_string, "\"\"", "HALO_CORE_LOAD", _environment_value, _platform_all,
+		"A core (a file in d:\\core, as debug.core_dump_tick writes) loaded into\n"
+		"the first level played at debug.core_dump_tick, in place of writing\n"
+		"one: a core of a run whose window lay elsewhere, for trying saved games\n"
+		"across windows; empty for none." },
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
 		"\"host:<map>\" hosts a game on that map, \"local:<map>\" plays a local (split\n"
@@ -1200,17 +1430,6 @@ static const struct config_setting config_settings[] =
 		"up and down; \"menu:<buttons>\" presses menu buttons one a second (a,\n"
 		"b, x, y, up, down, left, right, start, back or wait, separated by\n"
 		"spaces or commas), for testing the menus; empty for none." },
-	{ "debug.virtual_gamepads", _config_integer, "0", "HALO_VIRTUAL_GAMEPADS", _environment_value, _platform_desktop,
-		"Attach this many SDL virtual gamepads (0 to 4), which the game takes for\n"
-		"gamepads plugged in, for testing split screen; debug.virtual_gamepad_script\n"
-		"drives them." },
-	{ "debug.virtual_gamepad_script", _config_string, "\"\"", "HALO_VIRTUAL_GAMEPAD_SCRIPT", _environment_value,
-		_platform_desktop,
-		"What debug.virtual_gamepads press: \"<seconds> <pad> <what>; ...\", the\n"
-		"seconds from when the network lobby first opens, the pad 1 to 4 (0: the\n"
-		"keyboard, a SPACE and start Enter), and a button (a, b, x, y, start, back,\n"
-		"up, down, left, right, lb, rb, lt, rt: pressed for 150 ms),\n"
-		"\"walk\" (the sticks move from then on) or \"still\"." },
 	{ "debug.bot_trace", _config_integer, "0", "HALO_BOT_TRACE", _environment_value, _platform_all,
 		"Log each bot's state (bots.count) every this many seconds: where it is\n"
 		"and goes, its path, target and weapon; 0 never." },
@@ -1240,7 +1459,8 @@ static const struct config_setting config_settings[] =
 		"Flush the GPU's pipeline every this many draws: -1 for every 3 on Intel\n"
 		"graphics with Mesa's driver (which can hang without), 0 never." },
 	{ "debug.gpu_stats", _config_boolean, "false", "HALO_GPU_STATS", _environment_set_is_true, _platform_all,
-		"Log the renderer's draw counts once a second." },
+		"Log the renderer's draw counts once a second (otherwise, on Android's Vulkan,\n"
+		"only a second whose draws were skipped)." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,
@@ -1261,46 +1481,31 @@ static const struct config_setting config_settings[] =
 		"Save every this many frames to screenshot_directory; 0 none." },
 	{ "debug.texture_dump_directory", _config_string, "\"\"", "HALO_TEXTURE_DUMP", _environment_value, _platform_all,
 		"A folder to write every texture to as it is uploaded; empty none." },
+	{ "debug.log_files", _config_boolean, "true", "HALO_LOG_FILES", _environment_value, _platform_all,
+		"Write the game's log to debug.txt, beside the data. false writes none,\n"
+		"which spares the storage a write for each line; nothing is kept to say\n"
+		"what went wrong. Changes at once." },
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (read by the host before the game starts: port/android/host/host_main.c,
+	port/switch/host/host_main.c, port/ps5/host/host_main.c) */
+	{ "debug.halo_log", _config_boolean, "true", "HALO_HALO_LOG", _environment_value, PLATFORM_HOST,
+		"Write the program's log to halo.log too, begun again each start: beside\n"
+		"the data on Android (logcat's lines of tag \"halo\"), beside the program\n"
+		"on the Switch (nxlink's), in /data/halo on the PS5 (the kernel log's).\n"
+		"false writes none. Takes effect the next start." },
+#endif
 	{ "debug.texture_log", _config_boolean, "false", "HALO_TEXTURE_LOG", _environment_set_is_true, _platform_all,
 		"Log texture uploads." },
 	{ "debug.texture_no_cache", _config_boolean, "false", "HALO_TEXTURE_NO_CACHE", _environment_set_is_true, _platform_all,
 		"Upload textures again every time they are used." },
-	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android,
+	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android | _platform_guest,
 		"Log where every game thread is this often, in seconds (read by the\n"
-		"app, port/android/host/host_debug.c); 0 never." },
-#ifdef HALO_SWITCH
-	{ "debug.profiler", _config_boolean, "false", "HALO_PROFILER", _environment_set_is_true, _platform_android,
-		"Profile the game: sample where its threads are (debug.profile_hz times a\n"
-		"second) and write the counts to the profile folder every 20 s, for\n"
-		"tools/switch_profile.py. Takes effect the next start." },
-	{ "debug.profile_hz", _config_integer, "500", "HALO_PROFILE_HZ", _environment_value, _platform_android,
-		"The profiler's samples a second, when debug.profiler is true." },
-#endif
-#ifndef HALO_SWITCH
-	{ "debug.vk_present_marker", _config_boolean, "false", "HALO_VK_PRESENT_MARKER", _environment_set_is_true, _platform_android,
-		"Under the Vulkan renderer, draw a red square at the top left and a green one\n"
-		"at the top right of the picture, so that a screenshot shows which way up it is." },
-	{ "debug.vk_self_test", _config_boolean, "false", "HALO_VK_SELF_TEST", _environment_set_is_true, _platform_android,
-		"Under the Vulkan renderer, try the renderer's clears and the copying of a\n"
-		"draw's data on small targets of its own at start-up; the log says ok or FAILED." },
-	/* the Android app's Vulkan probe and profiler (port/android/host); the Switch's
-	profiler has its own debug.profile_hz above */
-	{ "debug.vk_probe", _config_string, "\"\"", "HALO_VK_PROBE", _environment_value, _platform_android,
-		"Run the Vulkan probe (port/android/host/host_vk_probe.c) instead of the\n"
-		"game: \"all\", or a list of caps, memory, compile, pipelines, draw, present;\n"
-		"empty runs the game. It writes vk_probe.txt." },
-	{ "debug.vk_validation", _config_boolean, "false", "HALO_VK_VALIDATION", _environment_set_is_true, _platform_android,
-		"Turn on Vulkan's validation layer in the probe and in the Vulkan renderer,\n"
-		"when the app carries it." },
-	{ "debug.profile_hz", _config_integer, "0", "HALO_PROFILE_HZ", _environment_value, _platform_android,
-		"Sample every game thread this many times a second into profile.bin\n"
-		"(port/android/host/host_debug.c); 0 off." },
-#endif
-	{ "debug.memory_watch", _config_boolean, "true", NULL, _environment_value, _platform_android,
+		"host, port/android/host/host_debug.c); 0 never." },
+	{ "debug.memory_watch", _config_boolean, "true", "HALO_MEMORY_WATCH", _environment_value, _platform_android | _platform_guest,
 		"Notice the game's writes to cached textures and vertices by page\n"
 		"protection; false compares page contents once a frame instead, which is\n"
 		"slower. Under ARM translation (the x86 emulator) the app always compares\n"
-		"contents. Read by the app from the file (port/android/host/host_main.c)." },
+		"contents. Read by the host from the file (port/android/host/host_common.c)." },
 #ifdef HALO_PROFILE
 	{ "debug.profile_record", _config_boolean, "false", "HALO_PROFILE_RECORD", _environment_value, _platform_all,
 		"Record a profile with no command (configure.py --profile builds): from\n"
@@ -1316,6 +1521,235 @@ static const struct config_setting config_settings[] =
 		"Megabytes a recording keeps in memory, 4 to 1024: two halves, each\n"
 		"written out as a part when it fills." },
 #endif
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (the phone's gyroscope on Android, the controller's on the Switch and
+	the PS5) */
+	{ "input.gyro_aim", _config_string, "\"false\"", "HALO_GYRO_AIM", _environment_value, PLATFORM_GYRO,
+#ifdef HALO_PS5
+		"Aim with the DualSense's gyroscope, each local player with their own.\n"
+#else
+		"Aim with the gyroscope: the phone's on Android; on the Switch the\n"
+		"controller's, each local player from their own (a Pro Controller, the\n"
+		"console held in the hands, or one Joy-Con; of two, the right one).\n"
+#endif
+		"\"false\" is the stick only, \"true\" adds the turn to the view, \"zoom\" adds\n"
+		"it only while the player is zoomed in, for fine aiming." },
+	{ "input.gyro_sensitivity_horizontal", _config_real, "1.0", "HALO_GYRO_SENSITIVITY_HORIZONTAL",
+		_environment_value, PLATFORM_GYRO,
+		"How far the view turns left and right for the gyroscope, when\n"
+		"input.gyro_aim is true. 1 is the sensor's own turn. 0.25 to 10." },
+	{ "input.gyro_sensitivity_vertical", _config_real, "1.0", "HALO_GYRO_SENSITIVITY_VERTICAL",
+		_environment_value, PLATFORM_GYRO,
+		"How far the view turns up and down for the gyroscope, when\n"
+		"input.gyro_aim is true. 1 is the sensor's own turn. 0.25 to 10." },
+	{ "input.gyro_invert_horizontal", _config_boolean, "false", "HALO_GYRO_INVERT_HORIZONTAL",
+		_environment_value, PLATFORM_GYRO,
+		"Invert the gyroscope's yaw. false: turning the phone or controller right\n"
+		"looks right. true: turning it right looks left. The stick's invert is its own." },
+	{ "input.gyro_invert_vertical", _config_boolean, "false", "HALO_GYRO_INVERT_VERTICAL",
+		_environment_value, PLATFORM_GYRO,
+		"Invert the gyroscope's pitch. false: tilting the phone or controller up\n"
+		"looks up. true: tilting it up looks down. The stick's invert is its own." },
+#endif
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	/* (the phone's: sdl_platform.c's platform_resolution_scale. The screen's
+	own by default) */
+	{ "display.resolution_limit", _config_string, "\"native\"", "HALO_RESOLUTION_LIMIT", _environment_value,
+		_platform_android,
+		"The most lines the game draws at, no more than the screen has: \"native\"\n"
+		"(the screen's own), \"2160\", \"1440\", \"1080\", \"720\" or \"480\" (the game's\n"
+		"own), in the screen's shape. More lines are sharper and work the GPU\n"
+		"harder. Changes at once." },
+	{ "debug.original_sun_glow", _config_boolean, "false", "HALO_ORIGINAL_SUN_GLOW", _environment_value, _platform_android,
+		"Make the sun's glow from a copy of the screen in the middle of each frame,\n"
+		"as the game does, rather than at the frame's end for the next frame\n"
+		"(which spares the GPU storing the screen and loading it back; the\n"
+		"glow follows what is in front of the sun a frame later). Takes effect\n"
+		"the next start." },
+	{ "debug.original_water", _config_boolean, "false", "HALO_ORIGINAL_WATER", _environment_value, _platform_android,
+		"Make the water's ripples in the middle of each frame, as the game does,\n"
+		"rather than at the frame's end for the next frame (which spares the\n"
+		"GPU storing the screen and loading it back; the ripples move a frame\n"
+		"later). Takes effect the next start." },
+	{ "debug.original_multisample", _config_boolean, "false", "HALO_ORIGINAL_MULTISAMPLE", _environment_value, _platform_android,
+		"Under Vulkan with display.anti_aliasing's multisampling: draw the colour\n"
+		"into images of the samples beside the screen's, resolved as each\n"
+		"rendering ends, rather than keeping its samples in the GPU's tile memory\n"
+		"only (where the phone's driver can,\n"
+		"VK_EXT_multisampled_render_to_single_sampled), which spares storing and\n"
+		"loading them at every break of the frame. Takes effect the next start." },
+	{ "debug.gpu_split_parts", _config_boolean, "false", "HALO_GPU_SPLIT_PARTS", _environment_value, _platform_android,
+		"With debug.profile_run under Vulkan: end the GPU's rendering at each part\n"
+		"of the frame the game names (the sky, the objects, the particles...), so\n"
+		"that gpu.txt times each part on its own. The stores and loads it adds\n"
+		"make every frame slower: for ranking the parts, in a run of its own.\n"
+		"Takes effect the next start." },
+	{ "debug.profile_run", _config_boolean, "false", "HALO_PROFILE_RUN", _environment_set_is_true, _platform_android,
+		"Profile each run, to send to the developers: a folder of its own in the\n"
+		"phone's Download/halo_profiles (named for the day and time it started:\n"
+		"DDMMYYYY_HHMMSS) gets where the game's threads spend their time\n"
+		"(profile.bin, sampled debug.profile_hz times a second, 500 if that is\n"
+		"0), the GPU's time by part of the frame (gpu.txt, under Vulkan), the\n"
+		"log and the phone's details (run.txt). Android 9 and 10 ask for storage\n"
+		"once. Costs a little speed. Takes effect the next start." },
+#endif
+#if (defined(HALO_ANDROID) || defined(HALO_PS5)) && !defined(HALO_SWITCH)
+	/* the Vulkan renderer's (port/android/guest/d3d8_vk.c), Android's and the PS5's: the GPU's savings the Switch's
+	renderer made first, which the Switch's own rows below name for it. Declared only there, these were not settings
+	here, and the draw scissor, false when a setting is not one, was off */
+	{ "debug.gpu_draw_scissor", _config_boolean, "true", "HALO_GPU_DRAW_SCISSOR", _environment_value,
+		PLATFORM_VULKAN,
+		"Rasterize an object's shadow and a dynamic light's pass only inside the\n"
+		"rectangle of the screen they can change; false rasterizes their whole\n"
+		"triangles, to compare. Takes effect the next start." },
+	{ "debug.gpu_texture_clip", _config_string, "\"on\"", "HALO_GPU_TEXTURE_CLIP", _environment_value,
+		PLATFORM_VULKAN,
+		"Shadows cast on the level drawn only over their map: \"on\", \"off\", or\n"
+		"\"wide\" (clipped by limits nothing reaches, to tell the clip's own effect).\n"
+		"Takes effect the next start." },
+	{ "debug.original_zoom", _config_boolean, "false", "HALO_ORIGINAL_ZOOM", _environment_value,
+		PLATFORM_VULKAN,
+		"Draw the zoom's blur as the game does, in passes over the whole screen,\n"
+		"rather than on a small copy blended over it once. Takes effect the next\n"
+		"start." },
+	{ "debug.original_blur", _config_boolean, "false", "HALO_ORIGINAL_BLUR", _environment_value,
+		PLATFORM_VULKAN,
+		"Draw a blur screen effect (the cryo bay's waking up, cutscenes) as the\n"
+		"game does, in passes over the whole screen, rather than its passes on\n"
+		"smaller copies of it. Takes effect the next start." },
+#endif
+#ifdef HALO_SWITCH
+	/* (720 by default: a handheld console's own lines, 1280x720) */
+	{ "display.resolution_limit", _config_string, "\"720\"", "HALO_RESOLUTION_LIMIT", _environment_value,
+		_platform_android,
+		"The lines the game draws at: \"480\" (the game's own), \"720\", \"900\" or\n"
+		"\"1080\" (or any number between), no more than the console shows (1280x720\n"
+		"in handheld, 1920x1080 docked), which the picture is scaled up to. Changes\n"
+		"at once." },
+	{ "display.dynamic_resolution", _config_boolean, "false", "HALO_DYNAMIC_RESOLUTION", _environment_value,
+		_platform_android,
+		"While the GPU would hold the game under 55 frames a second (for half a\n"
+		"second), draw one step lower (1080 to 900, 900 to 720, 720 to 480: never\n"
+		"more), and go back once the frame would fit in 90% of a 60 Hz frame for\n"
+		"a second. Video Setup, or here. debug.show_resolution shows it. Changes\n"
+		"at once." },
+	{ "debug.resolution_uncapped", _config_boolean, "false", "HALO_RESOLUTION_UNCAPPED", _environment_value,
+		_platform_android,
+		"Draw at display.resolution_limit's lines even past what the console\n"
+		"shows, scaled down to it: a Switch Lite (720p) drawing 1080p, to test\n"
+		"a docked console's GPU load. Changes at once." },
+	{ "performance.cpu_clock", _config_string, "\"1785\"", "HALO_CPU_CLOCK", _environment_value, _platform_android,
+		"The CPU's clock: \"1785\" (1.7 GHz, the most Nintendo's own games use),\n"
+		"\"1020\" (1 GHz, the console's handheld rate: cooler, and the battery\n"
+		"lasts longer) or \"stock\" (left as the console has it). Changes at once." },
+	{ "debug.profiler", _config_boolean, "false", "HALO_PROFILER", _environment_set_is_true, _platform_android,
+		"Profile the game: sample where its threads are (debug.profile_hz times a\n"
+		"second) and write the counts to the profile folder every 20 s, for\n"
+		"tools/switch_profile.py. Takes effect the next start." },
+	{ "debug.profile_hz", _config_integer, "500", "HALO_PROFILE_HZ", _environment_value, _platform_android,
+		"The profiler's samples a second, when debug.profiler is true." },
+	{ "debug.mic_probe", _config_boolean, "false", "HALO_MIC_PROBE", _environment_set_is_true, _platform_android,
+		"For two minutes from the start, log what the console's microphone input\n"
+		"hears (port/switch/host/host_mic_probe.c): its inputs, the format it gives\n"
+		"and the sound's level each second. Takes effect the next start." },
+	{ "debug.texture_verify_compressed", _config_boolean, "false", "HALO_TEXTURE_VERIFY_COMPRESSED",
+		_environment_set_is_true, _platform_android,
+		"Read each DXT-compressed texture back out of its image after it is written,\n"
+		"and log where it differs from the game's bytes (port/switch/host/host_dk.c).\n"
+		"Slow: it waits for the GPU each time. Takes effect the next start." },
+	{ "debug.gpu_trace", _config_boolean, "false", "HALO_GPU_TRACE_FAULTS", _environment_set_is_true, _platform_android,
+		"Keep a record of the GPU's last commands, and after a GPU fault write it and\n"
+		"the console's account of the fault to halo.log (port/switch/host/host_dk.c).\n"
+		"It costs the GPU some time. Takes effect the next start." },
+	{ "debug.gpu_fault_test", _config_boolean, "false", "HALO_GPU_FAULT_TEST", _environment_set_is_true,
+		_platform_android,
+		"Make the GPU fault on purpose at the 1200th frame, to see gpu_trace's record.\n"
+		"Takes effect the next start." },
+	{ "debug.gpu_profile", _config_boolean, "false", "HALO_GPU_PROFILE", _environment_set_is_true, _platform_android,
+		"Every 300 frames, log the GPU's time by part of the frame (the sky, the\n"
+		"objects, the fog...) and what a frame asks of it. Takes effect the next start." },
+	{ "debug.gpu_capture", _config_boolean, "false", "HALO_GPU_CAPTURE", _environment_set_is_true, _platform_android,
+		"With gpu_profile, time one frame of every 300 draw by draw, and log the GPU's\n"
+		"time by shader, target and kind of command. Takes effect the next start." },
+	{ "debug.gpu_experiment", _config_string, "\"\"", "HALO_GPU_EXPERIMENT", _environment_value, _platform_android,
+		"Measurements of what a change could save, comma-separated:\n"
+		"\"no_compression\" (render targets without hardware compression),\n"
+		"\"no_target_barriers\" (no wait before a render target change; may draw\n"
+		"wrong), \"lod_bias\" (textures sampled three levels smaller: blurry).\n"
+		"Empty for none. Takes effect the next start." },
+	{ "debug.gpu_shader_ranges", _config_boolean, "true", "HALO_GPU_SHADER_RANGES", _environment_value,
+		_platform_android,
+		"Leave out of the pixel shaders the clamps their values cannot need\n"
+		"(port/switch/guest/nv2a_psh_dk.c); false writes them all, as before, to\n"
+		"compare the two. Takes effect the next start." },
+	{ "debug.gpu_texture_clip", _config_string, "\"on\"", "HALO_GPU_TEXTURE_CLIP", _environment_value,
+		_platform_android,
+		"Shadows cast on the level drawn only over their map: \"on\", \"off\", or\n"
+		"\"wide\" (clipped by limits nothing reaches, to tell the clip's own effect).\n"
+		"Takes effect the next start." },
+	{ "debug.original_zoom", _config_boolean, "false", "HALO_ORIGINAL_ZOOM", _environment_value, _platform_android,
+		"Draw the zoom's blur as the game does, in passes over the whole screen,\n"
+		"rather than on a small copy blended over it once (about 3.7 ms less of\n"
+		"the GPU's frame at 720p). Takes effect the next start." },
+	{ "debug.gpu_blend_discard", _config_boolean, "true", "HALO_GPU_BLEND_DISCARD", _environment_value,
+		_platform_android,
+		"Let a blended draw's pixels go where they would leave the screen as it was\n"
+		"(the empty parts of particles and glows); false blends them all in, as\n"
+		"before, to compare. Takes effect the next start." },
+	{ "debug.render_thread", _config_boolean, "true", "HALO_RENDER_THREAD", _environment_value, _platform_android,
+		"Turn the game's drawing commands into the GPU's on a thread of their own,\n"
+		"on another core, while the game goes on with its next frame; false runs\n"
+		"them on the game's thread, as before. Takes effect the next start." },
+	{ "debug.gpu_draw_scissor", _config_boolean, "true", "HALO_GPU_DRAW_SCISSOR", _environment_value,
+		_platform_android,
+		"Rasterize an object's shadow and a dynamic light's pass only inside the\n"
+		"rectangle of the screen they can change; false rasterizes their whole\n"
+		"triangles, as before, to compare. Takes effect the next start." },
+	{ "debug.original_blur", _config_boolean, "false", "HALO_ORIGINAL_BLUR", _environment_value, _platform_android,
+		"Draw a blur screen effect (cutscenes) as the game does, in passes over the\n"
+		"whole screen, rather than its passes on a small copy of it. Takes effect\n"
+		"the next start." },
+	{ "debug.gpu_glsl_folder", _config_string, "\"\"", "HALO_GPU_GLSL_FOLDER", _environment_value, _platform_android,
+		"A folder to write each shader the game draws with to, as GLSL named by its\n"
+		"hash (the names gpu_capture logs); the folder must exist. Empty for none." },
+#endif
+#ifndef HALO_SWITCH
+	{ "debug.vk_present_marker", _config_boolean, "false", "HALO_VK_PRESENT_MARKER", _environment_set_is_true, PLATFORM_VULKAN,
+		"Under the Vulkan renderer, draw a red square at the top left and a green one\n"
+		"at the top right of the picture, so that a screenshot shows which way up it is." },
+	{ "debug.vk_static_geometry", _config_boolean, "true", "HALO_VK_STATIC_GEOMETRY", _environment_set_is_true,
+		PLATFORM_VULKAN,
+		"Under the Vulkan renderer, draw the map's geometry (written once as it loads)\n"
+		"from a copy made the first time it is drawn, rather than copying it at each\n"
+		"draw. false copies it at each draw, as before." },
+	{ "debug.custom_edition_elsewhere", _config_boolean, "false", "HALO_CUSTOM_EDITION_ELSEWHERE", _environment_set_is_true,
+		PLATFORM_HOST,
+		"Put Custom Edition's tag cache somewhere other than 0x40440000 even where\n"
+		"that address is free, and move its maps' addresses there, as on a phone\n"
+		"whose Java runtime holds 0x40440000. For testing that move." },
+	{ "debug.vk_static_check", _config_boolean, "false", "HALO_VK_STATIC_CHECK", _environment_set_is_true, PLATFORM_VULKAN,
+		"Under the Vulkan renderer, compare the game's static geometry with what was\n"
+		"copied every 60 frames and log a range that changed (it would be drawn stale)." },
+	{ "debug.vk_render_thread", _config_boolean, "true", "HALO_VK_RENDER_THREAD", _environment_set_is_true, _platform_android,
+		"Under the Vulkan renderer, record the game's commands, hand them to the\n"
+		"driver and present on a thread of their own, while the game makes the next\n"
+		"frame. false runs them on the game's thread, as before." },
+	{ "debug.vk_self_test", _config_boolean, "false", "HALO_VK_SELF_TEST", _environment_set_is_true, PLATFORM_VULKAN,
+		"Under the Vulkan renderer, try the renderer's clears and the copying of a\n"
+		"draw's data on small targets of its own at start-up; the log says ok or FAILED." },
+	/* the Android app's Vulkan probe and profiler (port/android/host); the Switch's
+	profiler has its own debug.profile_hz above */
+	{ "debug.vk_probe", _config_string, "\"\"", "HALO_VK_PROBE", _environment_value, _platform_android,
+		"Run the Vulkan probe (port/android/host/host_vk_probe.c) instead of the\n"
+		"game: \"all\", or a list of caps, memory, compile, pipelines, draw, present;\n"
+		"empty runs the game. It writes vk_probe.txt." },
+	{ "debug.vk_validation", _config_boolean, "false", "HALO_VK_VALIDATION", _environment_set_is_true, PLATFORM_VULKAN,
+		"Turn on Vulkan's validation layer in the probe and in the Vulkan renderer,\n"
+		"when the app carries it." },
+	{ "debug.profile_hz", _config_integer, "0", "HALO_PROFILE_HZ", _environment_value, _platform_android,
+		"Sample every game thread this many times a second into profile.bin\n"
+		"(port/android/host/host_debug.c); 0 off." },
+#endif
 };
 
 #define NUMBER_OF_CONFIG_SETTINGS (sizeof(config_settings) / sizeof(config_settings[0]))
@@ -1326,6 +1760,10 @@ static const struct config_setting config_settings[] =
 #define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_web)
 #elif defined(_WIN32)
 #define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_windows)
+#elif defined(HALO_PS5)
+#define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_guest | _platform_ps5)
+#elif defined(HALO_GUEST)
+#define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_guest)
 #else
 #define CONFIG_BUILD_PLATFORM _platform_desktop
 #endif
@@ -1408,7 +1846,7 @@ static void config_path(char *path, size_t size)
 /* the whole file, NUL terminated, or NULL; free() it */
 static char *config_read_file(const char *path, size_t *size)
 {
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 	FILE *file = fopen(path, "rb");
 	char *text = NULL;
 	long length;
@@ -1451,14 +1889,28 @@ static char *config_read_file(const char *path, size_t *size)
 
 static int config_write_file(const char *path, const char *text)
 {
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 	FILE *file = fopen(path, "wb");
 	int written;
 
 	if (!file)
 		return 0;
 	written = fwrite(text, 1, strlen(text), file) == strlen(text);
-	return fclose(file) == 0 && written;
+	if (written)
+		fflush(file);
+#ifdef HALO_SWITCH
+	/* leaving the game is _exit, which does not flush the card; without a
+	commit here a setting is kept for this run and gone on the next */
+	if (written)
+		fsync(fileno(file));
+#endif
+	if (fclose(file) != 0)
+		written = 0;
+#ifdef HALO_SWITCH
+	if (written)
+		host_storage_commit();
+#endif
+	return written;
 #elif !defined(HALO_ANDROID) && !defined(HALO_WEB)
 	/* (a dedicated server's holds its passwords: its user's to read alone) */
 	if (!SDL_SaveFile(path, text, strlen(text)))
@@ -1508,13 +1960,63 @@ static char *config_copy(const char *text, size_t length)
 	return copy;
 }
 
-/* one setting as the file holds it: its comment, and its key at the
-default */
-static void config_append_setting(struct config_text *text, const struct config_setting *setting)
+static int config_text_is_false(const char *text);
+static long config_setting_index(const char *name);
+
+/* the line "key = value": the setting's default, or, once the values are
+loaded, the value it already has when that is not the default (an older
+setting copied onto a new one) */
+static int config_values_ready;
+
+static int config_append_value_line(struct config_text *text, const struct config_setting *setting)
 {
 	const char *dot = strchr(setting->name, '.');
+	long index = config_setting_index(setting->name);
+	char buffer[300];
+	int at_default = 1;
+
+	if (config_values_ready && index >= 0 && setting->type == _config_string)
+	{
+		const char *def = setting->default_value;
+		size_t length = strlen(def);
+		const char *live = config_values[index].string ? config_values[index].string : "";
+
+		if (!(length >= 2 && def[0] == '"' && def[length - 1] == '"' &&
+			strlen(live) == length - 2 && !strncmp(live, def + 1, length - 2)))
+		{
+			char *end = buffer + snprintf(buffer, sizeof(buffer), "%s = \"", dot + 1);
+			const char *character;
+
+			at_default = 0;
+			for (character = live; *character && end < buffer + sizeof(buffer) - 3; character++)
+			{
+				if (*character == '"' || *character == '\\')
+					*end++ = '\\';
+				*end++ = *character;
+			}
+			strcpy(end, "\"\n");
+			config_append(text, buffer);
+			return at_default;
+		}
+	}
+	else if (config_values_ready && index >= 0 && setting->type == _config_boolean &&
+		config_values[index].boolean != !config_text_is_false(setting->default_value))
+	{
+		snprintf(buffer, sizeof(buffer), "%s = %s\n", dot + 1, config_values[index].boolean ? "true" : "false");
+		config_append(text, buffer);
+		return 0;
+	}
+	snprintf(buffer, sizeof(buffer), "%s = %s\n", dot + 1, setting->default_value);
+	config_append(text, buffer);
+	return at_default;
+}
+
+/* one setting as the file holds it: its comment, and its key */
+static int config_append_setting(struct config_text *text, const struct config_setting *setting)
+{
 	const char *line;
 	char buffer[256];
+	int at_default;
 
 	config_append(text, "\n");
 	for (line = setting->comment; *line;)
@@ -1528,7 +2030,9 @@ static void config_append_setting(struct config_text *text, const struct config_
 			line++;
 	}
 #ifndef HALO_ANDROID
-	/* (Android apps have no environment to set) */
+	/* (Android apps have no environment to set; a setting without a variable
+	names none) */
+	if (setting->environment)
 	switch (setting->environment_style)
 	{
 	case _environment_value:
@@ -1543,11 +2047,15 @@ static void config_append_setting(struct config_text *text, const struct config_
 	}
 	config_append(text, buffer);
 #endif
-	snprintf(buffer, sizeof(buffer), "%s = %s\n", dot + 1, setting->default_value);
-	config_append(text, buffer);
+	at_default = config_append_value_line(text, setting);
+	return at_default;
 }
 
-/* the file with every setting of this build at its default */
+/* the file with every setting of this build at its default. Each section
+once, where its first setting is, with all of its settings: TOML refuses a
+section twice, and the whole file would go unread (config_join_sections). A
+later setting in a section already opened (display.viewmodel_shield after
+[game], the gyroscope's input.gyro_aim after [debug]) does not open it again */
 static char *config_default_text(void)
 {
 	struct config_text text = { NULL, 0, 0 };
@@ -1568,9 +2076,6 @@ static char *config_default_text(void)
 		"# it to go back to them. Each setting can also be set for one run with\n"
 		"# the environment variable named with it, which wins over this file.\n");
 #endif
-	/* each section once, where its first setting is, with all of its
-	settings: TOML refuses a section twice, and the whole file would go
-	unread (config_join_sections) */
 	for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 	{
 		const struct config_setting *setting = &config_settings[index];
@@ -1621,6 +2126,7 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 		char header[40];
 		const char *line;
 		const char *insert = NULL;
+		int at_default = 1;
 
 		if (!(setting->platforms & CONFIG_PLATFORM) || !dot || toml_seek(table, setting->name).type != TOML_UNKNOWN)
 			continue;
@@ -1647,7 +2153,7 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 		{
 			if (*insert)
 				insert++;
-			config_append_setting(&block, setting);
+			at_default = config_append_setting(&block, setting);
 		}
 		else
 		{
@@ -1656,7 +2162,7 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 			config_append(&block, current[0] && insert[-1] != '\n' ? "\n\n" : "\n");
 			config_append(&block, header);
 			config_append(&block, "\n");
-			config_append_setting(&block, setting);
+			at_default = config_append_setting(&block, setting);
 		}
 		if (!block.buffer)
 			continue;
@@ -1676,7 +2182,8 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 		{
 			free(result);
 			result = updated.buffer;
-			platform_log("settings: added %s (new in this version) at its default", setting->name);
+			platform_log("settings: added %s (new in this version)%s", setting->name,
+				at_default ? " at its default" : " from an older setting");
 		}
 	}
 	return result;
@@ -1843,6 +2350,13 @@ static void config_set_from_file(struct config_value *value, const struct config
 			free(value->string);
 			value->string = strdup(datum.u.s);
 		}
+		/* (a setting that was true or false before it had more values, as
+		input.gyro_aim was, reads its old value as that word) */
+		else if (datum.type == TOML_BOOLEAN)
+		{
+			free(value->string);
+			value->string = strdup(datum.u.boolean ? "true" : "false");
+		}
 		else
 		{
 			wrong_type = 1;
@@ -1922,28 +2436,81 @@ static void config_report_unknown_keys(toml_datum_t table)
 		}
 		for (key_index = 0; key_index < section.u.tab.size; key_index++)
 		{
+			toml_datum_t value = section.u.tab.value[key_index];
 			char name[128];
 
 			snprintf(name, sizeof(name), "%s.%s", table.u.tab.key[section_index], section.u.tab.key[key_index]);
+			/* (a dotted key, game.maps.path's maps.path: the table it makes,
+			each of its keys a setting's or not) */
+			if (value.type == TOML_TABLE)
+			{
+				int inner_index;
+
+				for (inner_index = 0; inner_index < value.u.tab.size; inner_index++)
+				{
+					char inner[192];
+
+					snprintf(inner, sizeof(inner), "%s.%s", name, value.u.tab.key[inner_index]);
+					if (config_setting_index(inner) < 0)
+						config_report_unknown_key(value.u.tab.value[inner_index].lineno, inner);
+				}
+				continue;
+			}
 			if (config_setting_index(name) < 0)
-				config_report_unknown_key(section.u.tab.value[key_index].lineno, name);
+				config_report_unknown_key(value.lineno, name);
 		}
 	}
 }
 
-/* the most lines of a file that cannot be read that are skipped to read
-the rest */
-#define CONFIG_MAXIMUM_SKIPPED_LINES 16
+/* defined with the line readers below: a file whose section headers repeat,
+joined so it parses, or NULL if it should be left alone */
+static char *config_repair_repeated_sections(const char *text, toml_result_t *parsed);
+/* (below too) a file with a line the parser cannot read, that line set aside
+so the rest parses, or NULL */
+static char *config_repair_unreadable_lines(const char *text, const char *message, toml_result_t *parsed,
+	int *first_line);
 
-/* the line a parse error is on ("(line 12) ..."), or 0 */
-static int config_error_line(const char *message)
+/* a string setting, replaced (the old one freed: callers of config_string
+hold the pointer only after load) */
+static void config_replace_string(const char *name, const char *text)
 {
-	const char *at = strstr(message, "(line ");
-	int line = 0;
+	long index = config_setting_index(name);
+	char *copy;
 
-	if (!at || sscanf(at, "(line %d)", &line) != 1)
-		return 0;
-	return line;
+	if (index < 0 || config_settings[index].type != _config_string || !text)
+		return;
+	copy = strdup(text);
+	if (!copy)
+		return;
+	free(config_values[index].string);
+	config_values[index].string = copy;
+}
+
+/* settings added after an older one that meant both: a file that has
+game.ragdoll and not game.ragdoll_players or game.ragdoll_ai gives that
+value to the one it lacks (a new file has both, at "none"), and one with
+debug.log_files false and no debug.halo_log has that false too */
+static void config_apply_older_settings(toml_datum_t table)
+{
+	toml_datum_t legacy = toml_seek(table, "game.ragdoll");
+
+	if (legacy.type == TOML_STRING)
+	{
+		if (toml_seek(table, "game.ragdoll_players").type == TOML_UNKNOWN)
+			config_replace_string("game.ragdoll_players", legacy.u.s);
+		if (toml_seek(table, "game.ragdoll_ai").type == TOML_UNKNOWN)
+			config_replace_string("game.ragdoll_ai", legacy.u.s);
+	}
+#if defined(HALO_ANDROID) || defined(HALO_PS5)
+	/* (debug.log_files false once meant no log file at all: the Switch's
+	halo.log neither) */
+	legacy = toml_seek(table, "debug.log_files");
+	if (legacy.type == TOML_BOOLEAN && !legacy.u.boolean &&
+		toml_seek(table, "debug.halo_log").type == TOML_UNKNOWN && config_setting_index("debug.halo_log") >= 0)
+	{
+		config_values[config_setting_index("debug.halo_log")].boolean = 0;
+	}
+#endif
 }
 
 /* whether length bytes of text are word, in any case (ASCII) */
@@ -1958,61 +2525,6 @@ static int config_word_is(const char *text, size_t length, const char *word)
 		if (tolower((unsigned char)text[index]) != word[index])
 			return 0;
 	}
-	return 1;
-}
-
-/* the line of text that cannot be read, said in the log with what likely
-makes it so, and emptied (its number kept for the lines after it): returns
-whether it was there */
-static int config_skip_line(char *text, int line_number, const char *message)
-{
-	char *line = text, *end, *value, *value_end;
-	const char *reason = strchr(message, ')');
-	char key[64] = "";
-	char hint[160] = "";
-	int number;
-
-	for (number = 1; number < line_number && *line; number++)
-		line += strcspn(line, "\n") + (line[strcspn(line, "\n")] ? 1 : 0);
-	if (line_number < 1 || number != line_number || !*line)
-		return 0;
-	end = line + strcspn(line, "\n");
-	reason = reason ? reason + 1 : message;
-	while (*reason == ' ')
-		reason++;
-	/* "key = value": the value as written, to the end of the line or a
-	comment */
-	value = memchr(line, '=', (size_t)(end - line));
-	if (value)
-	{
-		char *key_start = line, *key_end = value;
-
-		while (key_start < key_end && (*key_start == ' ' || *key_start == '\t'))
-			key_start++;
-		while (key_end > key_start && (key_end[-1] == ' ' || key_end[-1] == '\t'))
-			key_end--;
-		snprintf(key, sizeof(key), "%.*s", (int)(key_end - key_start), key_start);
-		value++;
-		while (value < end && (*value == ' ' || *value == '\t'))
-			value++;
-		value_end = value + strcspn(value, "#\n");
-		if (value_end > end)
-			value_end = end;
-		while (value_end > value && (value_end[-1] == ' ' || value_end[-1] == '\t' || value_end[-1] == '\r'))
-			value_end--;
-		if (config_word_is(value, (size_t)(value_end - value), "true") ||
-			config_word_is(value, (size_t)(value_end - value), "false"))
-		{
-			snprintf(hint, sizeof(hint), ": true and false are lowercase, %s = %.*s", key, (int)(value_end - value),
-				value_end - value == 4 ? "true" : "false");
-		}
-		else if (value < value_end && isalpha((unsigned char)*value))
-		{
-			snprintf(hint, sizeof(hint), ": text needs quotes, %s = \"%.*s\"", key, (int)(value_end - value), value);
-		}
-	}
-	platform_log("config.toml line %d cannot be read (%s), so it is skipped%s", line_number, reason, hint);
-	memset(line, ' ', (size_t)(end - line));
 	return 1;
 }
 
@@ -2072,7 +2584,7 @@ static const struct
 } config_words[] =
 {
 	{ "display.mode", { "", "fullscreen", "borderless", "windowed", NULL }, "display.fullscreen's" },
-	{ "display.resolution_scaling", { "native", "75%", "50%", "25%", "original", NULL }, NULL },
+	{ "display.resolution_scaling", { "native", "original", NULL }, NULL },
 	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
 	{ "display.hud_button_style", { "classic", "gems", "menu_gems", "dark_gems", "xbox_modern",
 		"ps_classic", "ps_gems", "ps_dark_gems", "ps_modern", "switch_classic", "switch_gems", "switch_modern", NULL }, NULL },
@@ -2093,6 +2605,7 @@ static const struct
 	{ "game.console_log", { "important", "all", "none", NULL }, NULL },
 	{ "game.language", { "", "ja", "de", "fr", "es", "it", NULL }, NULL },
 	{ "network.text_chat", { "on", "links", "off", NULL }, NULL },
+	{ "bots.routes", { "direct", "lanes", "mixed", NULL }, "\"direct\"'s" },
 	{ "server.chat_filter", { "off", "censor", "block", NULL }, NULL },
 	{ "server.chat_filter_slurs", { "off", "severe", "strong", "mild", NULL }, NULL },
 	{ "server.chat_filter_swearing", { "off", "severe", "strong", "mild", NULL }, NULL },
@@ -2348,6 +2861,7 @@ static void config_load(void)
 			config_set_from_text(&config_values[index], config_settings[index].type, default_value);
 		}
 	}
+	config_values_ready = 1;
 
 	config_path(path, sizeof(path));
 #if !defined(HALO_ANDROID) && !defined(HALO_WEB)
@@ -2371,30 +2885,59 @@ static void config_load(void)
 	if (text)
 	{
 		char *joined = config_join_sections(text);
+		char *parsed;
 		toml_result_t result;
-		int skipped = 0;
+		int ok;
 
+		/* a section twice is joined so the file parses. A key that is still
+		there twice keeps its earlier line (config_repair_repeated_sections),
+		which is the one a menu save writes */
 		if (joined)
 		{
 			free(text);
 			text = joined;
 			size = strlen(text);
 		}
+		parsed = text;
 		result = toml_parse(text, (int)size);
-		/* (a line that cannot be read is skipped, in memory, so that the
-		rest is) */
-		while (!result.ok && skipped < CONFIG_MAXIMUM_SKIPPED_LINES &&
-			config_skip_line(text, config_error_line(result.errmsg), result.errmsg))
+		ok = result.ok;
+		if (!ok)
 		{
+			char reason[200];
+			char *repaired;
+
+			snprintf(reason, sizeof(reason), "%s", result.errmsg);
 			toml_free(result);
-			result = toml_parse(text, (int)strlen(text));
-			skipped++;
+			repaired = config_repair_repeated_sections(text, &result);
+			if (repaired)
+			{
+				parsed = repaired;
+				ok = 1;
+				platform_log("settings: joined the sections %s had twice; a repeated key keeps its earlier value", path);
+			}
+			else
+			{
+				int line;
+
+				repaired = config_repair_unreadable_lines(text, reason, &result, &line);
+				if (repaired)
+				{
+					parsed = repaired;
+					ok = 1;
+					platform_log("settings: line %d of %s could not be read (%s); it is set aside as a comment, "
+						"and the rest is read", line, path, reason);
+				}
+				else
+				{
+					platform_log("config.toml: %s; using the defaults", reason);
+				}
+			}
 		}
-		if (result.ok)
+		if (ok)
 		{
 			char *completed;
 
-			if (joined && !skipped && !config_answer_only)
+			if (joined && parsed == text && !config_answer_only)
 			{
 				if (config_write_file(path, text))
 					platform_log("settings: joined the sections %s had twice", path);
@@ -2403,33 +2946,25 @@ static void config_load(void)
 			}
 			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 				config_set_from_file(&config_values[index], &config_settings[index], result.toptab);
+			config_apply_older_settings(result.toptab);
 #if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 			if (config_values[config_setting_index("server.enabled")].boolean && !config_probe_mode)
 				config_server_mode = 1;
 #endif
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
-			/* (a file with lines skipped is left as the player wrote it, to
-			be fixed) */
-			if (skipped)
+			/* (a run that only answers its command line writes nothing) */
+			if (!config_answer_only)
 			{
-				platform_log("settings: %d line%s of config.toml skipped; every other setting in it is used", skipped,
-					skipped == 1 ? "" : "s");
-			}
-			else if (!config_answer_only)
-			{
-				completed = config_add_missing(text, result.toptab);
-				if (completed && !config_write_file(path, completed))
+				completed = config_add_missing(parsed, result.toptab);
+				if ((parsed != text || completed) && !config_write_file(path, completed ? completed : parsed))
 					platform_log("settings: cannot write %s", path);
 				free(completed);
 			}
+			toml_free(result);
 		}
-		else
-		{
-			platform_log("config.toml cannot be read (%s): every setting is at its default until that is fixed "
-				"(a word value needs quotes: menus = \"pc\")", result.errmsg);
-		}
-		toml_free(result);
+		if (parsed != text)
+			free(parsed);
 		free(text);
 	}
 	else if (!config_answer_only)
@@ -2472,17 +3007,42 @@ static void config_load(void)
 	config_check_words();
 }
 
+/* values a setting no longer takes, written over as the file is first read:
+display.vk_driver's "auto" (Turnip, which the launcher downloads, chosen by
+the GPU) is the phone's own driver now, and the downloaded archive a driver
+of the list like any other (Video Setup) */
+static void config_retire_values(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH) && !defined(HALO_PS5)
+	long index = config_setting_index("display.vk_driver");
+
+	if (index >= 0 && config_values[index].string && !strcmp(config_values[index].string, "auto"))
+	{
+		platform_log("settings: display.vk_driver \"auto\" is no more; \"\" (the phone's own driver)");
+		config_write("display.vk_driver", "");
+	}
+#endif
+}
+
 /* the file read, the first time a setting is asked for */
 static void config_ensure_loaded(void)
 {
+	int first = 0;
+
 	pthread_mutex_lock(&config_lock);
 	if (!config_loaded)
 	{
 		config_load();
 		config_loaded = 1;
+		first = 1;
 	}
 	pthread_mutex_unlock(&config_lock);
+	/* (config_write takes the lock itself) */
+	if (first)
+		config_retire_values();
 }
+
+static const struct config_value *config_profile_value(int player, long index);
 
 static const struct config_value *config_value(const char *name, enum config_type type)
 {
@@ -2495,6 +3055,14 @@ static const struct config_value *config_value(const char *name, enum config_typ
 	{
 		platform_log("settings: no %s setting %s", type == _config_string ? "string" : "such", name);
 		return &none;
+	}
+	/* (a setting each profile keeps: player 1's profile's, if it has set
+	it) */
+	{
+		const struct config_value *own = config_profile_value(0, index);
+
+		if (own)
+			return own;
 	}
 	return &config_values[index];
 }
@@ -2533,62 +3101,286 @@ static int config_line_section(const char *line, const char *end, char *section,
 	return 1;
 }
 
+/* the line's key, if it is "key = ..." (after spaces) */
+static int config_line_key_name(const char *line, const char *end, char *key, size_t size)
+{
+	const char *start;
+	size_t length;
+
+	while (line < end && (*line == ' ' || *line == '\t'))
+		line++;
+	start = line;
+	while (line < end && *line != ' ' && *line != '\t' && *line != '=' && *line != '\r')
+		line++;
+	length = (size_t)(line - start);
+	if (!length || length >= size)
+		return 0;
+	while (line < end && (*line == ' ' || *line == '\t'))
+		line++;
+	if (line >= end || *line != '=')
+		return 0;
+	memcpy(key, start, length);
+	key[length] = 0;
+	return 1;
+}
+
+static void config_append_span(struct config_text *text, const char *start, const char *end)
+{
+	char *copy = config_copy(start, (size_t)(end - start));
+
+	if (copy)
+	{
+		config_append(text, copy);
+		free(copy);
+	}
+}
+
+static int config_text_has_key(const struct config_text *text, const char *key)
+{
+	const char *line;
+
+	if (!text->buffer)
+		return 0;
+	for (line = text->buffer; *line; )
+	{
+		const char *end = line + strcspn(line, "\n");
+		const char *next = *end ? end + 1 : end;
+
+		if (config_line_key(line, end, key))
+			return 1;
+		line = next;
+	}
+	return 0;
+}
+
+#define CONFIG_SECTION_LIMIT 32
+
+struct config_section_piece
+{
+	char name[64];
+	struct config_text text;
+};
+
+static void config_pieces_free(struct config_text *preamble, struct config_section_piece *pieces, size_t count)
+{
+	size_t index;
+
+	free(preamble->buffer);
+	preamble->buffer = NULL;
+	for (index = 0; index < count; index++)
+	{
+		free(pieces[index].text.buffer);
+		pieces[index].text.buffer = NULL;
+	}
+}
+
+/* a section header the default file used to open again when a later setting
+returned to an earlier section. The second header makes the whole file fail
+to parse, so every setting stays at its default while the saved lines are
+still in the file. Joined into the first header. A key that appears twice
+keeps its earlier line, which is the one a menu save writes. NULL if no
+header or key was repeated, or the text cannot be rebuilt */
+static char *config_collapse_repeated_sections(const char *text)
+{
+	struct config_text preamble = { 0 };
+	struct config_section_piece pieces[CONFIG_SECTION_LIMIT];
+	struct config_text out = { 0 };
+	size_t count = 0;
+	size_t index;
+	long current = -1;
+	int repeated = 0;
+	int overflow = 0;
+	const char *line;
+
+	memset(pieces, 0, sizeof(pieces));
+	for (line = text; *line && !overflow; )
+	{
+		const char *end = line + strcspn(line, "\n");
+		const char *next = *end ? end + 1 : end;
+		char name[64];
+		char key[64];
+
+		if (config_line_section(line, end, name, sizeof(name)))
+		{
+			current = -1;
+			for (index = 0; index < count; index++)
+			{
+				if (!strcmp(pieces[index].name, name))
+				{
+					current = (long)index;
+					break;
+				}
+			}
+			if (current >= 0)
+			{
+				repeated = 1;
+				line = next;
+				continue;
+			}
+			if (count >= CONFIG_SECTION_LIMIT)
+			{
+				platform_log("settings: too many sections to join %s", name);
+				overflow = 1;
+				break;
+			}
+			snprintf(pieces[count].name, sizeof(pieces[count].name), "%s", name);
+			current = (long)count;
+			count++;
+		}
+		else if (current >= 0 && config_line_key_name(line, end, key, sizeof(key)) &&
+			config_text_has_key(&pieces[current].text, key))
+		{
+			repeated = 1;
+			line = next;
+			continue;
+		}
+		config_append_span(current < 0 ? &preamble : &pieces[current].text, line, next);
+		line = next;
+	}
+	if (!repeated || overflow)
+	{
+		config_pieces_free(&preamble, pieces, count);
+		return NULL;
+	}
+	if (preamble.buffer)
+		config_append(&out, preamble.buffer);
+	for (index = 0; index < count; index++)
+	{
+		if (pieces[index].text.buffer)
+			config_append(&out, pieces[index].text.buffer);
+	}
+	config_pieces_free(&preamble, pieces, count);
+	return out.buffer;
+}
+
+/* that text, if it then parses. NULL if there is nothing to join or the
+joined text still does not parse, and the file is left alone. parsed
+receives the successful parse */
+static char *config_repair_repeated_sections(const char *text, toml_result_t *parsed)
+{
+	char *collapsed = config_collapse_repeated_sections(text);
+
+	if (!collapsed)
+		return NULL;
+	*parsed = toml_parse(collapsed, (int)strlen(collapsed));
+	if (!parsed->ok)
+	{
+		toml_free(*parsed);
+		free(collapsed);
+		return NULL;
+	}
+	return collapsed;
+}
+
+/* the line a parse error names ("(line 179) invalid value"), or 0 */
+static int config_error_line(const char *message)
+{
+	const char *at = strstr(message, "line ");
+
+	return at ? atoi(at + 5) : 0;
+}
+
+/* the text with its line'th line (from 1) set aside as a comment, which keeps
+what it said; NULL if the text has no such line */
+static char *config_set_aside_line(const char *text, int line)
+{
+	struct config_text out = { 0 };
+	const char *at = text;
+	int number;
+
+	for (number = 1; number < line && at; number++)
+	{
+		at = strchr(at, '\n');
+		if (at)
+			at++;
+	}
+	if (!at || !*at)
+		return NULL;
+	{
+		char *before = config_copy(text, (size_t)(at - text));
+
+		if (!before)
+			return NULL;
+		config_append(&out, before);
+		free(before);
+	}
+	config_append(&out, "# (unreadable, set aside) ");
+	config_append(&out, at);
+	return out.buffer;
+}
+
+/* A file that does not parse for a line the parser cannot read (a value
+cut short by the game ending as the file was written, a hand edit): each
+such line set aside as a comment, a few at most, with the repeated sections
+joined too, if the rest then parses; NULL otherwise, and the file is left
+alone. One bad line otherwise sent every setting back to its default at
+each start, and a menu's save kept the line. parsed receives the parse,
+and line the first line set aside */
+static char *config_repair_unreadable_lines(const char *text, const char *message, toml_result_t *parsed,
+	int *first_line)
+{
+	char *current = NULL;
+	char reason[200];
+	int attempt;
+
+	*first_line = 0;
+	snprintf(reason, sizeof(reason), "%s", message);
+	for (attempt = 0; attempt < 8; attempt++)
+	{
+		int line = config_error_line(reason);
+		char *next;
+		char *joined;
+
+		if (line <= 0)
+			break;
+		next = config_set_aside_line(current ? current : text, line);
+		if (!next)
+			break;
+		free(current);
+		current = next;
+		if (!*first_line)
+			*first_line = line;
+		*parsed = toml_parse(current, (int)strlen(current));
+		if (parsed->ok)
+			return current;
+		snprintf(reason, sizeof(reason), "%s", parsed->errmsg);
+		toml_free(*parsed);
+		joined = config_repair_repeated_sections(current, parsed);
+		if (joined)
+		{
+			free(current);
+			return joined;
+		}
+	}
+	free(current);
+	return NULL;
+}
 /* the longest string config_write takes */
 #define CONFIG_MAXIMUM_WRITTEN_STRING 4096
 
-/* sets a setting, for now and in config.toml, from its value as text
-("true", "60", "1.5", "all"): its line there is changed (or added), the rest
-of the file kept as it is */
-int config_write(const char *name, const char *value)
+/* the setting's line as a file holds it ("key = value\n", the key without
+its section), for its value; NULL if it cannot be made. free() it */
+static char *config_value_line(long index, const struct config_value *value)
 {
-	const char *dot = strchr(name, '.');
-	long index = config_setting_index(name);
-	char section[64], key[64], wanted[80], current[64] = "", path[1024];
-	struct config_text out = { 0 };
-	size_t size = 0, line_size;
-	char *text, *line_text;
-	const char *line;
-	int written = 0, in_section = 0, succeeded;
+	const char *key = strchr(config_settings[index].name, '.') + 1;
+	const char *string = value->string ? value->string : "";
+	/* (its value with each character escaped as \uXXXX at most) */
+	size_t line_size = strlen(key) + 6 * strlen(string) + 64;
+	char *line_text = malloc(line_size);
 
-	/* (a string as long as a server's rotation, server_rotation.h's
-	SERVER_ROTATION_MAXIMUM_TEXT; any other value is a word or a number) */
-	if (index < 0 || !dot || (size_t)(dot - name) >= sizeof(section) ||
-		strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
-	{
-		return 0;
-	}
-	/* (the line: its key, and its value with each character escaped as
-	\uXXXX at most) */
-	line_size = strlen(dot + 1) + 6 * strlen(value) + 64;
-	line_text = malloc(line_size);
 	if (!line_text)
-		return 0;
-	/* (the file read first, as the other settings are) */
-	config_value(name, config_settings[index].type);
-	pthread_mutex_lock(&config_lock);
-	config_set_from_text(&config_values[index], config_settings[index].type, value);
-	/* (a run that only answers its command line, a probe's too, writes
-	nothing: the value is this run's alone) */
-	if (config_answer_only)
-	{
-		config_change_count++;
-		pthread_mutex_unlock(&config_lock);
-		free(line_text);
-		return 1;
-	}
-	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
-	snprintf(key, sizeof(key), "%s", dot + 1);
+		return NULL;
 	switch (config_settings[index].type)
 	{
 	case _config_boolean:
-		snprintf(line_text, line_size, "%s = %s\n", key, config_values[index].boolean ? "true" : "false");
+		snprintf(line_text, line_size, "%s = %s\n", key, value->boolean ? "true" : "false");
 		break;
 	case _config_integer:
-		snprintf(line_text, line_size, "%s = %ld\n", key, config_values[index].integer);
+		snprintf(line_text, line_size, "%s = %ld\n", key, value->integer);
 		break;
 	case _config_real:
 		/* (with its point: TOML reads 1 as an integer) */
-		snprintf(line_text, line_size, "%s = %.15g", key, config_values[index].real);
+		snprintf(line_text, line_size, "%s = %.15g", key, value->real);
 		if (!strpbrk(line_text + strlen(key) + 3, ".en"))
 			strcat(line_text, ".0");
 		strcat(line_text, "\n");
@@ -2600,7 +3392,7 @@ int config_write(const char *name, const char *value)
 
 		/* (a TOML basic string: quotes and backslashes escaped, and control
 		characters, so that a value cannot end its line) */
-		for (character = config_values[index].string; *character; character++)
+		for (character = string; *character; character++)
 		{
 			if ((unsigned char)*character < 0x20 || *character == 0x7F)
 			{
@@ -2615,9 +3407,28 @@ int config_write(const char *name, const char *value)
 		break;
 	}
 	}
-	snprintf(wanted, sizeof(wanted), "%s", section);
-	config_path(path, sizeof(path));
+	return line_text;
+}
+
+/* the setting's line in the file at path changed to line_text (or added, at
+the end of its section, which is opened if the file has none), the rest of
+the file kept as it is; a file that is not there is begun with preamble */
+static int config_file_set_line(const char *path, long index, const char *line_text, const char *preamble)
+{
+	const char *name = config_settings[index].name;
+	const char *dot = strchr(name, '.');
+	char section[64], key[64], current[64] = "";
+	struct config_text out = { 0 };
+	size_t size = 0;
+	char *text;
+	const char *line;
+	int written = 0, in_section = 0, succeeded;
+
+	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
+	snprintf(key, sizeof(key), "%s", dot + 1);
 	text = config_read_file(path, &size);
+	if (!text && preamble)
+		config_append(&out, preamble);
 	for (line = text ? text : ""; *line;)
 	{
 		const char *end = line + strcspn(line, "\n");
@@ -2631,7 +3442,7 @@ int config_write(const char *name, const char *value)
 				config_append(&out, line_text);
 				written = 1;
 			}
-			in_section = !strcmp(current, wanted);
+			in_section = !strcmp(current, section);
 		}
 		else if (in_section && !written && config_line_key(line, end, key))
 		{
@@ -2659,16 +3470,309 @@ int config_write(const char *name, const char *value)
 		{
 			char header[80];
 
-			snprintf(header, sizeof(header), "\n[%s]\n", section);
+			snprintf(header, sizeof(header), "%s[%s]\n", out.length ? "\n" : "", section);
 			config_append(&out, header);
 		}
 		config_append(&out, line_text);
 	}
 	succeeded = out.buffer && config_write_file(path, out.buffer);
-	config_change_count++;
-	pthread_mutex_unlock(&config_lock);
 	free(out.buffer);
 	free(text);
+	return succeeded;
+}
+
+/* ---------- a profile's own settings */
+
+static void config_value_text(long index, const struct config_value *value, char *text, size_t size);
+
+/* the settings each player profile keeps for itself, in settings.toml
+beside its blam.sav: Controls Setup's keys, Mouse Settings' and Gyro Aim's.
+config.toml's are those a profile has not set, and a game's with no profile;
+an environment variable still sets one for every profile */
+static const char *const config_profile_names[] =
+{
+	"controls.move_forward", "controls.move_backward", "controls.strafe_left", "controls.strafe_right",
+	"controls.jump", "controls.crouch", "controls.fire", "controls.throw_grenade", "controls.melee",
+	"controls.reload", "controls.zoom", "controls.switch_weapon", "controls.switch_grenade", "controls.action",
+	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
+	"controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.vote_yes", "controls.vote_no",
+	"input.mouse_sensitivity", "input.mouse_vertical_sensitivity", "input.invert_mouse", "input.mouse_aim_assist",
+	"input.stick_sensitivity_horizontal", "input.stick_sensitivity_vertical", "input.stick_equal_axes",
+	"input.gyro_aim", "input.gyro_sensitivity_horizontal", "input.gyro_sensitivity_vertical",
+	"input.gyro_invert_horizontal", "input.gyro_invert_vertical",
+};
+#define NUMBER_OF_CONFIG_PROFILE_SETTINGS (sizeof(config_profile_names) / sizeof(config_profile_names[0]))
+
+/* (written at the top of a profile's file, the first time it has one) */
+static const char config_profile_preamble[] =
+	"# This profile's own settings: its keys (Controls Setup), its stick aim,\n"
+	"# its mouse and its gyroscope (Gyro Aim). Others are config.toml's.\n\n";
+
+/* the profile each local player plays with: its folder, with its
+separator ("" for none), and the settings its file sets */
+static struct
+{
+	char folder[1024];
+	struct config_value values[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+	unsigned char set[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+} config_profiles[CONFIG_PROFILE_PLAYERS];
+
+/* the setting's place in config_profile_names, or -1 for one config.toml
+keeps for everyone */
+static int config_profile_slot(long index)
+{
+	size_t slot;
+
+	if (index < 0)
+		return -1;
+	for (slot = 0; slot < NUMBER_OF_CONFIG_PROFILE_SETTINGS; slot++)
+	{
+		if (!strcmp(config_profile_names[slot], config_settings[index].name))
+			return (int)slot;
+	}
+	return -1;
+}
+
+static void config_profile_path(const char *folder, char *path, size_t size)
+{
+	size_t length = strlen(folder);
+	int separated = length && (folder[length - 1] == '/' || folder[length - 1] == '\\');
+
+	snprintf(path, size, "%s%ssettings.toml", folder, separated ? "" : "/");
+}
+
+/* the profile's file's settings into values, those it has marked in set */
+static void config_profile_read(const char *folder, struct config_value *values, unsigned char *set)
+{
+	char path[1100];
+	size_t size = 0, slot;
+	char *text;
+	toml_result_t result;
+
+	memset(set, 0, NUMBER_OF_CONFIG_PROFILE_SETTINGS);
+	config_profile_path(folder, path, sizeof(path));
+	text = config_read_file(path, &size);
+	if (!text)
+		return;
+	result = toml_parse(text, (int)size);
+	if (!result.ok)
+	{
+		platform_log("settings: %s cannot be read (%s); config.toml's are used", path, result.errmsg);
+		toml_free(result);
+		free(text);
+		return;
+	}
+	for (slot = 0; slot < NUMBER_OF_CONFIG_PROFILE_SETTINGS; slot++)
+	{
+		long index = config_setting_index(config_profile_names[slot]);
+		toml_datum_t datum = toml_seek(result.toptab, config_profile_names[slot]);
+		enum config_type type = config_settings[index].type;
+
+		if (datum.type == TOML_UNKNOWN)
+			continue;
+		/* (of its type, as config_set_from_file takes it: otherwise that
+		reports it, and config.toml's is used) */
+		set[slot] = (type == _config_boolean && datum.type == TOML_BOOLEAN) ||
+			(type == _config_integer && datum.type == TOML_INT64) ||
+			(type == _config_real && (datum.type == TOML_FP64 || datum.type == TOML_INT64)) ||
+			(type == _config_string && (datum.type == TOML_STRING || datum.type == TOML_BOOLEAN));
+		/* (a string read before is kept, not freed, as config_set_from_text
+		keeps them) */
+		values[slot].string = NULL;
+		config_set_from_file(&values[slot], &config_settings[index], result.toptab);
+	}
+	toml_free(result);
+	free(text);
+}
+
+/* the player's profile's value of the setting, NULL if it has none (no
+profile, a setting config.toml keeps for everyone or the profile has not
+set, or one its environment variable sets) */
+static const struct config_value *config_profile_value(int player, long index)
+{
+	int slot = config_profile_slot(index);
+
+	if (player < 0 || player >= CONFIG_PROFILE_PLAYERS || slot < 0 || !config_profiles[player].folder[0] ||
+		!config_profiles[player].set[slot] || config_environment(&config_settings[index]))
+	{
+		return NULL;
+	}
+	return &config_profiles[player].values[slot];
+}
+
+static int config_same_folder(const char *a, const char *b)
+{
+	return a && b && *a && !strcmp(a, b);
+}
+
+/* (with config_lock held) the setting written into the profile's file, and
+set for the players playing with it */
+static int config_profile_write_locked(const char *folder, long index, const char *value)
+{
+	int slot = config_profile_slot(index);
+	struct config_value written = { 0, 0, 0.0, NULL };
+	char path[1100];
+	char *line_text;
+	int player, succeeded;
+
+	config_set_from_text(&written, config_settings[index].type, value);
+	for (player = 0; player < CONFIG_PROFILE_PLAYERS; player++)
+	{
+		if (config_same_folder(config_profiles[player].folder, folder))
+		{
+			config_profiles[player].values[slot] = written;
+			config_profiles[player].set[slot] = 1;
+		}
+	}
+	config_change_count++;
+	if (config_answer_only)
+		return 1;
+	line_text = config_value_line(index, &written);
+	config_profile_path(folder, path, sizeof(path));
+	succeeded = line_text && config_file_set_line(path, index, line_text, config_profile_preamble);
+	if (!succeeded)
+		platform_log("settings: cannot write %s", path);
+	free(line_text);
+	return succeeded;
+}
+
+int config_setting_per_profile(const char *name)
+{
+	return config_profile_slot(config_setting_index(name)) >= 0;
+}
+
+void config_profile_use(int player, const char *folder)
+{
+	if (player < 0 || player >= CONFIG_PROFILE_PLAYERS)
+		return;
+	config_ensure_loaded();
+	pthread_mutex_lock(&config_lock);
+	if (folder && *folder)
+	{
+		snprintf(config_profiles[player].folder, sizeof(config_profiles[player].folder), "%s", folder);
+		config_profile_read(folder, config_profiles[player].values, config_profiles[player].set);
+	}
+	else
+	{
+		config_profiles[player].folder[0] = 0;
+		memset(config_profiles[player].set, 0, sizeof(config_profiles[player].set));
+	}
+	config_change_count++;
+	pthread_mutex_unlock(&config_lock);
+}
+
+int config_profile_text(const char *folder, const char *name, char *text, size_t size)
+{
+	long index = config_setting_index(name);
+	int slot = config_profile_slot(index);
+	struct config_value values[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+	unsigned char set[NUMBER_OF_CONFIG_PROFILE_SETTINGS];
+
+	size_t each;
+
+	if (index < 0)
+		return 0;
+	config_ensure_loaded();
+	if (slot < 0 || !folder || !*folder || config_environment(&config_settings[index]))
+	{
+		config_value_text(index, &config_values[index], text, size);
+		return 1;
+	}
+	memset(values, 0, sizeof(values));
+	config_profile_read(folder, values, set);
+	config_value_text(index, set[slot] ? &values[slot] : &config_values[index], text, size);
+	for (each = 0; each < NUMBER_OF_CONFIG_PROFILE_SETTINGS; each++)
+		free(values[each].string);
+	return 1;
+}
+
+int config_profile_write(const char *folder, const char *name, const char *value)
+{
+	long index = config_setting_index(name);
+	int succeeded;
+
+	if (config_profile_slot(index) < 0 || !folder || !*folder)
+		return config_write(name, value);
+	if (strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
+		return 0;
+	config_ensure_loaded();
+	pthread_mutex_lock(&config_lock);
+	succeeded = config_profile_write_locked(folder, index, value);
+	pthread_mutex_unlock(&config_lock);
+	return succeeded;
+}
+
+static const struct config_value *config_player_value(int player, const char *name, enum config_type type)
+{
+	const struct config_value *base = config_value(name, type);
+	long index = config_setting_index(name);
+	const struct config_value *own;
+
+	if (index < 0 || config_settings[index].type != type)
+		return base;
+	own = config_profile_value(player, index);
+	return own ? own : &config_values[index];
+}
+
+int config_player_boolean(int player, const char *name)
+{
+	return config_player_value(player, name, _config_boolean)->boolean;
+}
+
+double config_player_real(int player, const char *name)
+{
+	return config_player_value(player, name, _config_real)->real;
+}
+
+const char *config_player_string(int player, const char *name)
+{
+	const char *string = config_player_value(player, name, _config_string)->string;
+
+	return string ? string : "";
+}
+
+/* sets a setting, for now and in config.toml, from its value as text
+("true", "60", "1.5", "all"): its line there is changed (or added), the rest
+of the file kept as it is. A setting each profile keeps (config_setting_per_profile)
+goes into player 1's profile's instead, while it plays with one */
+int config_write(const char *name, const char *value)
+{
+	const char *dot = strchr(name, '.');
+	long index = config_setting_index(name);
+	char path[1024];
+	char *line_text;
+	int succeeded;
+
+	/* (a string as long as a server's rotation, server_rotation.h's
+	SERVER_ROTATION_MAXIMUM_TEXT; any other value is a word or a number) */
+	if (index < 0 || !dot || (size_t)(dot - name) >= 64 ||
+		strlen(value) > (config_settings[index].type == _config_string ? CONFIG_MAXIMUM_WRITTEN_STRING : 256))
+	{
+		return 0;
+	}
+	/* (the file read first, as the other settings are) */
+	config_value(name, config_settings[index].type);
+	pthread_mutex_lock(&config_lock);
+	if (config_profile_slot(index) >= 0 && config_profiles[0].folder[0])
+	{
+		succeeded = config_profile_write_locked(config_profiles[0].folder, index, value);
+		pthread_mutex_unlock(&config_lock);
+		return succeeded;
+	}
+	config_set_from_text(&config_values[index], config_settings[index].type, value);
+	/* (a run that only answers its command line, a probe's too, writes
+	nothing: the value is this run's alone) */
+	if (config_answer_only)
+	{
+		config_change_count++;
+		pthread_mutex_unlock(&config_lock);
+		return 1;
+	}
+	line_text = config_value_line(index, &config_values[index]);
+	config_path(path, sizeof(path));
+	succeeded = line_text && config_file_set_line(path, index, line_text, NULL);
+	config_change_count++;
+	pthread_mutex_unlock(&config_lock);
 	free(line_text);
 	return succeeded;
 }
@@ -2680,16 +3784,74 @@ int config_write_boolean(const char *name, int value)
 	return index >= 0 && config_settings[index].type == _config_boolean && config_write(name, value ? "true" : "false");
 }
 
-/* a setting's value as text ("true", "60", "1.5", "all"): 0 if there is no
-such setting */
-int config_text(const char *name, char *text, size_t size)
+/* sets a setting as config_write does, from its value as config.toml writes it ("true", "4096", "1.5", "\"900\"": a
+string in double quotes, or bare); 0, with why in error, for no such setting or a value not of its type (the overlay
+menu's "config <setting> <value>": port/linux/game/overlay_menu.c) */
+int config_set_text(const char *name, const char *value, char *error, size_t error_size)
 {
 	long index = config_setting_index(name);
-	const struct config_value *value;
+	char text[260];
+	size_t length = strlen(value);
+	char *end = NULL;
 
 	if (index < 0)
+	{
+		snprintf(error, error_size, "no such setting: %s", name);
 		return 0;
-	value = config_value(name, config_settings[index].type);
+	}
+	if (length >= sizeof(text))
+	{
+		snprintf(error, error_size, "the value is too long");
+		return 0;
+	}
+	/* (a TOML string's quotes taken off; the escapes it may have are not written by the game's own file) */
+	if (length >= 2 && value[0] == '"' && value[length - 1] == '"')
+		snprintf(text, sizeof(text), "%.*s", (int)(length - 2), value + 1);
+	else
+		snprintf(text, sizeof(text), "%s", value);
+	switch (config_settings[index].type)
+	{
+	case _config_boolean:
+		if (!strcmp(text, "on") || !strcmp(text, "1"))
+			snprintf(text, sizeof(text), "true");
+		else if (!strcmp(text, "off") || !strcmp(text, "0"))
+			snprintf(text, sizeof(text), "false");
+		if (strcmp(text, "true") && strcmp(text, "false"))
+		{
+			snprintf(error, error_size, "%s is true or false, not %s", name, value);
+			return 0;
+		}
+		break;
+	case _config_integer:
+		(void)strtol(text, &end, 10);
+		if (!*text || *end)
+		{
+			snprintf(error, error_size, "%s is a whole number, not %s", name, value);
+			return 0;
+		}
+		break;
+	case _config_real:
+		(void)strtod(text, &end);
+		if (!*text || *end)
+		{
+			snprintf(error, error_size, "%s is a number, not %s", name, value);
+			return 0;
+		}
+		break;
+	case _config_string:
+		break;
+	}
+	if (!config_write(name, text))
+	{
+		snprintf(error, error_size, "%s could not be saved to config.toml", name);
+		return 0;
+	}
+	return 1;
+}
+
+/* the value as text ("true", "60", "1.5", "all") */
+static void config_value_text(long index, const struct config_value *value, char *text, size_t size)
+{
 	switch (config_settings[index].type)
 	{
 	case _config_boolean:
@@ -2705,6 +3867,17 @@ int config_text(const char *name, char *text, size_t size)
 		snprintf(text, size, "%s", value->string ? value->string : "");
 		break;
 	}
+}
+
+/* a setting's value as text ("true", "60", "1.5", "all"): 0 if there is no
+such setting */
+int config_text(const char *name, char *text, size_t size)
+{
+	long index = config_setting_index(name);
+
+	if (index < 0)
+		return 0;
+	config_value_text(index, config_value(name, config_settings[index].type), text, size);
 	return 1;
 }
 
@@ -2893,3 +4066,221 @@ const char *config_string(const char *name)
 
 	return string ? string : "";
 }
+
+#ifdef HALO_CONFIG_SECTIONS_TEST
+/* tools/test_linux_port.py compiles this file with these defined and runs
+it. Not part of the game. */
+
+void platform_log(const char *format, ...)
+{
+	(void)format;
+}
+
+#ifdef HALO_SWITCH
+void host_storage_commit(void)
+{
+}
+#endif
+
+static int config_header_count(const char *text, const char *header)
+{
+	int count = 0;
+	const char *line;
+
+	for (line = text; *line; )
+	{
+		const char *end = line + strcspn(line, "\n");
+		const char *next = *end ? end + 1 : end;
+		char name[64];
+
+		if (config_line_section(line, end, name, sizeof(name)) && !strcmp(name, header))
+			count++;
+		line = next;
+	}
+	return count;
+}
+
+static int config_fail(const char *message)
+{
+	fprintf(stderr, "%s\n", message);
+	return 1;
+}
+
+int main(void)
+{
+	char *defaults;
+	char *repaired;
+	toml_result_t parsed;
+	toml_datum_t aim;
+	static const char duplicated[] =
+		"[display]\n"
+		"fov = 0.0\n"
+		"\n"
+		"[input]\n"
+		"touch_controls = \"auto\"\n"
+		"\n"
+		"[game]\n"
+		"custom_edition = true\n"
+		"\n"
+		"[display]\n"
+		"viewmodel_shield = false\n"
+		"\n"
+		"[input]\n"
+		"gyro_aim = true\n"
+		"\n"
+		"[debug]\n"
+		"profiler = false\n"
+		"\n"
+		"[debug]\n"
+		"profile_hz = 500\n";
+	static const char earlier_wins[] =
+		"[input]\n"
+		"gyro_aim = true\n"
+		"\n"
+		"[input]\n"
+		"gyro_aim = false\n";
+	static const char broken[] =
+		"[input]\n"
+		"gyro_aim = \"unterminated\n";
+	static const char still_broken[] =
+		"[input]\n"
+		"gyro_aim = \"unterminated\n"
+		"[display]\n"
+		"fov = 0.0\n"
+		"[input]\n"
+		"touch_controls = \"auto\"\n";
+
+	defaults = config_default_text();
+	if (!defaults)
+		return config_fail("no default text");
+	if (config_header_count(defaults, "display") != 1 ||
+		config_header_count(defaults, "input") != 1 ||
+		config_header_count(defaults, "debug") != 1)
+		return config_fail("default file repeats a section");
+	parsed = toml_parse(defaults, (int)strlen(defaults));
+	if (!parsed.ok)
+		return config_fail(parsed.errmsg);
+	aim = toml_seek(parsed.toptab, "input.gyro_aim");
+	if (aim.type != TOML_STRING || strcmp(aim.u.s, "false"))
+		return config_fail("default gyro_aim is not \"false\"");
+	toml_free(parsed);
+	free(defaults);
+
+	repaired = config_repair_repeated_sections(duplicated, &parsed);
+	if (!repaired)
+		return config_fail("duplicated sections were not joined");
+	if (config_header_count(repaired, "display") != 1 ||
+		config_header_count(repaired, "input") != 1 ||
+		config_header_count(repaired, "debug") != 1)
+		return config_fail("joined file repeats a section");
+	aim = toml_seek(parsed.toptab, "input.gyro_aim");
+	if (aim.type != TOML_BOOLEAN || !aim.u.boolean)
+		return config_fail("saved gyro_aim was not kept");
+	if (toml_seek(parsed.toptab, "display.viewmodel_shield").type == TOML_UNKNOWN)
+		return config_fail("a display key stayed in the wrong section");
+	toml_free(parsed);
+	free(repaired);
+
+	repaired = config_repair_repeated_sections(earlier_wins, &parsed);
+	if (!repaired)
+		return config_fail("a repeated key was not joined");
+	aim = toml_seek(parsed.toptab, "input.gyro_aim");
+	if (aim.type != TOML_BOOLEAN || !aim.u.boolean)
+		return config_fail("the earlier gyro_aim was not kept");
+	toml_free(parsed);
+	free(repaired);
+
+	if (config_repair_repeated_sections(broken, &parsed))
+		return config_fail("a file with no repeated section was rewritten");
+	if (config_repair_repeated_sections(still_broken, &parsed))
+		return config_fail("a file that still does not parse was rewritten");
+
+	/* a value cut short: that line set aside, the rest read */
+	{
+		static const char cut_short[] =
+			"[display]\n"
+			"fov = 90.0\n"
+			"[input]\n"
+			"gyro_sensitivity_horizontal =\n"
+			"gyro_aim = \"zoom\"\n";
+		int line;
+
+		parsed = toml_parse(cut_short, (int)strlen(cut_short));
+		if (parsed.ok)
+			return config_fail("a value cut short parsed");
+		{
+			char message[200];
+
+			snprintf(message, sizeof(message), "%s", parsed.errmsg);
+			toml_free(parsed);
+			repaired = config_repair_unreadable_lines(cut_short, message, &parsed, &line);
+		}
+		if (!repaired)
+			return config_fail("a file with a value cut short was not read");
+		if (line != 4 || !strstr(repaired, "# (unreadable, set aside) gyro_sensitivity_horizontal ="))
+			return config_fail("the line cut short was not the one set aside");
+		aim = toml_seek(parsed.toptab, "input.gyro_aim");
+		if (aim.type != TOML_STRING || strcmp(aim.u.s, "zoom"))
+			return config_fail("a setting after the line cut short was lost");
+		aim = toml_seek(parsed.toptab, "display.fov");
+		if (aim.type != TOML_FP64 || aim.u.fp64 != 90.0)
+			return config_fail("a setting before the line cut short was lost");
+		toml_free(parsed);
+		free(repaired);
+	}
+
+	/* a profile's own settings: its file's over config.toml's, written there
+	while player 1 plays with it, and config.toml's where it has none */
+	{
+		char root[] = "/tmp/halo_config_profileXXXXXX";
+		char profile[64], path[128], text[64];
+		char *written;
+		size_t size;
+
+		if (!mkdtemp(root))
+			return config_fail("no folder for the profile test");
+		setenv("HALO_DATA_ROOT", root, 1);
+		unsetenv("HALO_GYRO_SENSITIVITY_HORIZONTAL");
+		snprintf(profile, sizeof(profile), "%s/profile/", root);
+		mkdir(profile, 0700);
+		if (!config_setting_per_profile("controls.jump") || config_setting_per_profile("display.fov") ||
+			config_setting_per_profile("controls.nintendo_menu_buttons"))
+			return config_fail("the wrong settings are a profile's");
+		config_profile_use(0, profile);
+		if (config_real("input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("a profile with no file did not take config.toml's");
+		if (!config_write("input.gyro_sensitivity_horizontal", "2.5") ||
+			config_real("input.gyro_sensitivity_horizontal") != 2.5)
+			return config_fail("player 1's profile's setting was not written");
+		if (config_player_real(1, "input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("player 2, with no profile, did not keep config.toml's");
+		config_profile_text(NULL, "input.gyro_sensitivity_horizontal", text, sizeof(text));
+		if (strcmp(text, "1"))
+			return config_fail("config.toml's was written over");
+		config_profile_text(profile, "controls.jump", text, sizeof(text));
+		if (strcmp(text, "Space"))
+			return config_fail("a key the profile has not set is not config.toml's");
+		config_profile_use(1, profile);
+		if (config_player_real(1, "input.gyro_sensitivity_horizontal") != 2.5)
+			return config_fail("the profile's file was not read");
+		if (!config_profile_write(profile, "controls.jump", "J") || strcmp(config_player_string(1, "controls.jump"), "J") ||
+			strcmp(config_string("controls.jump"), "J"))
+			return config_fail("a write to the profile did not reach its players");
+		snprintf(path, sizeof(path), "%ssettings.toml", profile);
+		written = config_read_file(path, &size);
+		if (!written || strncmp(written, "# This profile's own settings", 29) ||
+			!strstr(written, "[input]\ngyro_sensitivity_horizontal = 2.5\n") || !strstr(written, "[controls]\njump = \"J\"\n"))
+			return config_fail(written ? written : "the profile's file was not written");
+		parsed = toml_parse(written, (int)size);
+		if (!parsed.ok)
+			return config_fail("the profile's file does not parse");
+		toml_free(parsed);
+		free(written);
+		config_profile_use(0, NULL);
+		if (config_real("input.gyro_sensitivity_horizontal") != 1.0)
+			return config_fail("no profile did not go back to config.toml's");
+	}
+	printf("PASS\n");
+	return 0;
+}
+#endif

@@ -6,7 +6,7 @@ plugins {
 // native libraries (jniLibs) and the guest image (assets)
 def staged = new File(rootDir, "../../build/android")
 
-// a build of main knows its number (tools/ci_build.py), which names its
+// a release's build knows its number (tools/ci_build.py, from the tag), which names its
 // release and which the self-updater (Updater.java) compares; others have
 // none and never look for updates
 def buildNumberText = System.getenv("HALO_BUILD_NUMBER") ?: "0"

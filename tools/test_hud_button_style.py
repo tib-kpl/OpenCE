@@ -97,6 +97,9 @@ def test_legacy_button_styles_toggle_and_dispose(tmp_path):
     tags = [a['tag'] for a in json.loads((ROOT/'port/assets/buttons/buttons.json').read_text())['assets']
             if a['name'] in ['a_butn__0','b_butn__0','x_butn__0','y_butn__0','black_butn__0','white_butn__0'] or 'classic' in a or 'source_png' in a]
     prelude = r'''
+#define NUMBEROF(a) (sizeof(a) / sizeof(*(a)))
+#define TAG_BLOCK_ADDRESS(block) ((block).address)
+#define hud_hires_asset_applies(asset, context) 1
 #define ce_hud_buttons_stock(icon, index) 1
 static int ce,stock_sheet=1;
 static int lowres_draws;
@@ -312,4 +315,4 @@ def test_texture_capacity_covers_all_embedded_button_assets():
     capacity=int(re.search(r'#define MAXIMUM_TEXTURES (\d+)',source)[1])
     entries=list(embed_assets.textures())
     assert len(entries)<=capacity
-    assert any(asset['name']=='thumbstick-full_right__0' for _,asset,_ in entries)
+    assert any(asset['name']=='thumbstick-full_right__0' for _,asset,*_ in entries)

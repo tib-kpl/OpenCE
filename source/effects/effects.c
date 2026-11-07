@@ -635,6 +635,30 @@ void effects_initialize_for_new_map(
 	return;
 }
 
+/* port: an effect's impulse field names a procedure and what it is given,
+which no caller sets (every effect is made with none); one that has them
+cannot be moved to another run's addresses, so its saved game is not taken
+(game_state.c's game_state_image_relocate) */
+boolean effects_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	long index;
+
+	for (index = 0; index < effect_data->maximum_count; index++)
+	{
+		struct effect_datum const *effect = game_state_relocation_element(relocation, effect_data, index);
+
+		if (effect && (effect->impulse_field.user_data || effect->impulse_field.translational_function ||
+			effect->impulse_field.angular_function))
+		{
+			error(2, "the saved game is not taken: effect %ld has an impulse field", index);
+			return FALSE;
+		}
+	}
+
+	return TRUE;
+}
+
 void effects_dispose_from_old_map(
 	void)
 {
@@ -1786,7 +1810,7 @@ static void effect_generate_part(
 					temporary,
 					"effect %s has a bad part %s",
 					tag_get_name(effect->definition_index),
-					part_definition->reference.name));
+					TAG_REFERENCE_NAME(part_definition->reference)));
 			break;
 	}
 
@@ -2454,7 +2478,8 @@ static void effect_update(
 				{
 					effect->particle_counts[particle_index] = (byte)(long)
 						(((real)count - MAXIMUM_SPLIT_SCREEN_PARTICLE_COUNT) /
-						local_player_count() +
+						/* port: and a replay's playback, of no local player, as one */
+						MAX(local_player_count(), 1) +
 						MAXIMUM_SPLIT_SCREEN_PARTICLE_COUNT);
 				}
 			}

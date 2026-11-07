@@ -25,14 +25,14 @@ cube), so the view's type always matches the shader's sampler.
 
 /* ---------- barriers */
 
-/* a full barrier (all commands to all commands, memory read and write) from one layout to another, outside a rendering */
+/* a barrier from one layout to another, outside a rendering (host_vk_barrier_scope's stages and accesses) */
 static void image_barrier(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspect, uint32_t levels,
 	uint32_t layers, VkImageLayout from, VkImageLayout to)
 {
 	VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+	VkPipelineStageFlags source_stage, destination_stage;
 
-	barrier.srcAccessMask = from == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	host_vk_barrier_scope(from, to, &source_stage, &barrier.srcAccessMask, &destination_stage, &barrier.dstAccessMask);
 	barrier.oldLayout = from;
 	barrier.newLayout = to;
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -41,8 +41,7 @@ static void image_barrier(VkCommandBuffer command, VkImage image, VkImageAspectF
 	barrier.subresourceRange.aspectMask = aspect;
 	barrier.subresourceRange.levelCount = levels;
 	barrier.subresourceRange.layerCount = layers;
-	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL,
-		1, &barrier);
+	vkCmdPipelineBarrier(command, source_stage, destination_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
 }
 
 /* ---------- the dummies */
@@ -214,6 +213,7 @@ void host_vk_draw_frame_reset(struct host_vk_frame *frame)
 	for (index = 0; index < frame->pool_count; index++)
 		HOST_VK_CHECK(vkResetDescriptorPool(B.device, frame->pools[index], 0));
 	host_vk_texture_frame_reset((unsigned)(frame - B.frames));
+	host_vk_static_frame_reset((unsigned)(frame - B.frames));
 	frame->pool_current = 0;
 }
 
@@ -319,12 +319,12 @@ static unsigned dimension(unsigned base, unsigned level)
 static void level_barrier(VkCommandBuffer command, struct composite *composite, unsigned level, VkImageLayout to)
 {
 	VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+	VkPipelineStageFlags source_stage, destination_stage;
 
 	if (composite->layout[level] == to)
 		return;
-	barrier.srcAccessMask = composite->layout[level] == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
-		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	host_vk_barrier_scope(composite->layout[level], to, &source_stage, &barrier.srcAccessMask, &destination_stage,
+		&barrier.dstAccessMask);
 	barrier.oldLayout = composite->layout[level];
 	barrier.newLayout = to;
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -334,8 +334,7 @@ static void level_barrier(VkCommandBuffer command, struct composite *composite, 
 	barrier.subresourceRange.baseMipLevel = level;
 	barrier.subresourceRange.levelCount = 1;
 	barrier.subresourceRange.layerCount = 1;
-	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL,
-		1, &barrier);
+	vkCmdPipelineBarrier(command, source_stage, destination_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
 	composite->layout[level] = to;
 }
 
@@ -540,6 +539,11 @@ void host_vk_command_draw(const struct vk_command_draw *draw, uint32_t size)
 		skipped(&B.counts.draws_skipped_other, "its attachments are not the ones bound");
 		return;
 	}
+	if ((draw->state.samples > 1 ? draw->state.samples : 0) != B.samples)
+	{
+		skipped(&B.counts.draws_skipped_other, "its samples a pixel are not the bound targets'");
+		return;
+	}
 	if (draw->viewport[2] <= 0.0f || draw->viewport[3] <= 0.0f)
 	{
 		B.counts.draws_skipped_other++;
@@ -610,8 +614,11 @@ void host_vk_command_draw(const struct vk_command_draw *draw, uint32_t size)
 				/* the target being drawn into cannot be sampled in the same rendering */
 				if (target && target != B.color)
 				{
+					target->sampled = 1;
 					if (target->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 					{
+						if (B.rendering)
+							B.counts.sample_splits++;
 						host_vk_rendering_end();
 						host_vk_target_transition(host_vk_frame_command(), target, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 					}
@@ -692,12 +699,15 @@ void host_vk_command_draw(const struct vk_command_draw *draw, uint32_t size)
 	viewport.minDepth = depth_min;
 	viewport.maxDepth = depth_max;
 	vkCmdSetViewport(command, 0, 1, &viewport);
-	/* the scissor follows the viewport, within the render area; one with no area is as GL has it, off */
+	/* the scissor follows the viewport, within the render area; one with no area is as GL has it, off, and one -1 wide
+	is empty: a draw narrowed to a rectangle with nothing of it on the screen (halo_draw_scissor, d3d8_vk.c) */
 	x0 = draw->scissor[0];
 	y0 = draw->scissor[1];
 	x1 = x0 + draw->scissor[2];
 	y1 = y0 + draw->scissor[3];
-	if (draw->scissor[2] <= 0 || draw->scissor[3] <= 0)
+	if (draw->scissor[2] < 0 || draw->scissor[3] < 0)
+		x1 = x0, y1 = y0;
+	else if (draw->scissor[2] == 0 || draw->scissor[3] == 0)
 	{
 		x0 = y0 = 0;
 		x1 = B.area_width;

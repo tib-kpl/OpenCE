@@ -54,6 +54,7 @@ at startup whether to play them anyway, turn those named off, or quit
 #include "tomlc17.h"
 
 #include <SDL3/SDL.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +84,12 @@ twice would otherwise be walked 2 to the depth times) */
 /* what the file reads go through on their way into the Xbox's memory, which
 the renderer watches (memory_watch.c) */
 #define READ_BOUNCE_SIZE 0x10000
+/* the mods' files kept open between reads (port_mods_file_read): a mod's
+bitmaps are read again each time the texture cache takes them back, and an
+open, a seek and a close each time were the most of a Switch's hitches with
+a mod of uncompressed textures (each a request to its file system); closed
+when the files are found again (files_dispose) */
+#define OPEN_FILES 8
 /* the most a folder name's character takes in load_order.toml (\\u00XX) */
 #define TOML_CHARACTER_LENGTH 6
 
@@ -276,9 +283,44 @@ static void toml_names(toml_datum_t table, const char *key, const char *path, st
 	}
 }
 
+#ifdef HALO_GUEST
+typedef FILE *open_stream;
+#define OPEN_STREAM_CLOSE(stream) fclose(stream)
+#else
+typedef SDL_IOStream *open_stream;
+#define OPEN_STREAM_CLOSE(stream) SDL_CloseIO(stream)
+#endif
+
+static struct
+{
+	long file;
+	open_stream stream;
+	unsigned long used;
+} open_files[OPEN_FILES];
+static unsigned long open_files_clock;
+static pthread_mutex_t open_files_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* (under open_files_lock) every one closed */
+static void open_files_close(void)
+{
+	int index;
+
+	for (index = 0; index < OPEN_FILES; index++)
+	{
+		if (open_files[index].stream)
+			OPEN_STREAM_CLOSE(open_files[index].stream);
+		open_files[index].stream = NULL;
+		open_files[index].file = -1;
+	}
+}
+
 static void files_dispose(void)
 {
 	long index;
+
+	pthread_mutex_lock(&open_files_lock);
+	open_files_close();
+	pthread_mutex_unlock(&open_files_lock);
 
 	for (index = 0; index < port_mods.file_count; index++)
 	{
@@ -803,13 +845,13 @@ static int text_file_write(const char *path, const char *text)
 {
 	char temporary[MAXIMUM_PATH_LENGTH];
 	int written;
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 	FILE *file;
 #endif
 
 	if (snprintf(temporary, sizeof(temporary), "%s.new", path) >= (int)sizeof(temporary))
 		return 0;
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 	/* (the guest's own C library: SDL's are the host's) */
 	file = fopen(temporary, "wb");
 	if (!file)
@@ -828,6 +870,39 @@ static int text_file_write(const char *path, const char *text)
 		SDL_RemovePath(temporary);
 #endif
 	return written;
+}
+
+/* removes path: a folder's files and folders first (as deep as
+MAXIMUM_FOLDER_DEPTH); whether it is gone */
+static int path_remove(const char *path, int depth)
+{
+	struct posix_file_information information;
+
+	if (posix_stat(path, &information) != 0)
+		return 1;
+	if ((information.flags & _posix_file_is_directory) && depth <= MAXIMUM_FOLDER_DEPTH)
+	{
+		void *directory = posix_directory_open(path);
+		char name[256];
+
+		while (directory && posix_directory_next(directory, name, sizeof(name)))
+		{
+			char child[MAXIMUM_PATH_LENGTH];
+
+			if (!strcmp(name, ".") || !strcmp(name, ".."))
+				continue;
+			if (snprintf(child, sizeof(child), "%s/%s", path, name) < (int)sizeof(child))
+				path_remove(child, depth + 1);
+		}
+		if (directory)
+			posix_directory_close(directory);
+	}
+#ifdef HALO_GUEST
+	/* (musl's remove takes an empty folder too) */
+	return remove(path) == 0;
+#else
+	return SDL_RemovePath(path);
+#endif
 }
 
 static long file_add(long mod, const char *key, const char *path)
@@ -991,6 +1066,44 @@ long port_mods_scan(void)
 	return port_mods.played_count;
 }
 
+long port_mods_folders(void)
+{
+	char root[MAXIMUM_PATH_LENGTH];
+	void *directory = posix_directory_open(mods_root(root, sizeof(root)));
+	char name[256];
+	long count = 0;
+
+	while (directory && posix_directory_next(directory, name, sizeof(name)))
+	{
+		char path[MAXIMUM_PATH_LENGTH];
+		struct posix_file_information information;
+
+		snprintf(path, sizeof(path), "%s/%s", root, name);
+		if (name[0] != '.' && posix_stat(path, &information) == 0 && (information.flags & _posix_file_is_directory))
+			count++;
+	}
+	if (directory)
+		posix_directory_close(directory);
+	return count;
+}
+
+int port_mods_delete(long index)
+{
+	char root[MAXIMUM_PATH_LENGTH];
+	char path[MAXIMUM_PATH_LENGTH];
+
+	if (index < 0 || index >= port_mods.mod_count)
+		return 0;
+	/* (its files closed first; the list of them is the next scan's to
+	forget) */
+	pthread_mutex_lock(&open_files_lock);
+	open_files_close();
+	pthread_mutex_unlock(&open_files_lock);
+	snprintf(path, sizeof(path), "%s/%s", mods_root(root, sizeof(root)), port_mods.mods[index].folder);
+	platform_log("mods: deleting %s", path);
+	return path_remove(path, 0);
+}
+
 long port_mods_file_find(const char *tag_file, const char *map_name)
 {
 	char key[MAXIMUM_PATH_LENGTH];
@@ -1037,24 +1150,51 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 	unsigned char *staging = NULL;
 	unsigned long done = 0;
 	int read = 1;
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 	FILE *stream;
 #else
 	SDL_IOStream *stream;
 #endif
+
+	int slot = -1, index;
 
 	if (file < 0 || file >= port_mods.file_count)
 		return 0;
 	path = port_mods.files[file].path;
 	if (bounce && !(staging = malloc(READ_BOUNCE_SIZE)))
 		return 0;
-#ifdef HALO_ARM64_GUEST
-	stream = fopen(path, "rb");
+	pthread_mutex_lock(&open_files_lock);
+	/* (the file's stream if it is open, else the least lately used slot's,
+	closed, for it) */
+	for (index = 0; index < OPEN_FILES; index++)
+	{
+		if (open_files[index].stream && open_files[index].file == file)
+		{
+			slot = index;
+			break;
+		}
+		if (slot < 0 || !open_files[index].stream ||
+			(open_files[slot].stream && open_files[index].used < open_files[slot].used))
+			slot = index;
+	}
+	if (!open_files[slot].stream || open_files[slot].file != file)
+	{
+		if (open_files[slot].stream)
+			OPEN_STREAM_CLOSE(open_files[slot].stream);
+#ifdef HALO_GUEST
+		open_files[slot].stream = fopen(path, "rb");
+#else
+		/* (SDL's, for UTF-8 paths on Windows) */
+		open_files[slot].stream = SDL_IOFromFile(path, "rb");
+#endif
+		open_files[slot].file = open_files[slot].stream ? file : -1;
+	}
+	open_files[slot].used = ++open_files_clock;
+	stream = open_files[slot].stream;
+#ifdef HALO_GUEST
 	if (!stream || fseek(stream, (long)offset, SEEK_SET) != 0)
 		read = 0;
 #else
-	/* (SDL's, for UTF-8 paths on Windows) */
-	stream = SDL_IOFromFile(path, "rb");
 	if (!stream || SDL_SeekIO(stream, (Sint64)offset, SDL_IO_SEEK_SET) < 0)
 		read = 0;
 #endif
@@ -1065,7 +1205,7 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 
 		if (bounce && wanted > READ_BOUNCE_SIZE)
 			wanted = READ_BOUNCE_SIZE;
-#ifdef HALO_ARM64_GUEST
+#ifdef HALO_GUEST
 		read = fread(bounce ? staging : destination, 1, wanted, stream) == wanted;
 #else
 		read = SDL_ReadIO(stream, bounce ? staging : destination, wanted) == wanted;
@@ -1077,14 +1217,14 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 		}
 		done += wanted;
 	}
-	if (stream)
+	/* (a stream a read failed on is closed, to be opened again next time) */
+	if (!read && stream)
 	{
-#ifdef HALO_ARM64_GUEST
-		fclose(stream);
-#else
-		SDL_CloseIO(stream);
-#endif
+		OPEN_STREAM_CLOSE(stream);
+		open_files[slot].stream = NULL;
+		open_files[slot].file = -1;
 	}
+	pthread_mutex_unlock(&open_files_lock);
 	free(staging);
 	return read;
 }

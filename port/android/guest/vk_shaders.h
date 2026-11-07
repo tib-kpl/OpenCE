@@ -45,6 +45,10 @@ declares all nine, read or not, so that any vertex shader goes with any pixel sh
 #define VK_LOCATION_T2 6
 #define VK_LOCATION_T3 7
 #define VK_LOCATION_FOG 8
+/* and, only between the shaders of a draw lit for each pixel (display.per_pixel_lighting), the normal and the world
+position the model lighting program lights by */
+#define VK_LOCATION_WORLD_NORMAL 9
+#define VK_LOCATION_WORLD_POSITION 10
 
 /* the pixel shader's output */
 #define VK_LOCATION_FRAGMENT_COLOR 0
@@ -52,6 +56,19 @@ declares all nine, read or not, so that any vertex shader goes with any pixel sh
 /* the generators' version: raised by any change to what nv2a_vsh_vk.c or nv2a_psh_vk.c write, so that phase 5's
 cache makes new names for new GLSL */
 #define VK_SHADER_GENERATOR_VERSION 1
+
+/* The pixel key's texture_modes: four 5-bit modes, and above them bits the Xbox leaves 0, as the Switch's renderer has
+them (port/switch/guest/dk_shaders.h). Only a key with one of them makes different GLSL, so a shader whose key has none
+keeps its name and its code (no generator version raised): */
+/* a stage's coordinates clipped (halo_texture_clip, d3d8_vk.c): the shader lets a pixel go first if its u or v (and w,
+with NV2A_PIXEL_KEY_CLIP_3D) is outside the limits in alpha_reference.y and .z; the stage in the bits at
+NV2A_PIXEL_KEY_CLIP_STAGE_SHIFT (0 for the shadows' stage 0) */
+#define NV2A_PIXEL_KEY_CLIP 0x10000000u
+#define NV2A_PIXEL_KEY_CLIP_STAGE_SHIFT 20
+#define NV2A_PIXEL_KEY_CLIP_STAGE_MASK (3u << NV2A_PIXEL_KEY_CLIP_STAGE_SHIFT)
+#define NV2A_PIXEL_KEY_CLIP_3D 0x00400000u
+/* the zoom's blend of its blurred small copy of the screen over the screen (halo_screen_warp_blend, d3d8_vk.c) */
+#define NV2A_PIXEL_KEY_WARP_BLEND 0x40000000u
 
 /* ---------- vertex_constants (binding 0): Direct3D's constant registers c[-96..95] */
 
@@ -92,7 +109,8 @@ struct vk_vertex_parameters
 #define VK_PIXEL_PARAMETERS_BUMP_MATRIX 336
 #define VK_PIXEL_PARAMETERS_BUMP_LUMINANCE 400
 #define VK_PIXEL_PARAMETERS_TEXTURE_SCALE 464
-#define VK_PIXEL_PARAMETERS_SIZE 528
+#define VK_PIXEL_PARAMETERS_MODEL_LIGHTS 528
+#define VK_PIXEL_PARAMETERS_SIZE 720
 
 struct vk_pixel_parameters
 {
@@ -107,6 +125,9 @@ struct vk_pixel_parameters
 	float bump_matrix[4][4];
 	float bump_luminance[4][4];
 	float texture_scale[4][4];
+	/* a draw lit for each pixel: the vertex constants its lighting reads (XGPU_MODEL_LIGHT_COUNT, xgpu.h); zero otherwise.
+	Declared only by the pixel shaders that read them */
+	float model_lights[12][4];
 };
 
 /* ---------- compile-time checks: the structures are the blocks, byte for byte */
@@ -141,6 +162,8 @@ VK_SHADERS_CHECK(pixel_parameters_bump_luminance,
 	offsetof(struct vk_pixel_parameters, bump_luminance) == VK_PIXEL_PARAMETERS_BUMP_LUMINANCE);
 VK_SHADERS_CHECK(pixel_parameters_texture_scale,
 	offsetof(struct vk_pixel_parameters, texture_scale) == VK_PIXEL_PARAMETERS_TEXTURE_SCALE);
+VK_SHADERS_CHECK(pixel_parameters_model_lights,
+	offsetof(struct vk_pixel_parameters, model_lights) == VK_PIXEL_PARAMETERS_MODEL_LIGHTS);
 
 /* ---------- identity (phase 5)
 
@@ -198,6 +221,8 @@ struct vk_pipeline_state
 	uint32_t blend_enable, source_color_factor, destination_color_factor, color_op;
 	uint32_t source_alpha_factor, destination_alpha_factor, alpha_op, color_write_mask;
 	uint32_t color_format, depth_format;
+	/* the samples a pixel of the targets (vk_command_targets): 0 for one */
+	uint32_t samples;
 	uint32_t binding_count;
 	struct { uint32_t stride, rate; } bindings[VK_PIPELINE_VERTEX_BINDINGS];
 	struct { uint32_t format, binding, offset; } attributes[VK_PIPELINE_VERTEX_ATTRIBUTES];
@@ -211,15 +236,21 @@ struct vk_pipeline_state
 /* ---------- the generators */
 
 /* GLSL 450 for glslang for an NV2A vertex program (the instruction words after the program header). Attributes whose
-bit is set in packed_attribute_mask are fed as NORMPACKED3 32-bit integers and unpacked in the shader. Returns a
-malloc'd string. */
+bit is set in packed_attribute_mask are fed as NORMPACKED3 32-bit integers and unpacked in the shader. With lighting
+(else NULL), the normal and world position go to the pixel shader too (VK_LOCATION_WORLD_*), which lights the diffuse
+color for each pixel (the key's per_pixel_lighting). Returns a malloc'd string. */
+struct nv2a_vertex_lighting;
 char *nv2a_vk_vertex_shader_to_glsl(const uint32_t *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask);
+	unsigned long packed_attribute_mask, const struct nv2a_vertex_lighting *lighting);
+/* the fixed-function pipeline's vertex shader (SetVertexShader with 0: the loading screen's immediate-mode draws, whose
+positions d3d8_vk.c's draw_make has put in clip space). Returns a malloc'd string. */
+char *nv2a_vk_fixed_function_glsl(void);
 
 struct nv2a_pixel_shader_key;
 
 /* GLSL 450 for glslang for an Xbox pixel shader (the key is xgpu.h's); the key's count_samples is ignored (the
-visibility tests are occlusion queries). Returns a malloc'd string. */
+visibility tests are occlusion queries). With per_pixel_lighting, the diffuse color is lit for each pixel from
+model_lights; with alpha_test_samples, the alpha test covers samples. Returns a malloc'd string. */
 char *nv2a_vk_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);
 
 #endif

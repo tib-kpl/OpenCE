@@ -123,6 +123,9 @@ enum
 	_render_model_shadow_bit,
 	_render_model_no_planar_fog_bit,
 	_render_model_first_person_bit,
+	/* port: drawn at once, over the menus, with its own depth
+	(port/linux/game/menu_chief.c) */
+	_render_model_menu_bit,
 	NUMBER_OF_RENDER_MODEL_FLAGS
 };
 
@@ -478,7 +481,7 @@ static void model_geometry_fix_transparent_part_links(
 	struct model const *model, struct model_geometry *geometry)
 {
 	short i, glass = NONE, energy = NONE, transparent_count = 0;
-	struct model_geometry_part *parts = geometry->parts.address;
+	struct model_geometry_part *parts = TAG_BLOCK_ADDRESS(geometry->parts);
 
 	if (model->nodes.count != 1 || geometry->parts.count < 2 ||
 		geometry->parts.count > MAXIMUM_PARTS_PER_MODEL_GEOMETRY || !parts)
@@ -1262,6 +1265,12 @@ void render_model(
 				FLAG(_rasterizer_geometry_no_fog_bit) |
 				FLAG(_rasterizer_geometry_no_zbuffer_bit) |
 				FLAG(_rasterizer_geometry_sky_bit);
+		}
+		if (TEST_FLAG(flags, _render_model_menu_bit))
+		{
+			model_parameters.geometry_flags = FLAG(_rasterizer_geometry_no_sort_bit) |
+				FLAG(_rasterizer_geometry_no_queue_bit) |
+				FLAG(_rasterizer_geometry_no_fog_bit);
 		}
 		SET_FLAG(model_parameters.geometry_flags, _rasterizer_geometry_atmospheric_fog_but_no_planar_fog_bit, TEST_FLAG(flags, _render_model_no_planar_fog_bit));
 		SET_FLAG(model_parameters.geometry_flags, _rasterizer_geometry_first_person_bit, TEST_FLAG(flags, _render_model_first_person_bit));

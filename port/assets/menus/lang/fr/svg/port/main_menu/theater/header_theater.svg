@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="64" viewBox="0 0 512 64">
+  <defs>
+    <path id="gA" d="M8.77,0L14.11,0L22.88,21.5L18.21,21.5L16.04,16.18L6.84,16.18L4.66,21.5L0,21.5ZM8.36,12.44L14.52,12.44L11.44,4.9Z"/>
+    <path id="gC" d="M0,8.47C0,3.79 3.79,0 8.47,0L17.81,0L17.81,3.85L9.66,3.85C7.12,3.85 5.07,5.9 5.07,8.43L5.07,13.07C5.07,15.6 7.12,17.66 9.66,17.66L17.81,17.66L17.81,21.5L8.47,21.5C3.79,21.5 0,17.71 0,13.03Z"/>
+    <path id="gE" d="M0,8.47C0,3.79 3.79,0 8.47,0L17.78,0L17.78,3.85L9.2,3.85C6.89,3.85 5.02,5.72 5.02,8.02L5.02,8.82L17.76,8.82L17.76,12.53L5.02,12.53L5.02,13.48C5.02,15.78 6.89,17.65 9.2,17.65L17.78,17.65L17.78,21.5L8.47,21.5C3.79,21.5 0,17.71 0,13.03Z"/>
+    <path id="gI" d="M0,0L4.7,0L4.7,21.5L0,21.5Z"/>
+    <path id="gM" d="M0,0L6.86,0L12.21,16.25L17.56,0L24.43,0L24.43,21.5L19.96,21.5L19.96,5.76L14.69,21.5L9.73,21.5L4.46,5.76L4.46,21.5L0,21.5Z"/>
+    <path id="gN" d="M0,0L5.55,0L14.61,15L14.61,0L19.19,0L19.19,21.5L13.64,21.5L4.57,5.65L4.57,21.5L0,21.5Z"/>
+    <path id="gacute" d="M-2,-2.4L2.7,-2.4L5.3,-6.6L0.6,-6.6Z"/>
+    <filter id="soft" filterUnits="userSpaceOnUse" x="-60" y="-60" width="632" height="184">
+      <feGaussianBlur stdDeviation="14.48 13.25"/>
+    </filter>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="64">
+      <rect width="512" height="59" fill="#fff"/>
+    </mask>
+  </defs>
+  <!-- dark blue backdrop: blurred box, cut off at the bottom edge (y=59) -->
+  <g mask="url(#cut)">
+    <rect width="512" height="64" fill="none"/>
+    <rect x="28.02" y="28.41" width="135.32" height="40.01" fill="#021931" fill-opacity="0.919" filter="url(#soft)"/>
+  </g>
+  <!-- "CINÉMA" -->
+  <g id="text" fill="#2995fd">
+    <use href="#gC" transform="translate(29.82,33.50)"/>
+    <use href="#gI" transform="translate(50.80,33.50)"/>
+    <use href="#gN" transform="translate(60.12,33.50)"/>
+    <use href="#gE" transform="translate(82.18,33.50)"/>
+    <use href="#gacute" transform="translate(91.07,33.50)"/>
+    <use href="#gM" transform="translate(103.55,33.50)"/>
+    <use href="#gA" transform="translate(129.66,33.50)"/>
+  </g>
+</svg>

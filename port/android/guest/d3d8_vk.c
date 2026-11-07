@@ -24,6 +24,7 @@ host's Vulkan backend (port/android/host/host_vk.c).
 */
 
 #include "xgpu.h"
+#include "halo_port_window.h"
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
@@ -43,10 +44,29 @@ void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned lon
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 
 /* what the context supports: xbox_textures.c reads it (as d3d8_gl.c
-defines it on Android); nothing here is OpenGL, so nothing is supported */
+defines it on Android); nothing here is OpenGL, so nothing is supported.
+(OpenGL ES's only, xgpu.h: a desktop guest, the PS5's, has none.) */
+#ifdef HALO_GLES
 struct xgpu_capabilities xgpu_capabilities;
-/* This backend keeps the Xbox's depth convention. */
-BOOL xgpu_reversed_depth = FALSE;
+#endif
+
+/* whether two copies of a state are the same, compared a word at a time:
+musl's memcmp goes a byte at a time, and every draw compares several
+hundred bytes of state against what was last told (d3d8_dk.c's, where it
+was 7% of the Switch's game thread; upstream's d3d8_gl.c compares its keys
+the same way). The structs compared are words throughout. */
+static int words_equal(const void *a, const void *b, size_t size)
+{
+	const uint32_t *x = a, *y = b;
+	size_t index;
+
+	for (index = 0; index < size / 4; index++)
+	{
+		if (x[index] != y[index])
+			return 0;
+	}
+	return size % 4 ? !memcmp((const char *)a + size - size % 4, (const char *)b + size - size % 4, size % 4) : 1;
+}
 
 /* ---------- the screen's width
 
@@ -90,7 +110,8 @@ static void screen_mode_choose(long *width, float scale[2])
 	if (*width > 1600)
 		*width = 1600;
 	*width &= ~1L;
-	scale[0] = scale[1] = 1.0f;
+	/* (display.resolution_limit's lines, the screen's at most: sdl_platform.c) */
+	scale[0] = scale[1] = platform_resolution_scale();
 #else
 	long display_width, display_height;
 
@@ -137,21 +158,53 @@ float halo_screen_scale(void)
 	return screen_scale[0] > screen_scale[1] ? screen_scale[0] : screen_scale[1];
 }
 
-/* display.model_detail (d3d8_gl.c): this renderer draws the models' stock
-level of detail */
+/* display.model_detail (as d3d8_gl.c's): "stock" chooses a model's level of
+detail by the Xbox's 480 lines, "native" by the display's, "highest" draws
+the most detailed level of whatever is drawn at all */
+enum
+{
+	_model_detail_stock,
+	_model_detail_native,
+	_model_detail_highest,
+};
+
+/* (read again only when a setting changes: every model asks, every frame) */
+static int model_detail_setting(void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static int value;
+
+	if (read_at != config_changes())
+	{
+		const char *setting = config_string("display.model_detail");
+
+		read_at = config_changes();
+		value = !strcmp(setting, "native") ? _model_detail_native :
+			!strcmp(setting, "highest") ? _model_detail_highest : _model_detail_stock;
+	}
+	return value;
+}
+
 int halo_model_detail_stock(void)
 {
-	return 1;
+	return model_detail_setting() == _model_detail_stock;
 }
 
 float halo_model_detail_scale(int level)
 {
-	(void)level;
-	return 1.0f;
+	float display_scale;
+
+	if (model_detail_setting() == _model_detail_stock)
+		return 1.0f;
+	if (model_detail_setting() == _model_detail_highest && level)
+		return 1.0e6f;
+	display_scale = halo_screen_pixel_scale();
+	return display_scale > 1.0f ? display_scale : 1.0f;
 }
 
-/* the height fade of the shield flare (d3d8_gl.c, overshield_effect.c): this
-renderer draws the flare whole, as the stock game does */
+/* (the OpenGL renderer's alone, which the settings offer only there:
+display.overshield_effect's fade up the body, which this renderer's vertex
+shaders do not draw, and display.hdr's tone mapping) */
 void d3d8_gl_set_height_fade(float inverse_softness, float height, float offset, float scale)
 {
 	(void)inverse_softness;
@@ -160,7 +213,6 @@ void d3d8_gl_set_height_fade(float inverse_softness, float height, float offset,
 	(void)scale;
 }
 
-/* display.hdr's tone mapping (d3d8_gl.c): this renderer draws without HDR */
 void halo_screen_tone_map(short x0, short y0, short x1, short y1)
 {
 	(void)x0;
@@ -169,64 +221,13 @@ void halo_screen_tone_map(short x0, short y0, short x1, short y1)
 	(void)y1;
 }
 
-/* HDR output and its calibration are not available in this backend. */
-int halo_hdr_calibration_available(void)
-{
-	return 0;
-}
-
-void halo_hdr_calibration_show(int pattern, int paper_white, int peak_brightness)
-{
-	(void)pattern;
-	(void)paper_white;
-	(void)peak_brightness;
-}
-
-/* These lifetime notes belong to the GL static-buffer cache. Vulkan's
-uploads do not keep that cache or retain these resource pointers. */
-void xgpu_static_buffer_add(const void *resource, unsigned long size, int indices)
-{
-	(void)resource; (void)size; (void)indices;
-}
-
-void xgpu_static_buffer_remove(const void *resource, int indices)
-{
-	(void)resource; (void)indices;
-}
-
-void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stride, int indices, const void *end)
-{
-	(void)buffers; (void)count; (void)stride; (void)indices; (void)end;
-}
-
-void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices)
-{
-	(void)buffers; (void)count; (void)stride; (void)indices;
-}
-
-void xgpu_static_range_add(const void *start, unsigned long size, int indices)
-{
-	(void)start; (void)size; (void)indices;
-}
-
-void xgpu_static_range_remove(const void *start, int indices)
-{
-	(void)start; (void)indices;
-}
-
-/* (d3d8_gl.c's forgets the GL texture its units had bound; this renderer
-binds no GL texture) */
-void xgpu_gl_texture_deleted(unsigned int texture)
-{
-	(void)texture;
-}
-
 void halo_screen_ui_offset(unsigned char centered)
 {
 	ui_offset = centered ? (halo_screen_width() - 640) / 2 : 0;
 }
 
-/* Match the shared split-screen menus' centering convention. */
+/* (as d3d8_gl.c's: a split screen's view centres the menus' 640 columns in
+it, a quarter's 320) */
 void halo_screen_ui_offset_view(long view_width)
 {
 	long width = halo_screen_width();
@@ -239,23 +240,466 @@ long halo_screen_ui_offset_current(void)
 	return ui_offset;
 }
 
-/* display.shadow_resolution, display.per_pixel_lighting and
-display.anti_aliasing are the OpenGL renderer's (d3d8_gl.c): here the shadow
-maps stay the Xbox's 128x128, every draw is lit as its vertex shader lights
-it, and the 3D view is drawn as it is */
+/* display.reversed_depth is the OpenGL renderer's (d3d8_gl.c): here the
+depth is the Xbox's */
+BOOL xgpu_reversed_depth;
+
+/* HDR Calibration is the desktop's: no HDR display here */
+int halo_hdr_calibration_available(void)
+{
+	return 0;
+}
+
+void halo_hdr_calibration_show(int pattern, int paper_white, int peak_brightness)
+{
+	(void)pattern;
+	(void)paper_white;
+	(void)peak_brightness;
+}
+
+/* ---------- static geometry
+
+The game's geometry written once as a map loads and never after, as d3d8_gl.c's static buffers take it (on Android's
+OpenGL renderer they are part of its geometry fixes): the vertex and index buffers rasterizer_vertex_buffer_new and
+rasterizer_triangle_buffer_new make (Custom Edition and mod models, a Custom Edition map's BSP), one each
+(xgpu_static_buffer_add), and an Xbox map's model geometry in its tags and its BSP's in the BSP, from the first buffer
+to the end of the tags or the BSP (xgpu_static_buffers_add). A range is copied to the host the first time a draw reads
+it (host_vk_static_make), and draws inside it name that copy instead of putting their bytes; it is let go when the game
+releases or unloads it (VK_COMMAND_STATIC_FREE), and every range when the map's tags are let go (xgpu_static_forget_all).
+debug.vk_static_geometry false puts every draw's bytes as before; debug.vk_static_check keeps a copy of each range and
+every 60 frames logs one whose bytes changed since, where, and whether draws read there (they would read it stale). */
+
+uint32_t host_vk_static_make(uint32_t address, uint32_t size);
+
+struct static_range
+{
+	unsigned long start;
+	unsigned long size;
+	/* the host's copy (VK_DATA_STATIC and its own), 0 until a draw reads it; failed: the host could not, and draws put
+	their bytes, as before */
+	uint32_t id;
+	BOOL failed;
+	/* (debug.vk_static_check) its bytes when copied, whether a change was said, and the span draws have read */
+	unsigned char *copy;
+	BOOL changed_said;
+	unsigned long read_low, read_high;
+};
+
+/* sorted by start, one list of vertices (0) and one of indices (1); the ranges of a list are separate memory */
+static struct static_range_list
+{
+	struct static_range *entries;
+	unsigned long count;
+	unsigned long capacity;
+} static_lists[2];
+
+static int static_check_on(void)
+{
+	static int read, on;
+
+	if (!read)
+	{
+		read = 1;
+		on = config_boolean("debug.vk_static_check") != 0;
+		if (on)
+			platform_log("vk: static geometry is checked every 60 frames (debug.vk_static_check)");
+	}
+	return on;
+}
+
+/* the first entry of the list whose start is above address */
+static unsigned long static_upper(const struct static_range_list *list, unsigned long address)
+{
+	unsigned long low = 0, high = list->count;
+
+	while (low < high)
+	{
+		unsigned long middle = (low + high) / 2;
+
+		if (list->entries[middle].start <= address)
+			low = middle + 1;
+		else
+			high = middle;
+	}
+	return low;
+}
+
+/* a resource's bytes in memory: vertex buffers carry a physical address, index buffers a virtual one
+(d3d8_resources.c) */
+static unsigned long static_resource_start(const void *resource, BOOL indices)
+{
+	DWORD data = ((const DWORD *)resource)[1];
+
+	if (!data)
+		return 0;
+	return indices ? (unsigned long)data : (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(data);
+}
+
+static void static_forget(struct static_range_list *list, unsigned long start)
+{
+	unsigned long index = static_upper(list, start);
+	struct static_range *entry;
+
+	if (!index || list->entries[index - 1].start != start)
+		return;
+	entry = &list->entries[index - 1];
+	free(entry->copy);
+	if (entry->id)
+	{
+		struct vk_command_static_free *command = vk_stream_command(VK_COMMAND_STATIC_FREE, sizeof(*command));
+
+		command->id = entry->id;
+	}
+	memmove(entry, entry + 1, (list->count - index) * sizeof(*entry));
+	list->count--;
+}
+
+static void static_note(struct static_range_list *list, unsigned long start, unsigned long size)
+{
+	unsigned long index;
+	struct static_range *entry;
+
+	if (!start || !size)
+		return;
+	static_forget(list, start);
+	index = static_upper(list, start);
+	/* (a bsp's vertices and lightmap vertices both run to its end: the one that starts lower covers the other) */
+	if (index && list->entries[index - 1].start + list->entries[index - 1].size == start + size)
+		return;
+	if (index < list->count && list->entries[index].start + list->entries[index].size == start + size)
+		static_forget(list, list->entries[index].start);
+	/* (one it overlaps is of memory read over since: let go. d3d8_gl.c leaves the new range to stream instead, and the
+	old one stays listed, stale) */
+	while (index && list->entries[index - 1].start + list->entries[index - 1].size > start)
+	{
+		static_forget(list, list->entries[index - 1].start);
+		index = static_upper(list, start);
+	}
+	while (index < list->count && start + size > list->entries[index].start)
+		static_forget(list, list->entries[index].start);
+	if (list->count == list->capacity)
+	{
+		unsigned long capacity = list->capacity ? list->capacity * 2 : 256;
+		struct static_range *entries = realloc(list->entries, capacity * sizeof(*entries));
+
+		if (!entries)
+			return;
+		list->entries = entries;
+		list->capacity = capacity;
+	}
+	memmove(&list->entries[index + 1], &list->entries[index], (list->count - index) * sizeof(*entry));
+	list->count++;
+	entry = &list->entries[index];
+	memset(entry, 0, sizeof(*entry));
+	entry->start = start;
+	entry->size = size;
+}
+
+/* [address, address + size) inside one static range of the kind asked for: the ref of the host's copy at its place in
+it, the range copied now if no draw has read it yet. FALSE (the draw puts the bytes) where it is in none, or the copy
+could not be made, or its place is not aligned as a vertex buffer's or an index buffer's offset is safely read at */
+static BOOL static_ref(const void *address, unsigned long size, BOOL indices, struct vk_data_ref *ref)
+{
+	static int read, on;
+	struct static_range_list *list = &static_lists[indices != 0];
+	unsigned long at = (unsigned long)address;
+	unsigned long index = static_upper(list, at);
+	struct static_range *entry;
+
+	/* (debug.vk_static_geometry false: every draw puts its bytes, as before) */
+	if (!read)
+	{
+		read = 1;
+		on = config_boolean("debug.vk_static_geometry") != 0;
+		if (!on)
+			platform_log("vk: static geometry is put at each draw (debug.vk_static_geometry false)");
+	}
+	if (!on || !index || !size)
+		return FALSE;
+	entry = &list->entries[index - 1];
+	if (at - entry->start > entry->size || size > entry->size - (at - entry->start) ||
+		((at - entry->start) & (indices ? 1 : 3)) || (entry->start & 3))
+	{
+		return FALSE;
+	}
+	if (!entry->id)
+	{
+		if (entry->failed)
+			return FALSE;
+		entry->id = host_vk_static_make((uint32_t)entry->start, (uint32_t)entry->size);
+		if (!entry->id)
+		{
+			entry->failed = TRUE;
+			return FALSE;
+		}
+		if (static_check_on())
+		{
+			entry->copy = malloc(entry->size);
+			if (entry->copy)
+				memcpy(entry->copy, (const void *)entry->start, entry->size);
+			entry->read_low = entry->size;
+		}
+	}
+	if (entry->copy)
+	{
+		if (at - entry->start < entry->read_low)
+			entry->read_low = at - entry->start;
+		if (at - entry->start + size > entry->read_high)
+			entry->read_high = at - entry->start + size;
+	}
+	ref->id = entry->id;
+	ref->offset = (uint32_t)(at - entry->start);
+	return TRUE;
+}
+
+/* debug.vk_static_check: every copied range hashed again (at Present, every 60 frames), and one whose bytes changed
+since it was copied said once: its draws would read the copy, stale */
+static void static_check(void)
+{
+	int kind;
+	unsigned long index;
+
+	if (!static_check_on())
+		return;
+	for (kind = 0; kind < 2; kind++)
+	{
+		for (index = 0; index < static_lists[kind].count; index++)
+		{
+			struct static_range *entry = &static_lists[kind].entries[index];
+			const unsigned char *now = (const unsigned char *)entry->start;
+			unsigned long at, first = 0, last = 0, bytes = 0, spans = 0, read = 0;
+
+			if (!entry->copy || entry->changed_said || !memcmp(entry->copy, now, entry->size))
+				continue;
+			for (at = 0; at < entry->size; at++)
+			{
+				if (entry->copy[at] == now[at])
+					continue;
+				if (!bytes || at > last + 1)
+					spans++;
+				if (!bytes)
+					first = at;
+				last = at;
+				bytes++;
+				if (at >= entry->read_low && at < entry->read_high)
+					read++;
+			}
+			entry->changed_said = TRUE;
+			platform_log("vk: STATIC CHANGED: the %s range at 0x%08lx, %lu bytes: %lu bytes changed in %lu spans, from %lu "
+				"to %lu; draws have read %lu to %lu, %lu of the changed bytes in it", kind ? "index" : "vertex",
+				entry->start, entry->size, bytes, spans, first, last, entry->read_low, entry->read_high, read);
+		}
+	}
+}
+
+void xgpu_static_buffer_add(const void *resource, unsigned long size, int indices)
+{
+	if (resource)
+		static_note(&static_lists[indices != 0], static_resource_start(resource, indices != 0), size);
+}
+
+void xgpu_static_buffer_remove(const void *resource, int indices)
+{
+	if (resource)
+		static_forget(&static_lists[indices != 0], static_resource_start(resource, indices != 0));
+}
+
+/* the lowest data of count resources, stride bytes apart; 0 without */
+static unsigned long static_resources_first(const void *buffers, long count, unsigned long stride, BOOL indices)
+{
+	unsigned long first = 0;
+	long index;
+
+	for (index = 0; buffers && index < count; index++)
+	{
+		unsigned long start = static_resource_start((const unsigned char *)buffers + index * stride, indices);
+
+		if (start && (!first || start < first))
+			first = start;
+	}
+	return first;
+}
+
+void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stride, int indices, const void *end)
+{
+	unsigned long first = static_resources_first(buffers, count, stride, indices != 0);
+
+	if (first && (unsigned long)end > first)
+		static_note(&static_lists[indices != 0], first, (unsigned long)end - first);
+}
+
+void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices)
+{
+	unsigned long first = static_resources_first(buffers, count, stride, indices != 0);
+
+	if (first)
+		static_forget(&static_lists[indices != 0], first);
+}
+
+void xgpu_static_range_add(const void *start, unsigned long size, int indices)
+{
+	static_note(&static_lists[indices != 0], (unsigned long)start, size);
+}
+
+void xgpu_static_range_remove(const void *start, int indices)
+{
+	static_forget(&static_lists[indices != 0], (unsigned long)start);
+}
+
+/* the map's tags are let go: every range with them. The game lets its BSP's go only later, after the next map's tags
+(the menu's) may have been read over it, and a draw inside the stale range would read its copy (debug.vk_static_check
+found the BSP's ranges rewritten while still listed) */
+void xgpu_static_forget_all(void)
+{
+	int kind;
+
+	for (kind = 0; kind < 2; kind++)
+	{
+		while (static_lists[kind].count)
+			static_forget(&static_lists[kind], static_lists[kind].entries[static_lists[kind].count - 1].start);
+	}
+}
+
+/* display.shadow_resolution: the size the shadow maps are drawn at, as in
+d3d8_gl.c. Each object's shadow is drawn from above into a 128x128 map,
+blurred into another and projected onto the level under it
+(rasterizer_xbox_shadows.c). The two maps, the game's only R5G6B5 render
+targets, are drawn larger as the screen's targets are (target_scale_of): the
+game's viewports, clears and quads, in its 128 units, scale up with them. The
+scale is a power of two up to 8 (1024x1024), which the blur needs to cover
+the same part of the map as the Xbox's (rasterizer_shadow_convolve); 1, the
+default, draws them as the Xbox did. It changes only between frames
+(halo_screen_commit). */
+#define SHADOW_MAP_SIZE 128
+#define SHADOW_MAP_MAXIMUM_SCALE 8
+
+/* 0 until first asked */
+static long shadow_scale;
+static unsigned long shadow_scale_read_at;
+
+static long shadow_scale_choose(void)
+{
+	long resolution = config_integer("display.shadow_resolution");
+	long scale = 1;
+
+	while (scale < SHADOW_MAP_MAXIMUM_SCALE && SHADOW_MAP_SIZE * scale * 2 <= resolution)
+		scale *= 2;
+	return scale;
+}
+
+/* the shadow maps' pixels for each of their 128 texels each way */
 long halo_shadow_map_scale(void)
 {
-	return 1;
+	if (!shadow_scale)
+	{
+		shadow_scale_read_at = config_changes();
+		shadow_scale = shadow_scale_choose();
+		platform_log("shadow maps: %ldx%ld", SHADOW_MAP_SIZE * shadow_scale, SHADOW_MAP_SIZE * shadow_scale);
+	}
+	return shadow_scale;
 }
 
-void halo_vertex_shader_lighting(unsigned long handle)
+/* display.shadow_resolution, if it has changed (halo_screen_commit, between
+frames): the maps are then described to the host at the new size, which
+makes them anew */
+static void shadow_scale_commit(void)
 {
-	(void)handle;
+	long scale;
+
+	if (!shadow_scale || shadow_scale_read_at == config_changes())
+		return;
+	shadow_scale_read_at = config_changes();
+	scale = shadow_scale_choose();
+	if (scale != shadow_scale)
+	{
+		platform_log("shadow maps: %ldx%ld", SHADOW_MAP_SIZE * scale, SHADOW_MAP_SIZE * scale);
+		shadow_scale = scale;
+	}
 }
 
-void halo_screen_anti_alias(short x0, short y0, short x1, short y1)
+
+/* ---------- anti-aliasing
+
+display.anti_aliasing, off unless it is set, as d3d8_gl.c reads it on Android: "fxaa" (and "smaa", which Android draws
+as FXAA) is a pass over each window's 3D view before the HUD and menus are drawn over it (halo_screen_anti_alias, the
+host's host_vk_post.c); "msaa2x" to "msaa8x" draw the screen's targets, and any target drawn together with one of them,
+with that many samples a pixel, or as many as the device has (targets_bind; the host's multisampled images, which it
+resolves); "ssaa2x" is off. The setting is read again between frames (halo_screen_commit), so that a change applies from
+the next one. */
+
+enum
 {
-	(void)x0; (void)y0; (void)x1; (void)y1;
+	_anti_aliasing_off,
+	_anti_aliasing_fxaa,
+	_anti_aliasing_msaa,
+};
+
+static const struct
+{
+	const char *name;
+	int mode;
+	int samples;
+} anti_aliasing_values[] =
+{
+	{ "off", _anti_aliasing_off, 0 },
+	{ "fxaa", _anti_aliasing_fxaa, 0 },
+	{ "smaa", _anti_aliasing_fxaa, 0 },
+	{ "ssaa2x", _anti_aliasing_off, 0 },
+	{ "msaa2x", _anti_aliasing_msaa, 2 },
+	{ "msaa4x", _anti_aliasing_msaa, 4 },
+	{ "msaa8x", _anti_aliasing_msaa, 8 },
+};
+
+#define NUMBER_OF_ANTI_ALIASING_VALUES ((int)(sizeof(anti_aliasing_values) / sizeof(anti_aliasing_values[0])))
+
+uint32_t host_vk_samples_supported(uint32_t samples);
+
+/* the value in effect, -1 until the setting is first read, and multisampling's samples a pixel, at most the device's (1
+when it has no more) */
+static int anti_aliasing_value = -1;
+static unsigned long anti_aliasing_samples = 1;
+
+static void multisampled_forget(void);
+
+/* display.anti_aliasing's value (none of them: the first, off) */
+static void anti_aliasing_read(void)
+{
+	const char *setting = config_string("display.anti_aliasing");
+	int value;
+
+	for (value = NUMBER_OF_ANTI_ALIASING_VALUES - 1; value > 0 && strcmp(setting, anti_aliasing_values[value].name); value--)
+	{
+	}
+	if (value == anti_aliasing_value)
+		return;
+	anti_aliasing_value = value;
+	anti_aliasing_samples = 1;
+	multisampled_forget();
+	if (anti_aliasing_values[value].mode == _anti_aliasing_msaa)
+	{
+		anti_aliasing_samples = host_vk_samples_supported((uint32_t)anti_aliasing_values[value].samples);
+		if (anti_aliasing_samples < 2)
+			platform_log("anti-aliasing: %s, which this device cannot draw: off", setting);
+		else
+			platform_log("anti-aliasing: %s, drawn with %lu samples a pixel", setting, anti_aliasing_samples);
+	}
+	else if (strcmp(setting, anti_aliasing_values[value].name))
+	{
+		platform_log("anti-aliasing: \"%s\" is unknown, so off", setting);
+	}
+	else
+	{
+		platform_log("anti-aliasing: %s%s", setting, anti_aliasing_values[value].mode == _anti_aliasing_fxaa &&
+			strcmp(setting, "fxaa") ? " (FXAA here)" : anti_aliasing_values[value].mode == _anti_aliasing_off &&
+			strcmp(setting, "off") ? " (off here)" : "");
+	}
+}
+
+static int anti_aliasing(void)
+{
+	if (anti_aliasing_value < 0)
+		anti_aliasing_read();
+	return anti_aliasing_values[anti_aliasing_value].mode;
 }
 
 /* ---------- state the XDK header's inline functions read and write */
@@ -290,6 +734,13 @@ struct vertex_shader_object
 	unsigned long packed_mask;
 	/* FNV-1a 64 of the instruction count and words (vk_shaders.h): what the shader cache knows the program by */
 	uint64_t program_hash;
+	/* one of the game's model lighting programs (halo_vertex_shader_lighting), whose draws can be lit for each pixel
+	(display.per_pixel_lighting): where its lighting's normal and position are (lighting.lights is 0 for the others) */
+	struct nv2a_vertex_lighting lighting;
+	/* a shader lit for each pixel failed to compile: lit as the vertex shader lights it from then on */
+	BOOL lighting_failed;
+	/* the fixed-function pipeline's (fixed_function_program): its GLSL is nv2a_vk_fixed_function_glsl's */
+	BOOL fixed_function;
 };
 
 /* ---------- the device */
@@ -298,6 +749,11 @@ struct vk_device
 {
 	D3DPRESENT_PARAMETERS presentation;
 	D3DSurface back_buffer;
+	/* the frame shown last, as the loading screen reads it (GetBackBuffer with -1: front_buffer_ready); the frame it was
+	last asked for in, and the frame its picture was last taken in (front_buffer_take), each + 1 */
+	D3DSurface front_buffer;
+	unsigned long front_buffer_asked;
+	unsigned long front_buffer_taken;
 	D3DSurface depth_buffer;
 	D3DSurface *render_target;
 	D3DSurface *depth_stencil;
@@ -308,6 +764,8 @@ struct vk_device
 	D3DSHADERCONSTANTMODE shader_constant_mode;
 
 	struct vertex_shader_object *vertex_shader;
+	/* SetVertexShader chose the fixed-function pipeline (with 0): the loading screen's draws (fixed_function_program) */
+	BOOL fixed_function;
 	struct vertex_shader_object *program_slots[VERTEX_PROGRAM_SLOTS];
 	unsigned long program_address;
 	float constants[XGPU_VERTEX_CONSTANT_COUNT][4];
@@ -326,9 +784,15 @@ struct vk_device
 	float attributes[XGPU_VERTEX_ATTRIBUTE_COUNT][4];
 	BOOL immediate_active;
 	D3DPRIMITIVETYPE immediate_type;
+	/* Begin's vertices: only the registers set since Begin, a column each (immediate_registers, in the order they were
+	first set); the others keep their value through the batch and are read from a binding of stride 0 */
 	float *immediate_vertices;
 	unsigned long immediate_count;
+	/* (in floats) */
 	unsigned long immediate_capacity;
+	unsigned long immediate_mask;
+	unsigned immediate_columns;
+	unsigned char immediate_registers[XGPU_VERTEX_ATTRIBUTE_COUNT];
 
 	BOOL visibility_test_active;
 	/* the platform layer made a window (not debug.null_renderer): there is something to draw into */
@@ -445,9 +909,14 @@ void WINAPI D3DDevice_SetVerticalBlankCallback(D3DCALLBACK callback)
 	vertical_blank_start();
 }
 
+static void front_buffer_take(void);
+
 void WINAPI D3DDevice_BlockUntilVerticalBlank(void)
 {
 	unsigned long count;
+
+	/* (the loading screen's last call: its frame, for the next frame's trails) */
+	front_buffer_take();
 
 	vertical_blank_start();
 	pthread_mutex_lock(&vertical_blank_lock);
@@ -481,19 +950,29 @@ Commands are written here over a frame and handed to the host half
 host reads them during the call and nothing later. */
 
 void host_vk_submit(unsigned int commands, unsigned int size);
+/* the highest submission the GPU has finished (imported, not yet called) */
+unsigned int host_vk_retired(void);
 /* the shader service (host_vk_shaders.c; the imports pass a 64-bit hash in one register) */
 void host_vk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl, uint32_t glsl_size);
 uint32_t host_vk_shader_find(uint32_t stage, uint64_t hash, uint32_t status_out);
+uint32_t host_vk_shader_make(uint32_t stage, uint64_t hash);
 
 #define STREAM_SIZE (4 * 1024 * 1024)
 
-static uint32_t stream[STREAM_SIZE / 4];
+/* the streams, written in turn: the host may still be running the one handed over last (VK_COMMAND_STREAMS) */
+static uint32_t streams[VK_COMMAND_STREAMS][STREAM_SIZE / 4];
+static unsigned stream_index;
+static uint32_t *stream = streams[0];
 static unsigned long stream_used;
 
 static void stream_flush(void)
 {
 	if (stream_used)
+	{
 		host_vk_submit((unsigned int)(uintptr_t)stream, (unsigned int)stream_used);
+		stream_index = (stream_index + 1) % VK_COMMAND_STREAMS;
+		stream = streams[stream_index];
+	}
 	stream_used = 0;
 }
 
@@ -567,13 +1046,28 @@ as render_target_get in d3d8_gl.c works it out (a target the size of the screen 
 the screen's scale), and what clears are scaled by (target_pixel there) */
 static float target_scale[2] = { 1.0f, 1.0f };
 
-static void target_scale_of(unsigned long width, unsigned long height, float scale[2])
+/* the game's only R5G6B5 targets, 128x128: the shadow maps (halo_shadow_map_scale) */
+static BOOL surface_is_shadow_map(const D3DSurface *surface)
+{
+	struct xgpu_texture_description description;
+
+	xgpu_texture_describe(surface->Format, surface->Size, &description);
+	return description.format == D3DFMT_R5G6B5 && description.width == SHADOW_MAP_SIZE &&
+		description.height == SHADOW_MAP_SIZE;
+}
+
+static void target_scale_of(const D3DSurface *surface, unsigned long width, unsigned long height, BOOL depth,
+	float scale[2])
 {
 	scale[0] = scale[1] = 1.0f;
 	if (width == (unsigned long)halo_screen_width() && height == SCREEN_HEIGHT)
 	{
 		scale[0] = screen_scale[0];
 		scale[1] = screen_scale[1];
+	}
+	else if (!depth && surface_is_shadow_map(surface))
+	{
+		scale[0] = scale[1] = (float)halo_shadow_map_scale();
 	}
 }
 
@@ -597,7 +1091,7 @@ static void surface_describe(const D3DSurface *surface, BOOL depth_only, struct 
 	surface_dimensions(surface, &width, &height, &depth);
 	if (depth_only && !depth)
 		return;
-	target_scale_of(width, height, scale);
+	target_scale_of(surface, width, height, depth, scale);
 	out->data = surface->Data;
 	out->width = (uint32_t)width;
 	out->height = (uint32_t)height;
@@ -614,6 +1108,52 @@ static void rendered_note(const D3DSurface *surface);
 static struct vk_command_targets targets_told;
 static BOOL targets_known;
 
+/* ---------- multisampling's targets
+
+With display.anti_aliasing's multisampling, the screen's targets are drawn multisampled, and so is any target drawn
+together with one of them (the mirror's view goes to the secondary target with the back buffer's depth buffer), from
+then on: a rendering's attachments have one count of samples, and a target the host makes multisampled keeps its samples
+until it is made single again, which would lose what it holds (bind_targets in d3d8_gl.c, which keeps a renderbuffer of
+the same sticking). The targets made multisampled are remembered by address until the setting changes. */
+
+#define MULTISAMPLED_MAXIMUM 64
+
+static unsigned long multisampled[MULTISAMPLED_MAXIMUM];
+static unsigned multisampled_count;
+
+static void multisampled_forget(void)
+{
+	multisampled_count = 0;
+}
+
+static BOOL multisampled_is(unsigned long data)
+{
+	unsigned index;
+
+	for (index = 0; data && index < multisampled_count; index++)
+	{
+		if (multisampled[index] == data)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void multisampled_note(unsigned long data)
+{
+	if (data && !multisampled_is(data) && multisampled_count < MULTISAMPLED_MAXIMUM)
+		multisampled[multisampled_count++] = data;
+}
+
+/* a surface the size of the screen (the back buffer, its depth buffer, the secondary targets) */
+static BOOL surface_is_screen(const struct vk_surface *surface)
+{
+	return surface->kind != VK_SURFACE_NONE && surface->width == (uint32_t)halo_screen_width() &&
+		surface->height == SCREEN_HEIGHT;
+}
+
+/* the samples a pixel of the bound targets (targets_told.samples), 1 for one */
+static unsigned long target_samples = 1;
+
 /* tells the host the current targets, if they are not what it has, and sets the scale
 viewports and clears are in; FALSE if there is nothing to draw into (bind_targets in
 d3d8_gl.c) */
@@ -627,6 +1167,17 @@ static BOOL targets_bind(BOOL *has_depth)
 	surface_describe(device.depth_stencil, TRUE, &targets.depth, depth_scale);
 	if (targets.color.kind == VK_SURFACE_NONE && targets.depth.kind == VK_SURFACE_NONE)
 		return FALSE;
+	/* with multisampling, multisampled where either is a screen buffer or is multisampled already */
+	target_samples = 1;
+	if (anti_aliasing() == _anti_aliasing_msaa && anti_aliasing_samples > 1 &&
+		(surface_is_screen(&targets.color) || surface_is_screen(&targets.depth) ||
+		multisampled_is(targets.color.data) || multisampled_is(targets.depth.data)))
+	{
+		target_samples = anti_aliasing_samples;
+		multisampled_note(targets.color.data);
+		multisampled_note(targets.depth.data);
+		targets.samples = (uint32_t)target_samples;
+	}
 	if (targets.color.kind != VK_SURFACE_NONE)
 	{
 		target_scale[0] = color_scale[0];
@@ -637,13 +1188,14 @@ static BOOL targets_bind(BOOL *has_depth)
 		target_scale[0] = depth_scale[0];
 		target_scale[1] = depth_scale[1];
 	}
-	if (!targets_known || memcmp(&targets.color, &targets_told.color, sizeof(targets.color)) ||
-		memcmp(&targets.depth, &targets_told.depth, sizeof(targets.depth)))
+	if (!targets_known || !words_equal(&targets.color, &targets_told.color, sizeof(targets.color)) ||
+		!words_equal(&targets.depth, &targets_told.depth, sizeof(targets.depth)) || targets.samples != targets_told.samples)
 	{
 		struct vk_command_targets *command = stream_command(VK_COMMAND_TARGETS, sizeof(*command));
 
 		command->color = targets.color;
 		command->depth = targets.depth;
+		command->samples = targets.samples;
 		targets_told = targets;
 		targets_known = TRUE;
 		if (targets.color.kind != VK_SURFACE_NONE)
@@ -651,6 +1203,209 @@ static BOOL targets_bind(BOOL *has_depth)
 	}
 	*has_depth = targets.depth.kind != VK_SURFACE_NONE;
 	return TRUE;
+}
+
+/* the part of a frame being drawn, for the GPU's time by part (host_vk_profile.c): told the host only while a profile
+is recorded (debug.profile_run, Android's), as the Switch's renderer keeps it (port/switch/guest/d3d8_dk.c) */
+int halo_render_defer_sun_glow(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int deferred = -1;
+
+	if (deferred < 0)
+	{
+		deferred = !config_boolean("debug.original_sun_glow");
+		if (!deferred)
+			platform_log("sun glow: made in the middle of the frame, as the game does (debug.original_sun_glow)");
+	}
+	return deferred;
+#else
+	return 0;
+#endif
+}
+
+int halo_render_defer_water(void)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int deferred = -1;
+
+	if (deferred < 0)
+	{
+		deferred = !config_boolean("debug.original_water");
+		if (!deferred)
+			platform_log("water: its ripples made in the middle of the frame, as the game does (debug.original_water)");
+	}
+	return deferred;
+#else
+	return 0;
+#endif
+}
+
+void halo_render_marker(char const *name)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	static int profiling = -1;
+	struct vk_command_marker *command;
+	size_t length = 0;
+
+	if (profiling < 0)
+		profiling = config_boolean("debug.profile_run") ? 1 : 0;
+	if (!profiling)
+		return;
+	command = stream_command(VK_COMMAND_MARKER, sizeof(*command));
+	while (name[length] && length < sizeof(command->name) - 1)
+	{
+		command->name[length] = name[length];
+		length++;
+	}
+	while (length < sizeof(command->name))
+		command->name[length++] = 0;
+#else
+	(void)name;
+#endif
+}
+
+/* ---------- the GPU's savings the Switch's renderer made first (port/switch/guest/d3d8_dk.c)
+
+A shadow cast on the level and a dynamic light's pass draw the level's triangles again, much bigger than what they
+change: they are rasterized only inside the rectangle of the screen they can change (halo_draw_scissor), and the
+pixels left whose coordinates are outside the shadow's map or the light's box let go before the shader reads anything
+(halo_texture_clip, NV2A_PIXEL_KEY_CLIP in nv2a_psh_vk.c). The zoom's blur and a cutscene's blur are drawn on small
+copies of the screen (rasterizer_xbox_screen_effect.c), the zoom's blended over it by its own shader
+(NV2A_PIXEL_KEY_WARP_BLEND). The debug settings the Switch has turn each off: debug.gpu_draw_scissor,
+debug.gpu_texture_clip, debug.original_zoom and debug.original_blur. */
+
+/* the clip of the draws that follow: the lowest and highest coordinate as the stage samples it (0 to 1 across the
+texture), and whether to clip (the pixel parameters' alpha_reference.y to .w); the stage, and in three coordinates */
+static float texture_clip[3];
+static int texture_clip_stage;
+static int texture_clip_3d;
+
+void halo_texture_clip_stage(short stage, unsigned char three_dimensional, float low, float high)
+{
+	unsigned char clip = stage >= 0 && stage < 4;
+	/* debug.gpu_texture_clip: "on", "off" (never clipped), "wide" (clipped by limits nothing reaches: the clip's own
+	cost, apart from where), or "<low>,<high>": the limits to clip by, whatever the caller asks */
+	static int mode = -1;
+	static float set_low, set_high;
+
+	if (mode < 0)
+	{
+		const char *setting = config_string("debug.gpu_texture_clip");
+
+		mode = !strcmp(setting, "off") ? 0 : !strcmp(setting, "wide") ? 2 : 1;
+		if (mode == 1 && sscanf(setting, "%f,%f", &set_low, &set_high) == 2)
+			mode = 3;
+		if (mode != 1)
+			platform_log("texture clip: %s (debug.gpu_texture_clip)", setting);
+	}
+	if (mode == 0)
+		clip = FALSE;
+	else if (mode == 2)
+	{
+		low = -1000.0f;
+		high = 1000.0f;
+	}
+	else if (mode == 3)
+	{
+		low = set_low;
+		high = set_high;
+	}
+	texture_clip[0] = clip ? low : 0.0f;
+	texture_clip[1] = clip ? high : 0.0f;
+	texture_clip[2] = clip ? 1.0f : 0.0f;
+	texture_clip_stage = clip ? stage : 0;
+	texture_clip_3d = clip && three_dimensional;
+}
+
+void halo_texture_clip(unsigned char clip, float low, float high)
+{
+	halo_texture_clip_stage(clip ? 0 : -1, FALSE, low, high);
+}
+
+/* the rectangle the draws that follow are rasterized in, if on (in the target's game pixels), as well as the
+viewport */
+static unsigned char draw_scissor_on;
+static float draw_scissor[4];
+
+void halo_draw_scissor(unsigned char on, float x0, float y0, float x1, float y1)
+{
+	static int enabled = -1;
+
+	if (enabled < 0)
+	{
+		enabled = config_boolean("debug.gpu_draw_scissor") != 0;
+		if (!enabled)
+			platform_log("draw scissor: off (debug.gpu_draw_scissor)");
+	}
+	draw_scissor_on = on && enabled;
+	draw_scissor[0] = x0;
+	draw_scissor[1] = y0;
+	draw_scissor[2] = x1;
+	draw_scissor[3] = y1;
+}
+
+/* the zoom's blend of its blur over the screen, for the draws that follow: the pixel key has
+NV2A_PIXEL_KEY_WARP_BLEND while it is on */
+static unsigned char warp_blend;
+
+unsigned char halo_screen_fast_warp(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+	{
+		on = !config_boolean("debug.original_zoom");
+		if (!on)
+			platform_log("zoom: as the game draws it (debug.original_zoom)");
+	}
+	return (unsigned char)on;
+}
+
+void halo_screen_warp_blend(unsigned char on)
+{
+	warp_blend = on;
+}
+
+unsigned char halo_screen_fast_blur(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+	{
+		on = !config_boolean("debug.original_blur");
+		if (!on)
+			platform_log("screen blur: as the game draws it (debug.original_blur)");
+	}
+	return (unsigned char)on;
+}
+
+/* display.anti_aliasing's FXAA over a window's 3D view (render.c calls this before the HUD and menus are drawn over it):
+the rectangle in the game's units, of the back buffer, which the host passes over in place (host_vk_post.c) */
+void halo_screen_anti_alias(short x0, short y0, short x1, short y1)
+{
+	struct vk_command_anti_alias *command;
+	struct vk_surface surface;
+	float scale[2];
+	long left, top, right, bottom;
+
+	if (!device.video_ready || anti_aliasing() != _anti_aliasing_fxaa)
+		return;
+	surface_describe(&device.back_buffer, FALSE, &surface, scale);
+	if (surface.kind != VK_SURFACE_COLOR)
+		return;
+	left = (long)floorf(x0 * scale[0] + 0.5f);
+	top = (long)floorf(y0 * scale[1] + 0.5f);
+	right = (long)floorf(x1 * scale[0] + 0.5f);
+	bottom = (long)floorf(y1 * scale[1] + 0.5f);
+	if (right <= left || bottom <= top)
+		return;
+	command = stream_command(VK_COMMAND_ANTI_ALIAS, sizeof(*command));
+	command->target = surface;
+	command->rectangle[0] = (int32_t)left;
+	command->rectangle[1] = (int32_t)top;
+	command->rectangle[2] = (int32_t)(right - left);
+	command->rectangle[3] = (int32_t)(bottom - top);
 }
 
 /* the colour surfaces the game has bound as targets, by address, and when each was last bound: a texture whose data is one samples
@@ -707,17 +1462,17 @@ static const void *rendered_find(unsigned long data, unsigned long *width, unsig
 	return &rendered[best];
 }
 
-/* The shared HUD and text helpers only upload GL textures when a GL
-context exists. The Vulkan image has none. */
-int xgpu_gl_ready(void)
-{
-	return 0;
-}
-
 /* xbox_textures.c, hud_hires.c and text_hires.c call this after their own GL
 calls, which under Vulkan have no context and do nothing */
 void xgpu_gl_state_invalidate(void)
 {
+}
+
+/* (the dedicated server's question, whose renderer may be none: this one is
+always up, and those callers' GL does nothing here, as before they asked) */
+int xgpu_gl_ready(void)
+{
+	return 1;
 }
 
 /* ---------- debug.vk_self_test: the data a draw reads is copied at the draw (phase 3)
@@ -847,7 +1602,7 @@ static void constants_store(unsigned long first, const void *data, unsigned long
 
 	for (index = 0; index < count; index++)
 	{
-		if (memcmp(device.constants[first + index], values[index], sizeof(device.constants[0])))
+		if (!words_equal(device.constants[first + index], values[index], sizeof(device.constants[0])))
 		{
 			memcpy(device.constants[first + index], values[index], sizeof(device.constants[0]));
 			constant_serials[first + index] = ++constants_serial;
@@ -976,13 +1731,75 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 
 /* ---------- the menus' pointer */
 
-int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
+/* a point of the window (SDL's coordinates) in the menus' 640 columns, as
+d3d8_gl.c's ui_point_from_window: the back buffer is letterboxed into the
+window as host_vk_present.c blits it (the window's width, or its height,
+whichever the picture's shape fits), and the menus are centred in the
+screen's width */
+static void ui_point_from_window(float window_x, float window_y, short *x, short *y)
 {
-	(void)pointer;
-	platform_menus_set_active(menus_active != 0);
-	return 0;
+	int window_width, window_height, pixel_width, pixel_height, width, height, left, top;
+	float buffer_width, buffer_height, screen_x, screen_y;
+
+	*x = *y = -1;
+	halo_screen_width();
+	buffer_width = (float)screen_width * screen_scale[0];
+	buffer_height = (float)SCREEN_HEIGHT * screen_scale[1];
+	platform_video_window_size(&window_width, &window_height);
+	platform_video_drawable_size(&pixel_width, &pixel_height);
+	if (window_width <= 0 || window_height <= 0 || buffer_width <= 0.0f || buffer_height <= 0.0f)
+		return;
+	width = pixel_width;
+	height = (int)((float)pixel_width * buffer_height / buffer_width);
+	if (height > pixel_height)
+	{
+		height = pixel_height;
+		width = (int)((float)pixel_height * buffer_width / buffer_height);
+	}
+	if (width <= 0 || height <= 0)
+		return;
+	left = (pixel_width - width) / 2;
+	top = (pixel_height - height) / 2;
+	screen_x = (window_x * pixel_width / window_width - left) * (float)screen_width / (float)width;
+	screen_y = (window_y * pixel_height / window_height - top) * (float)SCREEN_HEIGHT / (float)height;
+	*x = (short)floorf(screen_x - (float)(screen_width - 640) / 2.0f);
+	*y = (short)floorf(screen_y);
 }
 
+/* the menus' pointer: on Android, the touchscreen's taps and drags
+(port/linux/src/touch_input.c), as d3d8_gl.c gives them. This renderer
+answered none, so on a phone that ran Vulkan the menus took no touch */
+int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
+{
+	struct platform_ui_pointer state;
+
+	platform_menus_set_active(menus_active != 0);
+	platform_ui_pointer_set_active(menus_active != 0);
+	if (!menus_active || !platform_ui_pointer_read(&state))
+		return 0;
+	memset(pointer, 0, sizeof(*pointer));
+	ui_point_from_window(state.x, state.y, &pointer->x, &pointer->y);
+	ui_point_from_window(state.click_x, state.click_y, &pointer->click_x, &pointer->click_y);
+	pointer->moved = state.moved != FALSE;
+	pointer->left_clicks = (unsigned char)(state.left_clicks < 255 ? state.left_clicks : 255);
+	pointer->right_clicks = (unsigned char)(state.right_clicks < 255 ? state.right_clicks : 255);
+	pointer->wheel_steps = (signed char)(state.wheel_steps < -8 ? -8 : state.wheel_steps > 8 ? 8 : state.wheel_steps);
+	pointer->touch = state.touch != FALSE;
+	pointer->downs = (unsigned char)(state.downs < 255 ? state.downs : 255);
+	ui_point_from_window(state.down_x, state.down_y, &pointer->down_x, &pointer->down_y);
+	return 1;
+}
+
+/* menu_files.c says when it deletes a menu picture's GL texture, for the
+OpenGL renderer's bindings (d3d8_gl.c); this renderer keeps images of its
+own and has none of those */
+void xgpu_gl_texture_deleted(unsigned int texture)
+{
+	(void)texture;
+}
+
+/* the scoreboard's: none, as on Android's OpenGL ES (d3d8_gl.c); a vote to
+kick starts from the console (votekick) */
 int halo_scoreboard_pointer_update(int offered, struct halo_ui_pointer *pointer)
 {
 	(void)offered;
@@ -998,6 +1815,9 @@ long halo_screen_commit(void)
 	long width;
 	float scale[2];
 
+	shadow_scale_commit();
+	/* (display.anti_aliasing, as Settings or config.toml has it now) */
+	anti_aliasing_read();
 	if (!screen_width)
 		return halo_screen_width();
 	screen_mode_choose(&width, scale);
@@ -1049,10 +1869,118 @@ void WINAPI D3DDevice_GetDeviceCaps(D3DCAPS8 *caps)
 	caps->MaxPixelShaderValue = 1.0f;
 }
 
+/* ---------- the front buffer
+
+The Xbox's front buffer is the frame on the screen, which the loading screen reads back (GetBackBuffer with -1,
+progress_bar.c) and draws again blurred, a little larger and fainter, under each new frame: the trails of its light. As in
+d3d8_gl.c, it is a render target of the menus' 640x480, which takes the 640 columns in the middle of the frame (where the
+loading screen draws, as the menus do on a wide screen) once the loading screen has drawn it, while the screen asks for it:
+at its BlockUntilVerticalBlank, its last call. The host copies it (VK_COMMAND_BLIT); a texture at its data samples the
+host's image, as any render target's does (rendered_find). */
+
+enum
+{
+	FRONT_BUFFER_WIDTH = 640,
+	FRONT_BUFFER_HEIGHT = 480,
+};
+
+/* the front buffer, made the first time it is asked for, and black when the frame before did not take its picture (a
+loading screen's first frame) */
+static BOOL front_buffer_ready(void)
+{
+	/* (its memory could not be had: not asked for again each frame) */
+	static BOOL failed;
+
+	if (failed || !device.video_ready)
+		return FALSE;
+	if (!device.front_buffer.Data)
+	{
+		d3d8_surface_initialize(&device.front_buffer, D3DFMT_LIN_A8R8G8B8, FRONT_BUFFER_WIDTH, FRONT_BUFFER_HEIGHT);
+		if (!device.front_buffer.Data)
+		{
+			failed = TRUE;
+			return FALSE;
+		}
+	}
+	if (device.front_buffer_taken != device.frame)
+	{
+		/* cleared as the bound target, which the next draw binds back (the targets the host was told differ from the
+		device's again) */
+		D3DSurface *color = device.render_target, *depth = device.depth_stencil;
+		struct vk_command_clear *command;
+		struct vk_surface front;
+		float scale[2];
+		BOOL has_depth;
+
+		device.render_target = &device.front_buffer;
+		device.depth_stencil = NULL;
+		if (targets_bind(&has_depth))
+		{
+			surface_describe(&device.front_buffer, FALSE, &front, scale);
+			command = stream_command(VK_COMMAND_CLEAR, sizeof(*command) + 4 * sizeof(uint32_t));
+			command->flags = VK_CLEAR_RED | VK_CLEAR_GREEN | VK_CLEAR_BLUE | VK_CLEAR_ALPHA;
+			command->color[0] = command->color[1] = command->color[2] = 0.0f;
+			command->color[3] = 1.0f;
+			command->depth = 1.0f;
+			command->stencil = 0;
+			command->rectangle_count = 1;
+			command->rectangles[0][0] = 0;
+			command->rectangles[0][1] = 0;
+			command->rectangles[0][2] = front.pixel_width;
+			command->rectangles[0][3] = front.pixel_height;
+		}
+		device.render_target = color;
+		device.depth_stencil = depth;
+	}
+	device.front_buffer_asked = device.frame + 1;
+	return TRUE;
+}
+
+/* the frame as the loading screen has drawn it, copied into the front buffer, when this frame asked for it
+(D3DDevice_BlockUntilVerticalBlank) */
+static void front_buffer_take(void)
+{
+	struct vk_command_blit *command;
+	struct vk_surface back_buffer, front;
+	float back_scale[2], front_scale[2];
+	uint32_t width, left;
+
+	if (!device.video_ready || !device.front_buffer.Data || device.front_buffer_asked != device.frame + 1)
+		return;
+	surface_describe(&device.back_buffer, FALSE, &back_buffer, back_scale);
+	surface_describe(&device.front_buffer, FALSE, &front, front_scale);
+	if (back_buffer.kind != VK_SURFACE_COLOR || front.kind != VK_SURFACE_COLOR)
+		return;
+	width = (uint32_t)(FRONT_BUFFER_WIDTH * back_scale[0] + 0.5f);
+	if (width > back_buffer.pixel_width)
+		width = back_buffer.pixel_width;
+	left = (back_buffer.pixel_width - width) / 2;
+	command = stream_command(VK_COMMAND_BLIT, sizeof(*command));
+	command->source = back_buffer;
+	command->destination = front;
+	command->from[0] = left;
+	command->from[1] = 0;
+	command->from[2] = width;
+	command->from[3] = back_buffer.pixel_height;
+	command->to[0] = 0;
+	command->to[1] = 0;
+	command->to[2] = front.pixel_width;
+	command->to[3] = front.pixel_height;
+	rendered_note(&device.front_buffer);
+	device.front_buffer_taken = device.frame + 1;
+}
+
 void WINAPI D3DDevice_GetBackBuffer(INT back_buffer, D3DBACKBUFFER_TYPE type, D3DSurface **result)
 {
-	(void)back_buffer;
 	(void)type;
+	/* -1: the front buffer, the frame shown last, which the loading screen blurs into its light's trails
+	(progress_bar.c) */
+	if (back_buffer == -1 && front_buffer_ready())
+	{
+		device.front_buffer.Common++;
+		*result = &device.front_buffer;
+		return;
+	}
 	/* like Direct3D, the caller gets a reference it must release */
 	device.back_buffer.Common++;
 	*result = &device.back_buffer;
@@ -1168,10 +2096,10 @@ latest count of the slot: from this test, or from an earlier one while the GPU i
 uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out);
 
 static BOOL visibility_pending[VISIBILITY_TEST_SLOTS];
-/* xgpu.h: a reused flare slot may read only its new owner's own tests. */
 static uint64_t visibility_ended[VISIBILITY_TEST_SLOTS];
 static uint64_t visibility_counted[VISIBILITY_TEST_SLOTS];
 
+/* xgpu.h: a reused flare slot reads only its new owner's tests. */
 unsigned long long xgpu_visibility_tests_ended(unsigned long index)
 {
 	return visibility_ended[index % VISIBILITY_TEST_SLOTS];
@@ -1203,7 +2131,8 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	command->test = ++visibility_ended[index];
 	/* the target's pixels to a game pixel: the count is of the game's pixels (visibility_unscaled in d3d8_gl.c), which the game
 	divides by its own test's area (lens flares, rasterizer_lights.c), a split-screen window's or the screen's alike */
-	command->area = target_scale[0] * target_scale[1];
+	/* (multisampled, the host counts samples) */
+	command->area = target_scale[0] * target_scale[1] * (float)target_samples;
 	visibility_pending[index] = TRUE;
 	return S_OK;
 }
@@ -1506,6 +2435,45 @@ static struct vertex_shader_object *vertex_shader_from_handle(DWORD handle)
 	return object;
 }
 
+/* the game names its model lighting programs as it creates them (rasterizer_xbox_vertex_shaders_initialize.c), so that
+their draws can be lit for each pixel (display.per_pixel_lighting); one whose lighting is not as the pixel shader computes
+it stays lit for each vertex (d3d8_gl.c) */
+void halo_vertex_shader_lighting(unsigned long handle)
+{
+	struct vertex_shader_object *object = vertex_shader_from_handle((DWORD)handle);
+
+	if (!object || !object->instructions)
+		return;
+	if (!nv2a_vertex_shader_lighting(object->instructions, object->instruction_count, &object->lighting))
+	{
+		memset(&object->lighting, 0, sizeof(object->lighting));
+		platform_log("GPU: vertex shader %lu is not lit as the pixel shader would light it: lit for each vertex",
+			object->id);
+	}
+}
+
+/* display.per_pixel_lighting: the model lighting programs' draws are lit for each pixel (nv2a_psh_vk.c model_lighting),
+from shaders of their own; read again when a setting changes */
+static BOOL per_pixel_lighting(void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static BOOL enabled;
+
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		enabled = config_boolean("display.per_pixel_lighting") != 0;
+	}
+	return enabled;
+}
+
+/* the vertex constant register of each of the per-pixel lighting's (XGPU_MODEL_LIGHT_COUNT): c[-82], then c[-79] to
+c[-69] */
+static unsigned long model_light_register(int light)
+{
+	return (unsigned long)(XGPU_VERTEX_CONSTANT_BIAS + (light ? -80 + light : -82));
+}
+
 void WINAPI D3DDevice_DeleteVertexShader(DWORD handle)
 {
 	/* programs stay cached; the object is small */
@@ -1521,7 +2489,12 @@ void WINAPI D3DDevice_SetVertexShader(DWORD handle)
 		device.vertex_shader = object;
 		device.program_address = 0;
 		device.program_slots[0] = object;
+		device.fixed_function = FALSE;
 	}
+	/* 0: the fixed-function pipeline, which only the loading screen uses (progress_bar.c). Another handle that is no shader
+	changes nothing, as before */
+	else if (!handle)
+		device.fixed_function = TRUE;
 }
 
 void WINAPI D3DDevice_LoadVertexShader(DWORD handle, DWORD address)
@@ -1534,6 +2507,8 @@ void WINAPI D3DDevice_SelectVertexShader(DWORD handle, DWORD address)
 {
 	struct vertex_shader_object *object = vertex_shader_from_handle(handle);
 
+	/* (a program, loaded or packed at the address: never the fixed-function pipeline, which SetVertexShader with 0 sets) */
+	device.fixed_function = FALSE;
 	if (object)
 		device.vertex_shader = object;
 	if (address < VERTEX_PROGRAM_SLOTS)
@@ -1566,6 +2541,48 @@ static struct vertex_shader_object *current_program(void)
 
 	return program ? program : device.vertex_shader;
 }
+
+/* the fixed-function pipeline as a program (SetVertexShader with 0, d3d8_gl.c's fixed_function_program): its immediate-mode
+draws only, whose positions draw_make transforms by the world, view and projection matrices. Draws from vertex buffers have
+no declaration to read them by, and are not drawn (no game draw makes one). */
+static struct vertex_shader_object *fixed_function_program(void)
+{
+	static struct vertex_shader_object program;
+	static DWORD no_instructions[4];
+
+	if (!program.instructions)
+	{
+		static const char name[] = "fixed-function";
+
+		program.signature = VERTEX_SHADER_SIGNATURE;
+		program.instructions = no_instructions;
+		/* (no program's words hash to it: the shader cache's name for it) */
+		program.program_hash = vk_hash_mix(vk_hash_init(), name, sizeof(name));
+		program.fixed_function = TRUE;
+	}
+	return &program;
+}
+
+/* a position in immediate mode by the fixed-function pipeline's transforms (d3d8_gl.c's fixed_function_transform):
+Direct3D's row vectors, times world, view, then projection */
+static void fixed_function_transform(float *position)
+{
+	static const D3DTRANSFORMSTATETYPE order[3] = { D3DTS_WORLD, D3DTS_VIEW, D3DTS_PROJECTION };
+	int which, column;
+
+	for (which = 0; which < 3; which++)
+	{
+		const D3DMATRIX *matrix = &device.transforms[order[which]];
+		float in[4];
+
+		memcpy(in, position, sizeof(in));
+		for (column = 0; column < 4; column++)
+		{
+			position[column] = in[0] * matrix->m[0][column] + in[1] * matrix->m[1][column] +
+				in[2] * matrix->m[2][column] + in[3] * matrix->m[3][column];
+		}
+	}
+}
 /* ---------- the shaders a draw would use (phase 4)
 
 Nothing is drawn yet (phase 6), but at each draw the device makes the pixel shader key as d3d8_gl.c's prepare_draw
@@ -1595,6 +2612,40 @@ sampler (mode 0x11 a 2D one); otherwise the sampler is the texture's own type, a
 its bitmap has a high-res meter (hud_hires.h) whose green is its coverage. The cache there finds the override when it
 uploads the pixels; here it is asked the same way, without the GL texture (the texture's own decoding failing, which
 d3d8_gl.c would see, is not seen) */
+/* hud_hires_override_find's answer for stage 0's texture, kept until the pixels at its address are written or a setting
+changes: it checks the bitmap's pixels (a CRC of the whole of its first level), and every textured draw asks (on the Fold
+8 at the Halo level's falls, 10% of the game thread's work; 99% of the asks are answered again) */
+#define OVERRIDE_MEMO_SLOTS 1024
+
+static struct
+{
+	unsigned long address, width, height, level0_size;
+	unsigned long generation, settings;
+	long override;
+} override_memo[OVERRIDE_MEMO_SLOTS];
+
+static long override_find_kept(unsigned long address, unsigned long width, unsigned long height,
+	unsigned long level0_size)
+{
+	/* (every bit of the address mixed in: bitmaps lie at round addresses in the texture cache's blocks, which a slot of
+	address bits alone put in a few slots, each pushing the other out, so that every draw checked its bitmap anyway) */
+	unsigned long slot = (unsigned long)(((uint32_t)address * 2654435761u) >> 22) % OVERRIDE_MEMO_SLOTS;
+	unsigned long generation = memory_watch_generation(address, level0_size);
+
+	if (override_memo[slot].address == address && override_memo[slot].width == width &&
+		override_memo[slot].height == height && override_memo[slot].level0_size == level0_size &&
+		override_memo[slot].generation == generation && override_memo[slot].settings == config_changes())
+		return override_memo[slot].override;
+	override_memo[slot].override = hud_hires_override_find(address, width, height, level0_size);
+	override_memo[slot].address = address;
+	override_memo[slot].width = width;
+	override_memo[slot].height = height;
+	override_memo[slot].level0_size = level0_size;
+	override_memo[slot].generation = generation;
+	override_memo[slot].settings = config_changes();
+	return override_memo[slot].override;
+}
+
 static void key_textures(struct nv2a_pixel_shader_key *key)
 {
 	int stage;
@@ -1604,7 +2655,7 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 		D3DBaseTexture *texture = device.textures[stage];
 		unsigned long mode = stage_texture_mode(stage);
 		struct xgpu_texture_description description;
-		int kind;
+		BOOL palettized;
 
 		if (!texture || !texture->Data || mode == 0 || mode == 0x04 || mode == 0x05 || mode == 0x11)
 		{
@@ -1621,18 +2672,18 @@ static void key_textures(struct nv2a_pixel_shader_key *key)
 				continue;
 			}
 		}
-		if (!vk_texture_get((const DWORD *)texture, device.palettes[stage] && device.palettes[stage]->Data ?
-			(const D3DCOLOR *)PLATFORM_PHYSICAL_TO_VIRTUAL(device.palettes[stage]->Data) : NULL,
-			&kind, &description))
-		{
-			key->sampler_type[stage] = _xgpu_sampler_none;
-			continue;
-		}
+		xgpu_texture_describe(texture->Format, texture->Size, &description);
 		if (stage == 0)
 		{
-			key->coverage_alpha = description.hires_coverage != FALSE;
-			key->point_threshold = description.hires_point_threshold != FALSE;
-			key->ce_meter_channels = description.ce_meter_channels != FALSE;
+			palettized = ((texture->Format & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
+			if (!palettized && !description.cube_map && description.depth == 1)
+			{
+				long override = override_find_kept((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(texture->Data),
+					description.width, description.height, description.levels > 1 ?
+					xgpu_texture_level_offset(&description, 1) : xgpu_texture_face_size(&description));
+
+				key->coverage_alpha = override >= 0 && hud_hires_override_coverage(override) != 0;
+			}
 		}
 		key->sampler_type[stage] = description.cube_map ? _xgpu_sampler_cube :
 			description.depth > 1 ? _xgpu_sampler_3d : _xgpu_sampler_2d;
@@ -1651,6 +2702,11 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key)
 	key->combiner_state[D3DRS_PSFINALCOMBINERCONSTANT0] = 0;
 	key->combiner_state[D3DRS_PSFINALCOMBINERCONSTANT1] = 0;
 	key->texture_modes = D3D__RenderState[D3DRS_PSTEXTUREMODES];
+	if (texture_clip[2] != 0.0f)
+		key->texture_modes |= NV2A_PIXEL_KEY_CLIP | ((unsigned long)texture_clip_stage << NV2A_PIXEL_KEY_CLIP_STAGE_SHIFT) |
+			(texture_clip_3d ? NV2A_PIXEL_KEY_CLIP_3D : 0);
+	if (warp_blend)
+		key->texture_modes |= NV2A_PIXEL_KEY_WARP_BLEND;
 	key_textures(key);
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
@@ -1662,6 +2718,10 @@ static void pixel_key_make(struct nv2a_pixel_shader_key *key)
 		D3D__RenderState[D3DRS_SRCBLEND] == D3DBLEND_CONSTANTCOLOR &&
 		D3D__RenderState[D3DRS_DESTBLEND] == D3DBLEND_SRCALPHA;
 	key->alpha_test_function = D3D__RenderState[D3DRS_ALPHATESTENABLE] ? D3D__RenderState[D3DRS_ALPHAFUNC] : 0;
+	/* multisampled (the targets are bound first: draw_make), an alpha-tested draw that is not blended covers samples in
+	proportion to how far alpha is past the reference, so that cut-out edges (foliage, grates) are smoothed too */
+	if (target_samples > 1 && key->alpha_test_function && !D3D__RenderState[D3DRS_ALPHABLENDENABLE])
+		key->alpha_test_samples = (unsigned char)target_samples;
 	key->fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
 	key->fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 }
@@ -1689,11 +2749,20 @@ static unsigned long dump_pixel_count, dump_vertex_count, dump_collisions;
 static FILE *dump_manifest;
 static BOOL dump_present_done;
 
+/* (read again only when a setting changes: every draw asks) */
 static const char *dump_folder(void)
 {
-	const char *folder = config_string("debug.gpu_dump_shaders");
+	static unsigned long read_at = (unsigned long)-1;
+	static const char *folder;
 
-	return folder && *folder ? folder : NULL;
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		folder = config_string("debug.gpu_dump_shaders");
+		if (folder && !*folder)
+			folder = NULL;
+	}
+	return folder;
 }
 
 static void dump_file(const char *folder, const char *name, const void *data, unsigned long size, const char *what)
@@ -1726,26 +2795,39 @@ static void dump_text(const char *folder, const char *name, const char *text, co
 	dump_file(folder, name, text, strlen(text), what);
 }
 
-/* the GL ES generators' text, for the comparison: they write the context's #version, which this image has none of */
+/* the GL ES generators' text, for the comparison: they write the context's #version, which this image has none of
+(on a desktop guest, the PS5's, the desktop generators', which write none) */
 static char *gl_vertex_shader(const struct vertex_shader_object *program, unsigned long mask)
 {
+#ifdef HALO_GLES
 	const char *saved = xgpu_capabilities.shading_language;
+#endif
 	char *text;
 
+#ifdef HALO_GLES
 	xgpu_capabilities.shading_language = "310 es";
+#endif
 	text = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count, mask, NULL);
+#ifdef HALO_GLES
 	xgpu_capabilities.shading_language = saved;
+#endif
 	return text;
 }
 
 static char *gl_pixel_shader(const struct nv2a_pixel_shader_key *key)
 {
+#ifdef HALO_GLES
 	const char *saved = xgpu_capabilities.shading_language;
+#endif
 	char *text;
 
+#ifdef HALO_GLES
 	xgpu_capabilities.shading_language = "310 es";
+#endif
 	text = nv2a_pixel_shader_to_glsl(key);
+#ifdef HALO_GLES
 	xgpu_capabilities.shading_language = saved;
+#endif
 	return text;
 }
 
@@ -1772,7 +2854,7 @@ static void dump_vertex_shader(const char *folder, const struct vertex_shader_ob
 	dump_vertex_count++;
 	snprintf(what, sizeof(what), "vertex shader %lu, %lu instructions, packed mask %lx", program->id,
 		program->instruction_count, mask);
-	text = nv2a_vk_vertex_shader_to_glsl((const uint32_t *)program->instructions, program->instruction_count, mask);
+	text = nv2a_vk_vertex_shader_to_glsl((const uint32_t *)program->instructions, program->instruction_count, mask, NULL);
 	snprintf(name, sizeof(name), "vs_%lu_%lx.vert", program->id, mask);
 	dump_text(folder, name, text, what);
 	free(text);
@@ -1794,7 +2876,7 @@ static void dump_pixel_shader(const char *folder, const struct nv2a_pixel_shader
 	{
 		if (entry->hash != hash)
 			continue;
-		if (!memcmp(&entry->key, key, sizeof(*key)))
+		if (words_equal(&entry->key, key, sizeof(*key)))
 			return;
 		same++;
 	}
@@ -1849,9 +2931,10 @@ struct shader_entry
 static struct shader_entry *shader_entries[2][SHADER_BUCKETS];
 static BOOL shader_import_logged;
 
-/* the handle of a shader, asking the host (and sending its GLSL when the host does not know it); 0 if it is not ready */
+/* the handle of a shader, asking the host (and sending its GLSL when the host does not know it); 0 if it is not ready,
+and *failed set if it never will be. lit: a vertex shader that hands its lighting on (nv2a_vk_vertex_shader_to_glsl) */
 static uint32_t shader_handle(uint32_t stage, uint64_t hash, const struct vertex_shader_object *program,
-	unsigned long mask, const struct nv2a_pixel_shader_key *key)
+	unsigned long mask, BOOL lit, const struct nv2a_pixel_shader_key *key, BOOL *failed)
 {
 	struct shader_entry **bucket = &shader_entries[stage][hash % SHADER_BUCKETS];
 	struct shader_entry *entry;
@@ -1874,7 +2957,10 @@ static uint32_t shader_handle(uint32_t stage, uint64_t hash, const struct vertex
 	if (entry->handle)
 		return entry->handle;
 	if (entry->failed)
+	{
+		*failed = TRUE;
 		return 0;
+	}
 	if (!shader_import_logged)
 	{
 		shader_import_logged = TRUE;
@@ -1890,12 +2976,15 @@ static uint32_t shader_handle(uint32_t stage, uint64_t hash, const struct vertex
 	if (status == VK_SHADER_STATUS_FAILED)
 	{
 		entry->failed = 1;
+		*failed = TRUE;
 		return 0;
 	}
 	if (status == VK_SHADER_STATUS_UNKNOWN && entry->sent < 3)
 	{
-		char *glsl = stage == VK_SHADER_STAGE_VERTEX ?
-			nv2a_vk_vertex_shader_to_glsl((const uint32_t *)program->instructions, program->instruction_count, mask) :
+		char *glsl = stage == VK_SHADER_STAGE_VERTEX && program->fixed_function ? nv2a_vk_fixed_function_glsl() :
+			stage == VK_SHADER_STAGE_VERTEX ?
+			nv2a_vk_vertex_shader_to_glsl((const uint32_t *)program->instructions, program->instruction_count, mask,
+				lit ? &program->lighting : NULL) :
 			nv2a_vk_pixel_shader_to_glsl(key);
 
 		if (glsl)
@@ -1905,7 +2994,45 @@ static uint32_t shader_handle(uint32_t stage, uint64_t hash, const struct vertex
 			entry->sent++;
 		}
 	}
+	/* queued or compiling: made now, for this draw, while the frame has time for it (the host's host_vk_shader_make);
+	else the draw is left out until a compile thread has made it */
+	if (status != VK_SHADER_STATUS_FAILED && status != VK_SHADER_STATUS_NOT_READY)
+	{
+		handle = host_vk_shader_make(stage, hash);
+		if (handle)
+		{
+			entry->handle = handle;
+			return handle;
+		}
+	}
 	return 0;
+}
+
+/* a vertex shader's identity (vk_shaders.h): the generator's version, the program's hash and its packed mask, and for one
+that hands its lighting on (lit), a word saying so (the unlit ones' are as they always were) */
+static uint64_t vertex_shader_hash(const struct vertex_shader_object *program, unsigned long mask, BOOL lit)
+{
+	uint32_t generator = VK_SHADER_GENERATOR_VERSION, mask32 = (uint32_t)mask;
+	uint64_t hash;
+
+	hash = vk_hash_mix(vk_hash_init(), &generator, sizeof(generator));
+	hash = vk_hash_mix(hash, &program->program_hash, sizeof(program->program_hash));
+	hash = vk_hash_mix(hash, &mask32, sizeof(mask32));
+	if (lit)
+	{
+		static const char marker[] = "lit";
+
+		hash = vk_hash_mix(hash, marker, sizeof(marker));
+	}
+	return hash;
+}
+
+/* a pixel shader's: the generator's version and the key's bytes */
+static uint64_t pixel_shader_hash(const struct nv2a_pixel_shader_key *key)
+{
+	uint32_t generator = VK_SHADER_GENERATOR_VERSION;
+
+	return vk_hash_mix(vk_hash_mix(vk_hash_init(), &generator, sizeof(generator)), key, sizeof(*key));
 }
 
 /* the shaders a draw needs, as d3d8_gl.c's prepare_draw chooses them, asked for from the host (and sent when the host lacks
@@ -1914,36 +3041,49 @@ shader is queued or compiling (the draw is skipped). The key is made without bin
 static BOOL draw_shaders(BOOL immediate, struct nv2a_pixel_shader_key *key, unsigned long *mask_out, uint32_t *vertex,
 	uint32_t *pixel)
 {
-	struct vertex_shader_object *program = current_program();
+	struct vertex_shader_object *program = device.fixed_function ? fixed_function_program() : current_program();
 	const char *folder = dump_folder();
 	unsigned long mask;
-	uint32_t generator = VK_SHADER_GENERATOR_VERSION;
-	uint64_t hash;
 
 	*vertex = *pixel = 0;
-	if (!program || !device.vertex_shader || !program->instructions)
+	/* (the fixed-function pipeline's draws: immediate mode's only) */
+	if (device.fixed_function ? !immediate : !program || !device.vertex_shader || !program->instructions)
 		return FALSE;
 	pixel_key_make(key);
 	mask = immediate ? 0 : device.vertex_shader->packed_mask;
 	*mask_out = mask;
 	if (folder)
 	{
-		dump_vertex_shader(folder, program, mask);
+		if (!program->fixed_function)
+			dump_vertex_shader(folder, program, mask);
 		dump_pixel_shader(folder, key);
 	}
 	if (!device.video_ready)
 		return TRUE;
+	/* lit for each pixel where the setting is on and the program is one the pixel shader can light: a pair of shaders of
+	their own, and the draw as the vertex shader lights it if either fails */
+	if (program->lighting.lights && !program->lighting_failed && per_pixel_lighting())
 	{
-		uint32_t mask32 = (uint32_t)mask;
+		BOOL failed = FALSE;
 
-		hash = vk_hash_mix(vk_hash_init(), &generator, sizeof(generator));
-		hash = vk_hash_mix(hash, &program->program_hash, sizeof(program->program_hash));
-		hash = vk_hash_mix(hash, &mask32, sizeof(mask32));
+		key->per_pixel_lighting = (unsigned char)program->lighting.lights;
+		*vertex = shader_handle(VK_SHADER_STAGE_VERTEX, vertex_shader_hash(program, mask, TRUE), program, mask, TRUE, NULL,
+			&failed);
+		*pixel = shader_handle(VK_SHADER_STAGE_PIXEL, pixel_shader_hash(key), NULL, 0, FALSE, key, &failed);
+		if (!failed)
+			return TRUE;
+		platform_log("GPU: vertex shader %lu cannot be lit for each pixel here (refer to the host's shader log): "
+			"lit for each vertex", program->id);
+		program->lighting_failed = TRUE;
+		key->per_pixel_lighting = 0;
 	}
-	*vertex = shader_handle(VK_SHADER_STAGE_VERTEX, hash, program, mask, NULL);
-	hash = vk_hash_mix(vk_hash_init(), &generator, sizeof(generator));
-	hash = vk_hash_mix(hash, key, sizeof(*key));
-	*pixel = shader_handle(VK_SHADER_STAGE_PIXEL, hash, NULL, 0, key);
+	{
+		BOOL failed = FALSE;
+
+		*vertex = shader_handle(VK_SHADER_STAGE_VERTEX, vertex_shader_hash(program, mask, FALSE), program, mask, FALSE, NULL,
+			&failed);
+		*pixel = shader_handle(VK_SHADER_STAGE_PIXEL, pixel_shader_hash(key), NULL, 0, FALSE, key, &failed);
+	}
 	return TRUE;
 }
 
@@ -1988,7 +3128,10 @@ void WINAPI D3DDevice_SetStreamSource(UINT stream_number, D3DVertexBuffer *strea
 void WINAPI D3DDevice_SetIndices(D3DIndexBuffer *index_data, UINT base_vertex_index)
 {
 	device.base_vertex_index = base_vertex_index;
-	D3D__IndexData = index_data ? (WORD *)index_data->Data : NULL;
+	/* an index buffer's Data is a window address, not an offset within one:
+	from a map file it is the address the window was linked at, and from
+	CreateIndexBuffer ordinary memory, which the move leaves alone */
+	D3D__IndexData = index_data ? (WORD *)PORT_WINDOW_REBASE(index_data->Data) : NULL;
 }
 
 /* debug.gpu_stats: the draws of the last 60 frames, and what skipped the rest */
@@ -1996,6 +3139,11 @@ static struct
 {
 	unsigned long draws, immediate_draws, presents;
 	unsigned long skipped_no_program, skipped_no_target, skipped_shader, skipped_texture, skipped_other;
+	/* the bytes put for draws, by kind, and how many puts of the vertex data, constants and indices */
+	unsigned long long put_vertex, put_expanded, put_index, put_constants, put_parameters, put_pixel, put_immediate, put_other;
+	unsigned long n_vertex, n_constants, n_index;
+	/* and the bytes drawn from static geometry's copies instead */
+	unsigned long long static_vertex, static_index;
 } stats;
 static BOOL statistics_on, statistics_read;
 
@@ -2098,9 +3246,26 @@ static void raster_state_make(struct vk_command_draw *draw, BOOL has_color, BOOL
 	draw->scissor[1] = (int32_t)y0;
 	draw->scissor[2] = (int32_t)(x1 - x0);
 	draw->scissor[3] = (int32_t)(y1 - y0);
+	/* (narrowed to the rectangle a draw changes anything in, if one is set: halo_draw_scissor; one with nothing left of
+	it on the screen is -1 wide, which the host draws nothing in, where 0 would be the GL's no scissor) */
+	if (draw_scissor_on)
+	{
+		long left = target_pixel(draw_scissor[0], 0), top = target_pixel(draw_scissor[1], 1);
+		long right = target_pixel(draw_scissor[2], 0), bottom = target_pixel(draw_scissor[3], 1);
+
+		left = left > x0 ? left : x0;
+		top = top > y0 ? top : y0;
+		right = right < x1 ? right : x1;
+		bottom = bottom < y1 ? bottom : y1;
+		draw->scissor[0] = (int32_t)left;
+		draw->scissor[1] = (int32_t)top;
+		draw->scissor[2] = right > left && bottom > top ? (int32_t)(right - left) : -1;
+		draw->scissor[3] = right > left && bottom > top ? (int32_t)(bottom - top) : -1;
+	}
 
 	state->color_format = has_color ? 1 : 0;
 	state->depth_format = has_depth ? 1 : 0;
+	state->samples = target_samples > 1 ? (uint32_t)target_samples : 0;
 	state->color_write_mask = ((write & D3DCOLORWRITEENABLE_RED) ? 1 : 0) | ((write & D3DCOLORWRITEENABLE_GREEN) ? 2 : 0) |
 		((write & D3DCOLORWRITEENABLE_BLUE) ? 4 : 0) | ((write & D3DCOLORWRITEENABLE_ALPHA) ? 8 : 0);
 	state->polygon_mode = rs[D3DRS_FILLMODE] == D3DFILL_WIREFRAME ? 1 : rs[D3DRS_FILLMODE] == D3DFILL_POINT ? 2 : 0;
@@ -2182,7 +3347,7 @@ static struct vk_data_ref data_ref(uint32_t id)
 	return ref;
 }
 
-static void pixel_parameters_make(struct vk_pixel_parameters *p, const float texture_scale[4][4])
+static void pixel_parameters_make(struct vk_pixel_parameters *p, const float texture_scale[4][4], BOOL lit)
 {
 	int stage;
 
@@ -2199,6 +3364,11 @@ static void pixel_parameters_make(struct vk_pixel_parameters *p, const float tex
 	p->fog_parameters[1] = dword_to_float(D3D__RenderState[D3DRS_FOGEND]);
 	p->fog_parameters[2] = dword_to_float(D3D__RenderState[D3DRS_FOGDENSITY]);
 	p->alpha_reference[0] = (float)(D3D__RenderState[D3DRS_ALPHAREF] & 0xff);
+	/* (the clip, which the pixel shader makes before anything else: its limits in the units the stage is sampled in,
+	0 to 1) */
+	p->alpha_reference[1] = texture_clip[0];
+	p->alpha_reference[2] = texture_clip[1];
+	p->alpha_reference[3] = texture_clip[2];
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		DWORD *state = D3D__TextureState[stage];
@@ -2211,16 +3381,64 @@ static void pixel_parameters_make(struct vk_pixel_parameters *p, const float tex
 		p->bump_luminance[stage][1] = dword_to_float(state[D3DTSS_BUMPENVLOFFSET]);
 	}
 	memcpy(p->texture_scale, texture_scale, sizeof(p->texture_scale));
+	/* (only for a draw lit for each pixel, so that the others' parameters stay equal from draw to draw) */
+	for (stage = 0; lit && stage < XGPU_MODEL_LIGHT_COUNT; stage++)
+		memcpy(p->model_lights[stage], device.constants[model_light_register(stage)], sizeof(p->model_lights[stage]));
 }
 
-static void uniforms_make(struct vk_command_draw *draw, const float texture_scale[4][4])
+/* the most register changes since the frame's last put of the vertex constants that are sent as a patch of it
+(VK_COMMAND_DATA_PATCH) rather than all 192 registers again: a model's draw changes its node matrices, a few dozen */
+#define CONSTANTS_PATCH_MOST 64
+
+/* the vertex constants as a patch of the frame's put base (its data id), the registers changed after serial `since`
+(the constant log's, which holds the latest CONSTANT_LOG_SIZE changes); its data id */
+static uint32_t constants_patch(uint32_t base, unsigned long since)
+{
+	unsigned char registers[CONSTANTS_PATCH_MOST];
+	uint32_t seen[(XGPU_VERTEX_CONSTANT_COUNT + 31) / 32] = { 0 };
+	unsigned long serial, count = 0, index;
+	struct vk_command_data_patch *command;
+
+	for (serial = since + 1; serial <= constants_serial; serial++)
+	{
+		unsigned char reg = constant_log[serial % CONSTANT_LOG_SIZE];
+
+		if (!(seen[reg / 32] & (1u << (reg % 32))))
+		{
+			seen[reg / 32] |= 1u << (reg % 32);
+			registers[count++] = reg;
+		}
+	}
+	command = stream_command(VK_COMMAND_DATA_PATCH, sizeof(*command) + count * sizeof(command->patches[0]));
+	command->id = ++data_id;
+	command->base = base;
+	command->count = (uint32_t)count;
+	for (index = 0; index < count; index++)
+	{
+		command->patches[index].offset = (uint32_t)registers[index] * (uint32_t)sizeof(device.constants[0]);
+		memcpy(command->patches[index].value, device.constants[registers[index]], sizeof(command->patches[index].value));
+	}
+	stats.put_constants += count * sizeof(command->patches[0]);
+	stats.n_constants++;
+	return command->id;
+}
+
+static void uniforms_make(struct vk_command_draw *draw, const float texture_scale[4][4], BOOL lit)
 {
 	struct vk_vertex_parameters parameters;
 	struct vk_pixel_parameters pixel;
 
 	if (!puts_this_frame.constants_valid || puts_this_frame.constants_serial != constants_serial)
 	{
-		puts_this_frame.constants_ref = data_ref(vk_data_put(device.constants, sizeof(device.constants)));
+		/* (a few registers changed since the frame's last put: those alone, on top of it) */
+		if (puts_this_frame.constants_valid && constants_serial - puts_this_frame.constants_serial <= CONSTANTS_PATCH_MOST)
+			puts_this_frame.constants_ref = data_ref(constants_patch(puts_this_frame.constants_ref.id,
+				puts_this_frame.constants_serial));
+		else
+		{
+			puts_this_frame.constants_ref = data_ref(vk_data_put(device.constants, sizeof(device.constants)));
+			stats.put_constants += sizeof(device.constants); stats.n_constants++;
+		}
 		puts_this_frame.constants_serial = constants_serial;
 		puts_this_frame.constants_valid = TRUE;
 	}
@@ -2231,19 +3449,21 @@ static void uniforms_make(struct vk_command_draw *draw, const float texture_scal
 	parameters.point_and_screen[0] = D3D__RenderState[D3DRS_POINTSIZE] ? dword_to_float(D3D__RenderState[D3DRS_POINTSIZE]) : 1.0f;
 	parameters.point_and_screen[1] = (float)UI_OFFSET;
 	parameters.point_and_screen[2] = parameters.point_and_screen[3] = 0.0f;
-	if (!puts_this_frame.parameters_valid || memcmp(&puts_this_frame.parameters, &parameters, sizeof(parameters)))
+	if (!puts_this_frame.parameters_valid || !words_equal(&puts_this_frame.parameters, &parameters, sizeof(parameters)))
 	{
 		puts_this_frame.parameters = parameters;
 		puts_this_frame.parameters_ref = data_ref(vk_data_put(&parameters, sizeof(parameters)));
+		stats.put_parameters += sizeof(parameters);
 		puts_this_frame.parameters_valid = TRUE;
 	}
 	draw->vertex_parameters = puts_this_frame.parameters_ref;
 
-	pixel_parameters_make(&pixel, texture_scale);
-	if (!puts_this_frame.pixel_valid || memcmp(&puts_this_frame.pixel, &pixel, sizeof(pixel)))
+	pixel_parameters_make(&pixel, texture_scale, lit);
+	if (!puts_this_frame.pixel_valid || !words_equal(&puts_this_frame.pixel, &pixel, sizeof(pixel)))
 	{
 		puts_this_frame.pixel = pixel;
 		puts_this_frame.pixel_ref = data_ref(vk_data_put(&pixel, sizeof(pixel)));
+		stats.put_pixel += sizeof(pixel);
 		puts_this_frame.pixel_valid = TRUE;
 	}
 	draw->pixel_parameters = puts_this_frame.pixel_ref;
@@ -2333,12 +3553,12 @@ static void element_decode(unsigned long type, const unsigned char *source, floa
 		out[3] = source[3] / 255.0f;
 		return;
 	case D3DVSDT_SHORT1: case D3DVSDT_SHORT2: case D3DVSDT_SHORT3: case D3DVSDT_SHORT4:
-		count = type - D3DVSDT_SHORT1 + 1;
+		count = type >> 4; /* the type's high nibble is its component count */
 		for (index = 0; index < count; index++)
 			out[index] = (float)s[index];
 		return;
 	case D3DVSDT_NORMSHORT1: case D3DVSDT_NORMSHORT2: case D3DVSDT_NORMSHORT3: case D3DVSDT_NORMSHORT4:
-		count = type - D3DVSDT_NORMSHORT1 + 1;
+		count = type >> 4;
 		for (index = 0; index < count; index++)
 		{
 			float value = s[index] / 32767.0f;
@@ -2347,7 +3567,7 @@ static void element_decode(unsigned long type, const unsigned char *source, floa
 		}
 		return;
 	case D3DVSDT_PBYTE1: case D3DVSDT_PBYTE2: case D3DVSDT_PBYTE3: case D3DVSDT_PBYTE4:
-		count = type - D3DVSDT_PBYTE1 + 1;
+		count = type >> 4;
 		for (index = 0; index < count; index++)
 			out[index] = source[index] / 255.0f;
 		return;
@@ -2403,8 +3623,22 @@ static uint32_t stream_expanded_put(const struct vertex_shader_object *declarati
 	}
 	state->bindings[binding].stride = stride ? (uint32_t)out_stride : 0;
 	id = vk_data_put(buffer, rows * out_stride);
+	stats.put_expanded += rows * out_stride;
 	free(buffer);
 	return id;
+}
+
+/* the current values of the sixteen registers, put unless the frame's last put has them */
+static struct vk_data_ref attributes_put(float values[XGPU_VERTEX_ATTRIBUTE_COUNT][4])
+{
+	if (!puts_this_frame.attributes_valid || !words_equal(puts_this_frame.attributes, values,
+		sizeof(puts_this_frame.attributes)))
+	{
+		memcpy(puts_this_frame.attributes, values, sizeof(puts_this_frame.attributes));
+		puts_this_frame.attributes_ref = data_ref(vk_data_put(values, sizeof(puts_this_frame.attributes)));
+		puts_this_frame.attributes_valid = TRUE;
+	}
+	return puts_this_frame.attributes_ref;
 }
 
 /* the vertices [first, first + count) of every stream the declaration reads, put, and the pipeline's bindings and attributes
@@ -2460,7 +3694,16 @@ static BOOL vertex_input_make(struct vk_command_draw *draw, unsigned long first,
 		}
 		else
 		{
-			draw->vertex_buffers[binding] = data_ref(vk_data_put(base, bytes));
+			/* (the game's static geometry: its copy on the host, at a stride a vertex buffer is read at safely) */
+			if (stride && !(stride & 3) && static_ref(base, bytes, FALSE, &draw->vertex_buffers[binding]))
+			{
+				stats.static_vertex += bytes;
+			}
+			else
+			{
+				draw->vertex_buffers[binding] = data_ref(vk_data_put(base, bytes));
+				stats.put_vertex += bytes; stats.n_vertex++;
+			}
 			state->bindings[binding].stride = (uint32_t)stride;
 			for (index = 0; index < declaration->element_count; index++)
 			{
@@ -2491,13 +3734,7 @@ static BOOL vertex_input_make(struct vk_command_draw *draw, unsigned long first,
 			if (declaration->packed_mask & (1UL << index))
 				memset(values[index], 0, sizeof(values[index]));
 		}
-		if (!puts_this_frame.attributes_valid || memcmp(puts_this_frame.attributes, values, sizeof(values)))
-		{
-			memcpy(puts_this_frame.attributes, values, sizeof(values));
-			puts_this_frame.attributes_ref = data_ref(vk_data_put(values, sizeof(values)));
-			puts_this_frame.attributes_valid = TRUE;
-		}
-		draw->vertex_buffers[bindings] = puts_this_frame.attributes_ref;
+		draw->vertex_buffers[bindings] = attributes_put(values);
 		state->bindings[bindings].stride = 0;
 		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		{
@@ -2731,14 +3968,15 @@ static void draw_make(D3DPRIMITIVETYPE type, unsigned long count, BOOL immediate
 
 	if (!device.video_ready)
 		return;
-	if (!draw_shaders(immediate, &key, &mask, &vertex, &pixel))
-	{
-		stats.skipped_no_program++;
-		return;
-	}
+	/* the targets first: the pixel shader's key depends on their samples a pixel */
 	if (!targets_bind(&has_depth))
 	{
 		stats.skipped_no_target++;
+		return;
+	}
+	if (!draw_shaders(immediate, &key, &mask, &vertex, &pixel))
+	{
+		stats.skipped_no_program++;
 		return;
 	}
 	if (!vertex || !pixel)
@@ -2779,16 +4017,43 @@ static void draw_make(D3DPRIMITIVETYPE type, unsigned long count, BOOL immediate
 	}
 	if (immediate)
 	{
-		record.vertex_buffers[0] = data_ref(vk_data_put(device.immediate_vertices,
-			count * XGPU_VERTEX_ATTRIBUTE_COUNT * 4 * sizeof(float)));
-		record.state.binding_count = 1;
-		record.state.bindings[0].stride = XGPU_VERTEX_ATTRIBUTE_COUNT * 4 * sizeof(float);
+		unsigned long floats = device.immediate_columns * 4;
+		float values[XGPU_VERTEX_ATTRIBUTE_COUNT][4];
+		unsigned column;
+
+		/* (the fixed-function pipeline's: positions into clip space) */
+		if (device.fixed_function && (device.immediate_mask & 1))
+		{
+			unsigned long vertex;
+
+			for (column = 0; device.immediate_registers[column] != 0; column++)
+				;
+			for (vertex = 0; vertex < count; vertex++)
+				fixed_function_transform(device.immediate_vertices + vertex * floats + column * 4);
+		}
+		/* the registers set since Begin, a vertex's columns; the others from their values, which the batch left as
+		they were */
+		record.vertex_buffers[0] = data_ref(vk_data_put(device.immediate_vertices, count * floats * sizeof(float)));
+		stats.put_immediate += count * floats * sizeof(float);
+		record.state.bindings[0].stride = (uint32_t)(floats * sizeof(float));
+		memcpy(values, device.attributes, sizeof(values));
 		for (stage = 0; stage < XGPU_VERTEX_ATTRIBUTE_COUNT; stage++)
 		{
+			/* (a column's register: its value here is never read, so it is left out of the comparison) */
+			if (device.immediate_mask & (1UL << stage))
+				memset(values[stage], 0, sizeof(values[stage]));
 			record.state.attributes[stage].format = VK_VERTEX_FORMAT_R32G32B32A32_SFLOAT;
-			record.state.attributes[stage].binding = 0;
+			record.state.attributes[stage].binding = 1;
 			record.state.attributes[stage].offset = (uint32_t)stage * 16;
 		}
+		for (column = 0; column < device.immediate_columns; column++)
+		{
+			record.state.attributes[device.immediate_registers[column]].binding = 0;
+			record.state.attributes[device.immediate_registers[column]].offset = (uint32_t)column * 16;
+		}
+		record.vertex_buffers[1] = attributes_put(values);
+		record.state.bindings[1].stride = 0;
+		record.state.binding_count = 2;
 	}
 	else if (!vertex_input_make(&record, first, vertices))
 	{
@@ -2804,7 +4069,15 @@ static void draw_make(D3DPRIMITIVETYPE type, unsigned long count, BOOL immediate
 			return;
 		}
 		record.indexed = 1;
-		record.index_data = data_ref(vk_data_put(indices, index_count * sizeof(WORD)));
+		if (indices == index_data && static_ref(indices, index_count * sizeof(WORD), TRUE, &record.index_data))
+		{
+			stats.static_index += index_count * sizeof(WORD);
+		}
+		else
+		{
+			record.index_data = data_ref(vk_data_put(indices, index_count * sizeof(WORD)));
+			stats.put_index += index_count * sizeof(WORD); stats.n_index++;
+		}
 		record.vertex_offset = index_data ? -(int32_t)minimum : 0;
 		record.count = (uint32_t)index_count;
 	}
@@ -2813,7 +4086,7 @@ static void draw_make(D3DPRIMITIVETYPE type, unsigned long count, BOOL immediate
 		record.count = (uint32_t)count;
 	}
 	free(made);
-	uniforms_make(&record, texture_scale);
+	uniforms_make(&record, texture_scale, key.per_pixel_lighting != 0);
 	{
 		struct vk_command_draw *command = stream_command(VK_COMMAND_DRAW, sizeof(*command));
 
@@ -2845,19 +4118,58 @@ void WINAPI D3DDevice_Begin(D3DPRIMITIVETYPE primitive_type)
 	device.immediate_active = TRUE;
 	device.immediate_type = primitive_type;
 	device.immediate_count = 0;
+	device.immediate_mask = 0;
+	device.immediate_columns = 0;
+}
+
+/* room for floats more floats of vertices; FALSE if there is none */
+static BOOL immediate_room(unsigned long floats)
+{
+	unsigned long needed = device.immediate_count * device.immediate_columns * 4 + floats;
+
+	if (needed > device.immediate_capacity)
+	{
+		unsigned long capacity = device.immediate_capacity ? device.immediate_capacity : 4096;
+		float *more;
+
+		while (capacity < needed)
+			capacity *= 2;
+		more = realloc(device.immediate_vertices, capacity * sizeof(float));
+		if (!more)
+			return FALSE;
+		device.immediate_vertices = more;
+		device.immediate_capacity = capacity;
+	}
+	return TRUE;
+}
+
+/* a register set for the first time since Begin becomes a column; the vertices made already get its value as it was
+before (it had not changed since Begin), each moved to the wider stride, the last first */
+static void immediate_column_add(int reg)
+{
+	unsigned long old = device.immediate_columns * 4, wide = old + 4, vertex;
+
+	if (!immediate_room(device.immediate_count * 4))
+		return;
+	for (vertex = device.immediate_count; vertex-- > 0;)
+	{
+		memmove(device.immediate_vertices + vertex * wide, device.immediate_vertices + vertex * old, old * sizeof(float));
+		memcpy(device.immediate_vertices + vertex * wide + old, device.attributes[reg], 4 * sizeof(float));
+	}
+	device.immediate_registers[device.immediate_columns++] = (unsigned char)reg;
+	device.immediate_mask |= 1UL << reg;
 }
 
 static void immediate_emit(void)
 {
-	unsigned long floats = XGPU_VERTEX_ATTRIBUTE_COUNT * 4;
+	float *at;
+	unsigned column;
 
-	if (device.immediate_count == device.immediate_capacity)
-	{
-		device.immediate_capacity = device.immediate_capacity ? device.immediate_capacity * 2 : 256;
-		device.immediate_vertices = realloc(device.immediate_vertices,
-			device.immediate_capacity * floats * sizeof(float));
-	}
-	memcpy(device.immediate_vertices + device.immediate_count * floats, device.attributes, floats * sizeof(float));
+	if (!immediate_room(device.immediate_columns * 4))
+		return;
+	at = device.immediate_vertices + device.immediate_count * device.immediate_columns * 4;
+	for (column = 0; column < device.immediate_columns; column++)
+		memcpy(at + column * 4, device.attributes[device.immediate_registers[column]], 4 * sizeof(float));
 	device.immediate_count++;
 }
 void WINAPI D3DDevice_End(void)
@@ -2881,6 +4193,8 @@ static void set_attribute(INT reg, float a, float b, float c, float d)
 	}
 	if (reg < 0 || reg >= XGPU_VERTEX_ATTRIBUTE_COUNT)
 		return;
+	if (device.immediate_active && !(device.immediate_mask & (1UL << reg)))
+		immediate_column_add(reg);
 	device.attributes[reg][0] = a;
 	device.attributes[reg][1] = b;
 	device.attributes[reg][2] = c;
@@ -3005,6 +4319,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		puts_reset();
 		vk_texture_cache_begin_frame();
 		stats.presents++;
+		if (!(device.frame % 60))
+			static_check();
 		if (!statistics_read)
 		{
 			statistics_read = TRUE;
@@ -3016,6 +4332,13 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 				"%lu textured, %lu other", device.frame, stats.draws / stats.presents, stats.immediate_draws / stats.presents,
 				stats.skipped_no_program, stats.skipped_no_target, stats.skipped_shader, stats.skipped_texture,
 				stats.skipped_other);
+			platform_log("vk: puts a frame: vertex %llu KB (%lu), expanded %llu KB, index %llu KB (%lu), constants %llu KB (%lu), "
+				"parameters %llu KB, pixel %llu KB, immediate %llu KB; read from static copies: vertex %llu KB, index %llu KB",
+				stats.put_vertex / 1024 / stats.presents, stats.n_vertex / stats.presents,
+				stats.put_expanded / 1024 / stats.presents, stats.put_index / 1024 / stats.presents, stats.n_index / stats.presents,
+				stats.put_constants / 1024 / stats.presents, stats.n_constants / stats.presents, stats.put_parameters / 1024 / stats.presents,
+				stats.put_pixel / 1024 / stats.presents, stats.put_immediate / 1024 / stats.presents,
+				stats.static_vertex / 1024 / stats.presents, stats.static_index / 1024 / stats.presents);
 			memset(&stats, 0, sizeof(stats));
 		}
 	}
@@ -3035,6 +4358,17 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	else
 	{
+		/* (port: the vertical blanks that retire the flips counted, started
+		here if the game has not yet: the boot's loading screen presents
+		before it sets its callback or waits for one, and with
+		display.interpolation off its third frame waited for ever, a black
+		screen) */
+		if (!vertical_blank_thread_started)
+		{
+			pthread_mutex_unlock(&vertical_blank_lock);
+			vertical_blank_start();
+			pthread_mutex_lock(&vertical_blank_lock);
+		}
 		while (pending_flips >= 2)
 			pthread_cond_wait(&vertical_blank_condition, &vertical_blank_lock);
 		pending_flips++;

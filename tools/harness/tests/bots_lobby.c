@@ -48,7 +48,11 @@ struct network_game_server
 };
 
 /* the world the lobby asks */
-static boolean local_game;
+static boolean local_game, internet_game, listed_game, is_host;
+static struct network_game_server server;
+static struct network_game_server *global_network_game_server_get(void) { return is_host ? &server : NULL; }
+static int p2p_hosting_internet(void) { return internet_game; }
+static int p2p_hosting_listed(void) { return listed_game; }
 static long wanted;
 static short teams_setting;
 static long sends;
@@ -76,8 +80,6 @@ machine index against the session's 128) */
 #pragma clang diagnostic ignored "-Wtautological-constant-out-of-range-compare"
 #include "under_test.inc"
 
-static struct network_game_server server;
-
 /* a pregame lobby of the game engine, room for `maximum`, and its players */
 static void lobby(short game_engine_index, long maximum)
 {
@@ -90,6 +92,7 @@ static void lobby(short game_engine_index, long maximum)
 	for (index = 0; index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 		network_game_invalidate_player(&server.game.players[index]);
 	local_game = TRUE;
+	internet_game = listed_game = is_host = TRUE;
 	teams_setting = _bots_teams_even;
 	sends = 0;
 }
@@ -246,6 +249,19 @@ int main(int argc, char **argv)
 	}
 	/* a game other machines may join (system link, internet): none, and any
 	there leave */
+	if (!strcmp(argv[1], "lan-game") || !strcmp(argv[1], "private-game") || !strcmp(argv[1], "client-game"))
+	{
+		lobby(game_engine_slayer, 16);
+		player(0, 0);
+		wanted = 6;
+		local_game = FALSE;
+		internet_game = strcmp(argv[1], "lan-game") != 0;
+		listed_game = FALSE;
+		is_host = strcmp(argv[1], "client-game") != 0;
+		network_game_server_port_bots(&server);
+		CHECK(bots_in(&team0, &team1) == (is_host ? 6 : 0), "wrong bot count for %s", argv[1]);
+		return 0;
+	}
 	CASE("never-network")
 	{
 		lobby(game_engine_slayer, 16);
@@ -264,19 +280,22 @@ int main(int argc, char **argv)
 	}
 	/* Slayer alone (the other gametypes' goals are not the bots' yet): none
 	in CTF, and those of a Slayer lobby leave when it becomes CTF */
-	CASE("slayer-only")
+	CASE("supported-modes")
 	{
 		lobby(game_engine_ctf, 16);
 		player(0, 0);
 		wanted = 6;
 		network_game_server_port_bots(&server);
-		CHECK(bots_in(&team0, &team1) == 0, "%ld bots in CTF", bots_in(&team0, &team1));
+		CHECK(bots_in(&team0, &team1) == 6, "%ld bots in CTF", bots_in(&team0, &team1));
 		server.game.variant.game_engine_index = game_engine_slayer;
 		network_game_server_port_bots(&server);
 		CHECK(bots_in(&team0, &team1) == 6, "%ld bots in Slayer, not 6", bots_in(&team0, &team1));
 		server.game.variant.game_engine_index = game_engine_king;
 		network_game_server_port_bots(&server);
-		CHECK(bots_in(&team0, &team1) == 0, "%ld bots stayed for King of the Hill", bots_in(&team0, &team1));
+		CHECK(bots_in(&team0, &team1) == 6, "%ld bots in King of the Hill", bots_in(&team0, &team1));
+		server.game.variant.game_engine_index = game_engine_oddball;
+		network_game_server_port_bots(&server);
+		CHECK(bots_in(&team0, &team1) == 0, "bots stayed in an unsupported mode");
 		return 0;
 	}
 	/* nothing changes once the game is started, nor in the game */

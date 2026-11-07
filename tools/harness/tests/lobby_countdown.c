@@ -168,7 +168,7 @@ int main(int argc, char **argv)
 		add_player(0, 1);
 		start_now();
 		CHECK(server.countdown_state.active, "one machine's two players never start the countdown");
-		CHECK(server.countdown_state.timer.time_remaining == NETWORK_GAME_COUNTDOWN_TIME,
+		CHECK(server.countdown_state.timer.time_remaining == NETWORK_GAME_SPLITSCREEN_COUNTDOWN_TIME,
 			"%ld ms to go, not a system link game's countdown", server.countdown_state.timer.time_remaining);
 		return 0;
 	}

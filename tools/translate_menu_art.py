@@ -314,15 +314,24 @@ def main():
     out_svg = MENUS / "lang" / args.lang / "svg"
     out_png = MENUS / "lang" / args.lang / "ce"
     done = 0
-    for path in sorted((MENUS / "svg/shell").glob("**/*.svg")):
+    sources = [(path, path.relative_to(MENUS / "svg"))
+               for path in (MENUS / "svg/shell").glob("**/*.svg")]
+    sources += [(path, Path("port") / path.relative_to(MENUS / "port_svg"))
+                for path in (MENUS / "port_svg").glob("**/*.svg")]
+    for path, relative in sorted(sources):
         name = re.sub(r"__\d+$", "", path.stem)
         if name not in table or (args.only and args.only not in name):
             continue
         svg = path.read_text(encoding="utf-8")
+        # Port title sources hold the backdrop alone; ce_menus adds their
+        # letters during rendering. Use an existing header's letter layout
+        # here so these titles also get a translated picture.
+        if not TEXT_GROUP.search(svg) and name.startswith("header_"):
+            svg = (MENUS / "svg/shell/main_menu/settings_select/player_setup/"
+                   "player_profile_edit/controller_edit/header_profile_controller_setting.svg").read_text(encoding="utf-8")
         if not TEXT_GROUP.search(svg):
             continue
         french, scale = render_svg(typeface, svg, table[name], path.name)
-        relative = path.relative_to(MENUS / "svg")
         target_svg = out_svg / relative
         target_svg.parent.mkdir(parents=True, exist_ok=True)
         target_svg.write_text(french, encoding="utf-8", newline="\n")

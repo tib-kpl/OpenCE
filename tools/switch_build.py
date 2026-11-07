@@ -26,13 +26,14 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .android_build import (ANDROID_API, GUEST_ABI_FLAGS, GUEST_CODE_FLAGS, MUSL_DIRECTORIES, MUSL_EXCLUDE,
+from .android_build import (ANDROID_API, ANDROID_DEFINES, GUEST_CODE_FLAGS, MUSL_DIRECTORIES, MUSL_EXCLUDE,
                             MUSL_FILES, MUSL_THREAD_PREFIXES, MUSL_URL, MUSL_VERSION, VARIADIC_PROTOTYPE_FILES,
                             ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES,
-                            _musl_sources, _find_ndk, fetch_third_party)
-from .linux_build import (LINUX_PROFILE, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, XDK_INCLUDE,
+                            _musl_sources, _find_ndk, fetch_third_party, guest_abi_flags)
+from .guest_arch import ARM64_32
+from .linux_build import (LINUX_PROFILE, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, STB_VORBIS_SOURCE, XDK_INCLUDE,
                           compile_launcher, game_defines_and_includes, game_sources, miniupnpc_sources,
-                          musl_math_sources, pgo_mode, pgo_profile,
+                          musl_math_sources, opus_cflags, opus_sources, pgo_mode, pgo_profile,
                           profile_use_flags, updater_defines, xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
@@ -91,10 +92,38 @@ def fetch_uam() -> bool:
     return True
 
 
+def _bison_for_uam() -> Optional[Path]:
+    """A bison that accepts UAM's grammar. macOS ships 2.3, which rejects it;
+    Homebrew's bison is keg-only, so it is not the bison on PATH."""
+    candidates = []
+    found = shutil.which("bison")
+    if found:
+        candidates.append(Path(found))
+    candidates.extend([Path("/opt/homebrew/opt/bison/bin/bison"), Path("/usr/local/opt/bison/bin/bison")])
+    seen = set()
+    for path in candidates:
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        result = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+        if result.returncode != 0:
+            continue
+        for word in result.stdout.split():
+            if word[:1].isdigit():
+                if int(word.split(".", 1)[0]) >= 3:
+                    return path
+                break
+    return None
+
+
 def _uam_build(n: Writer, devkitpro: Path, host_cc: Path, host_arch: str) -> Optional[Path]:
     """Ninja rules for build/switch/uam/libuam.a, or None (and a comment) if UAM cannot be built here."""
-    if not shutil.which("meson") or not shutil.which("bison") or not shutil.which("flex"):
-        n.comment("Switch build: no UAM (it needs meson, bison and flex)")
+    if not shutil.which("meson") or not shutil.which("flex"):
+        n.comment("Switch build: no UAM (it needs meson and flex)")
+        return None
+    bison = _bison_for_uam()
+    if bison is None:
+        n.comment("Switch build: no UAM (it needs bison 3 or newer; macOS ships 2.3, so: brew install bison)")
         return None
     if subprocess.run([sys.executable, "-c", "import mako"], capture_output=True).returncode != 0:
         n.comment("Switch build: no UAM (it needs Python's mako: pip install --user mako)")
@@ -107,6 +136,7 @@ def _uam_build(n: Writer, devkitpro: Path, host_cc: Path, host_arch: str) -> Opt
 
     build_dir = BUILD / "uam"
     cross_file = build_dir / "cross.ini"
+    native_file = build_dir / "native.ini"
     flags = ", ".join(f"'{flag}'" for flag in [*host_arch.split(), "-D__SWITCH__", "-isystem",
                                                 str(devkitpro / "libnx" / "include")])
     link_flags = ", ".join(f"'{flag}'" for flag in [f"-specs={devkitpro / 'libnx' / 'switch.specs'}",
@@ -124,6 +154,9 @@ def _uam_build(n: Writer, devkitpro: Path, host_cc: Path, host_arch: str) -> Opt
         "\n[properties]\nneeds_exe_wrapper = true\n"
         "\n[host_machine]\nsystem = 'horizon'\ncpu_family = 'aarch64'\ncpu = 'cortex-a57'\nendian = 'little'\n",
         encoding="utf-8")
+    # bison is a native tool (find_program native: true), so the cross file
+    # does not choose it. Point meson at one new enough to parse the grammar.
+    native_file.write_text(f"[binaries]\nbison = '{bison}'\n", encoding="utf-8")
 
     # meson's build of the library is a thin archive (members by path), so it
     # is repacked into an ordinary one that can be linked from anywhere.
@@ -142,11 +175,12 @@ def _uam_build(n: Writer, devkitpro: Path, host_cc: Path, host_arch: str) -> Opt
     n.rule(
         name="switch_uam",
         command=(f"rm -rf {meson_dir} && meson setup -Db_staticpic=false --cross-file {cross_file.resolve()} "
+                 f"--native-file {native_file.resolve()} "
                  f"{meson_dir.resolve()} {UAM_DIR.resolve()} > /dev/null && ninja -C {meson_dir} libuam.a > /dev/null && "
                  f"rm -f $out && cd {meson_dir} && {ar} rcs {library.resolve()} $$({ar} t libuam.a)"),
         description="SWITCH UAM $out",
     )
-    n.build(outputs=library, rule="switch_uam", implicit=[UAM_PATCH, UAM_DIR / ".patched", cross_file])
+    n.build(outputs=library, rule="switch_uam", implicit=[UAM_PATCH, UAM_DIR / ".patched", cross_file, native_file])
     n.build(outputs="switch-uam", rule="phony", inputs=[library])
     return library
 
@@ -219,7 +253,24 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     import json
     config: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
 
-    toolchain = ndk / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64"
+    # llvm-ar and ld.lld live in the NDK prebuilt for this machine. On macOS
+    # that directory is darwin-x86_64, and the same NDK on Linux is linux-x86_64.
+    prebuilt = ndk / "toolchains" / "llvm" / "prebuilt"
+    host_tag = os.environ.get("ANDROID_NDK_HOST_TAG", "")
+    if not host_tag:
+        if sys.platform == "darwin":
+            host_tag = "darwin-x86_64"
+        elif os.name == "nt":
+            host_tag = "windows-x86_64"
+        else:
+            host_tag = "linux-x86_64"
+    if not (prebuilt / host_tag).is_dir():
+        tags = sorted(entry.name for entry in prebuilt.iterdir() if entry.is_dir()) if prebuilt.is_dir() else []
+        if not tags:
+            n.comment("Switch build: the NDK has no LLVM toolchain")
+            return
+        host_tag = tags[0]
+    toolchain = prebuilt / host_tag
     sysroot_include = toolchain / "sysroot" / "usr" / "include"
     ndk_bin = toolchain / "bin"
     guest_cc = getattr(sln, "android_guest_cc", None) or "clang"
@@ -240,6 +291,9 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     libc_internal = guest_dir / "libc_internal"
     gl_include = guest_dir / "gl_include"
     arch = ANDROID_PORT_DIR / "guest" / "libc" / "arch" / "arm64_32"
+    # (the guest's system call interface, every guest architecture's:
+    # port/android/include/halo_guest_syscall.h)
+    arch_generic = ANDROID_PORT_DIR / "guest" / "libc" / "arch" / "generic"
     semantics_header = Path("build/linux/halo_msvc_semantics.h")
     platform_semantics_header = Path("build/linux/platform_msvc_semantics.h")
     prefix_header = LINUX_DIR / "include" / "halo_linux_prefix.h"
@@ -280,7 +334,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         command=f"cp $in $out && sed -n -e s/__NR_/SYS_/p < $in >> $out",
         description="SWITCH MUSL $out",
     )
-    n.build(outputs=syscall_h, rule="switch_syscall_h", inputs=[arch / "bits" / "syscall.h.in"])
+    n.build(outputs=syscall_h, rule="switch_syscall_h", inputs=[arch_generic / "bits" / "syscall.h.in"])
     n.rule(
         name="switch_version_h",
         command=f"echo '#define VERSION \"{MUSL_VERSION}\"' > $out",
@@ -302,7 +356,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     gl_imports = gen_dir / "gl_imports.list"
     n.rule(
         name="switch_gl_stubs",
-        command=(f"{python} tools/android_gl_stubs.py {LINUX_DIR}/src/gl.h {sysroot_include}/GLES3/gl32.h "
+        command=(f"{python} tools/android_gl_stubs.py --arch arm64_32 {LINUX_DIR}/src/gl.h {sysroot_include}/GLES3/gl32.h "
                  f"{sysroot_include}/GLES2/gl2ext.h {guest_gl_c} {gl_imports}"),
         description="SWITCH GL STUBS",
     )
@@ -322,15 +376,18 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     imports_s = gen_dir / "imports.s"
     host_table_c = BUILD / "host" / "host_import_table.c"
     host_imports_list = ANDROID_PORT_DIR / "host_imports.list"
+    # (the touch and app imports the guest's shared code calls, which the
+    # Switch's host answers too)
+    android_imports_list = ANDROID_PORT_DIR / "android_imports.list"
     # the Switch host's own: the deko3d renderer's (port/switch/guest/d3d8_dk.c)
     switch_imports_list = PORT_DIR / "host_imports.list"
     n.rule(
         name="switch_imports",
-        command=f"{python} tools/android_imports.py --translate-descriptors --host-table {host_table_c} {imports_s} $in",
+        command=f"{python} tools/android_imports.py --arch arm64_32 --translate-descriptors --host-table {host_table_c} {imports_s} $in",
         description="SWITCH IMPORTS",
     )
     n.build(outputs=[imports_s, host_table_c], rule="switch_imports",
-            inputs=[host_imports_list, switch_imports_list, posix_imports, gl_imports],
+            inputs=[host_imports_list, android_imports_list, switch_imports_list, posix_imports, gl_imports],
             implicit=[Path("tools/android_imports.py")])
 
     generated_headers = [*xdk_headers(), alltypes, syscall_h, version_h, gl_stamp,
@@ -365,7 +422,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     # The name is Android's and stays that way - it is the port's own flag,
     # shared through port/linux/src with every other port that relocates the
     # window, and changing it would be a larger edit than the Switch needs.
-    guest_abi = " ".join(GUEST_ABI_FLAGS + ["-DHALO_ANDROID", "-DHALO_SWITCH"] +
+    # (the arm64_32 guest's flags, as Android's: tools/guest_arch.py)
+    guest_abi = " ".join(guest_abi_flags(ARM64_32, ANDROID_DEFINES) + ["-DHALO_SWITCH"] +
                          (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
 
     # musl is configured for an Apple target and passes
@@ -377,7 +435,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     #
     # So the compiler is asked instead. Dropping the flag is safe here because
     # the two macros it suppresses, __APPLE__ and __MACH__, are already
-    # undefined on the next line of GUEST_ABI_FLAGS; what it does beyond that
+    # undefined by the next of ARM64_32's target flags (tools/guest_arch.py); what it does beyond that
     # is decide whether a target macro is predefined, and this guest is not
     # Apple's and does not care.
     #
@@ -427,13 +485,13 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         return obj
 
     libc_includes = [
-        f"-isystem {libc_include}", f"-isystem {arch}", f"-isystem {MUSL_DIR}/arch/generic",
+        f"-isystem {libc_include}", f"-isystem {arch}", f"-isystem {arch_generic}", f"-isystem {MUSL_DIR}/arch/generic",
         f"-isystem {MUSL_DIR}/include",
     ]
 
     musl_cflags = " ".join([
         guest_abi, "-std=c99", "-ffreestanding", "-fno-common", "-D_XOPEN_SOURCE=700", "-w",
-        f"-I{arch}", f"-I{MUSL_DIR}/arch/generic", f"-I{libc_internal}",
+        f"-I{arch}", f"-I{arch_generic}", f"-I{MUSL_DIR}/arch/generic", f"-I{libc_internal}",
         f"-I{ANDROID_PORT_DIR}/guest/libc/src_include", f"-I{MUSL_DIR}/src/include",
         f"-I{MUSL_DIR}/src/internal", f"-I{libc_include}", f"-I{MUSL_DIR}/include",
     ])
@@ -469,11 +527,16 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     objects: List[Path] = []
     for source in game_sources(config):
         cflags = game_cflags
+        # (the build's number and repository, as Android's: main_build_identity,
+        # which the main menu's news asks GitHub for this release's notes by)
+        if source.as_posix() == "source/main/main.c":
+            cflags += " " + updater_defines(getattr(sln, "port_release", False))
         if source.as_posix() in VARIADIC_PROTOTYPE_FILES:
             cflags += f" -include {ANDROID_PORT_DIR}/include/halo_android_variadic_prototypes.h"
         objects.append(guest_object(source, cflags))
     for source in sorted(Path(config["game_sources"]).glob("*.c")):
         objects.append(guest_object(source, game_cflags))
+    objects.append(guest_object(STB_VORBIS_SOURCE, game_cflags))
 
     platform_cflags = " ".join([
         guest_abi, guest_code, "-std=gnu11", "-D_GNU_SOURCE", "-DHALO_LINUX_PLATFORM_LAYER", "-w", profile_flags,
@@ -497,6 +560,12 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     for name in ("xmlparse.c", "xmlrole.c", "xmltok.c"):
         objects.append(guest_object(EXPAT_DIR / name, platform_cflags))
     objects.append(guest_object(KCP_DIR / "ikcp.c", platform_cflags))
+    # the link page's QR code (port/third_party/qrcodegen; port/linux/src/link_page.c)
+    objects.append(guest_object(Path("port/third_party/qrcodegen/qrcodegen.c"), platform_cflags))
+    # voice chat's codec (port/third_party/opus), with the guest's ABI and C
+    # library, as Android's
+    for source in opus_sources():
+        objects.append(guest_object(source, " ".join([opus_cflags(guest_abi), *libc_includes])))
     # internet play's signatures, for public games' listings
     # (port/third_party/monocypher; p2p_crypto.c)
     for name in ("monocypher.c", "monocypher-ed25519.c"):
@@ -517,7 +586,7 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     runtime_internal_cflags = " ".join([
         guest_abi, "-std=c99", "-ffreestanding", "-fno-common", "-D_XOPEN_SOURCE=700", "-D_GNU_SOURCE",
         f"-I{runtime_dir}", f"-I{ANDROID_PORT_DIR}/include",
-        f"-I{arch}", f"-I{MUSL_DIR}/arch/generic", f"-I{libc_internal}",
+        f"-I{arch}", f"-I{arch_generic}", f"-I{MUSL_DIR}/arch/generic", f"-I{libc_internal}",
         f"-I{ANDROID_PORT_DIR}/guest/libc/src_include", f"-I{MUSL_DIR}/src/include",
         f"-I{MUSL_DIR}/src/internal", f"-I{libc_include}", f"-I{MUSL_DIR}/include",
     ])
@@ -543,6 +612,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     n.rule(
         name="switch_guest_link",
         command=(f"$switch_ndk_bin/ld.lld -m aarch64linux -static -nostdlib -T {linker_script} "
+                 f"-L {ANDROID_PORT_DIR / 'guest' / 'ld' / 'macho'} "
+                 f"--defsym=__guest_image_base={ARM64_32.image_base:#x} "
                  f"-Map $out.map -o $out @$out.rsp {libguestc} "
                  "$$($switch_host_cc -print-libgcc-file-name)"),
         description="SWITCH LINK $out",
@@ -603,8 +674,8 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     ])
     # The Android host's own files, with this port's replacements (the
     # three in port/switch/host take the place of port/android/host's) and
-    # posix_net.c and posix_upnp.c left out: host_net.c has the socket calls
-    # over libnx, and answers the desktop-only and UPnP ones itself.
+    # posix_net.c left out: host_net.c has the socket calls over libnx, and
+    # answers the desktop-only ones itself.
     host_sources = list(sorted((PORT_DIR / "host").glob("*.c")))
     # the stack switch into the guest, which has to be assembly: it moves the
     # stack pointer, which C cannot express
@@ -621,7 +692,24 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
     host_sources += [
         LINUX_DIR / "src" / "posix_files.c",
         TOML_DIR / "tomlc17.c",
+        # a replay's records in the host's memory, as Android's and the PS5's
+        ANDROID_PORT_DIR / "host" / "host_replay.c",
     ]
+    # the port's zlib (inflate only, its names z_), for the high-res HUD's
+    # PNGs, which the host decodes as a map loads (host_dk_hud.c)
+    zlib_sources = [ZLIB_DIR / name for name in ZLIB_SOURCES]
+    host_sources += zlib_sources
+    # internet play's UPnP: posix_upnp.c with the port's miniupnpc, as the
+    # desktop's and the PS5's (the library's own warnings are not ours)
+    upnp_sources = [LINUX_DIR / "src" / "posix_upnp.c", *miniupnpc_sources()]
+    host_sources += upnp_sources
+    upnp_cflags = " ".join([host_cflags, f"-I{MINIUPNPC_DIR / 'include'}", f"-I{MINIUPNPC_DIR / 'src'}",
+                            *MINIUPNPC_DEFINES,
+                            # (libnx has not these two: host_net.c's, which
+                            # answer as the IPv4 network has no scopes)
+                            "-Dif_nametoindex=switch_upnp_if_nametoindex",
+                            "-Dif_indextoname=switch_upnp_if_indextoname",
+                            f"-include {PORT_DIR / 'host' / 'host_upnp_names.h'}"])
     # the disc image reader, so a retail .iso on the card can be unpacked into
     # the maps folder by the port itself rather than copied there by hand. It is
     # the same source the desktop port and the guest use, built here without
@@ -641,6 +729,12 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         # known even in a stub build, whose folder is then the same one)
         if source.name == "host_dk_shaders.c":
             cflags = f'{host_cflags} -DHOST_DK_UAM_COMMIT=\\"{UAM_COMMIT[:12]}\\"'
+        if source in zlib_sources:
+            cflags = " ".join([host_cflags, f"-I{ZLIB_DIR}", *ZLIB_DEFINES])
+        if source in upnp_sources:
+            cflags = upnp_cflags + (" -w" if source.name != "posix_upnp.c" else "")
+        if source.name == "host_dk_hud.c":
+            cflags = f"{host_cflags} -I{ZLIB_DIR}"
         n.build(outputs=obj, rule="switch_host_cc", inputs=source, variables={"cflags": cflags},
                 implicit=[syscall_h])
         host_objects.append(obj)
@@ -681,6 +775,18 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
         nm_bin = host_cc.parent / "aarch64-none-elf-nm"
         objcopy_bin = host_cc.parent / "aarch64-none-elf-objcopy"
         ld_bin = host_cc.parent / "aarch64-none-elf-ld"
+        # UAM's allocations go to the host's allocator for it
+        # (port/switch/host/host_uam_alloc.c), each thread's own: newlib's
+        # malloc has one lock for the process, and two compile threads on it
+        # were slower than one (DEKO3D.md, phase 5, step 4). Every call of
+        # the C library's and C++'s, renamed with the rest.
+        uam_allocations = [("malloc", "host_uam_malloc"), ("calloc", "host_uam_calloc"),
+                           ("realloc", "host_uam_realloc"), ("free", "host_uam_free"),
+                           ("strdup", "host_uam_strdup"), ("strndup", "host_uam_strndup"),
+                           ("_Znwm", "host_uam_new"), ("_Znam", "host_uam_new_array"),
+                           ("_ZdlPv", "host_uam_delete"), ("_ZdaPv", "host_uam_delete_array")]
+        allocation_lines = " ".join(f"'{old} {new}'" for old, new in uam_allocations)
+        allocation_globals = " ".join(f"--keep-global-symbol={new}" for _, new in uam_allocations)
         n.rule(
             name="switch_uam_combine",
             command=(
@@ -688,8 +794,9 @@ def generate_switch_build(n: Writer, sln: Any) -> None:
                 f"{nm_bin} --defined-only {combined} | awk '{{print $$3}}' | "
                 f"grep -v -e '^host_dk_compile_glsl$$' -e '^\\$$' | sort -u | "
                 f"awk '{{print $$1\" uam_\"$$1}}' > {symbols} && "
+                f"printf '%s\\n' {allocation_lines} >> {symbols} && "
                 f"{objcopy_bin} --redefine-syms={symbols} --keep-global-symbol=host_dk_compile_glsl "
-                f"{combined} $out"
+                f"{allocation_globals} {combined} $out"
             ),
             description="SWITCH UAM COMBINE $out",
         )

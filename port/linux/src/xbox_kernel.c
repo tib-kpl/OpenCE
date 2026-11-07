@@ -642,7 +642,98 @@ VOID WINAPI Sleep(DWORD milliseconds)
 	SleepEx(milliseconds, FALSE);
 }
 
-/* ---------- time */
+/* ---------- time
+
+On Android and the Switch the game's clock reads are the CPU's own timer,
+read where the game runs: their guest's clock_gettime has no fast path and
+is a system call each time, through the host, and the game reads the clock
+thousands of times a frame (the collision code times each of its tests,
+collision_usage.c: a tenth of a busy multiplayer frame on a Nokia 8 went to
+that). ARM64 lets a program read its generic timer (Linux and Android give
+programs the virtual count, Horizon the physical one, which libnx reads),
+and says its rate. Both clocks below count from that timer, so the values
+the game compares stay of one clock; where the rate cannot be read they are
+clock_gettime's, as on the other ports. */
+
+#if defined(HALO_ANDROID) && defined(__aarch64__)
+#define PLATFORM_HAS_CPU_TIMER 1
+
+static unsigned long long cpu_timer_count(void)
+{
+	unsigned long long count;
+
+#ifdef HALO_SWITCH
+	__asm__ volatile("isb\n\tmrs %0, cntpct_el0" : "=r"(count) : : "memory");
+#else
+	__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(count) : : "memory");
+#endif
+	return count;
+}
+
+/* how long the timer's rate is measured, and how far the rate it says may be
+from that */
+#define CPU_TIMER_MEASURED_NANOSECONDS 5000000ULL
+#define CPU_TIMER_TOLERANCE_PERCENT 2ULL
+
+static unsigned long long monotonic_nanoseconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+}
+
+/* the timer's ticks a second, 0 if it does not say, or says what it does
+not run at. The rate is the firmware's to set (cntfrq_el0), and some set it
+wrong, which Linux mends from the device tree for its own clocks but not in
+the register: a Galaxy S21 FE's (Exynos 2100) timer says 2293044683 Hz and
+runs at 26 MHz, so the game's time all but stopped (the menus' scene still,
+a level never loaded after Choose Difficulty). So the rate is measured
+against clock_gettime once, over CPU_TIMER_MEASURED_NANOSECONDS, and a rate
+that is not what it says leaves the clocks clock_gettime's. Decided before
+either clock's first value, so that the values the game compares are all of
+one clock. */
+static unsigned long long cpu_timer_frequency(void)
+{
+	static unsigned long long frequency;
+	static int checked;
+
+	if (!__atomic_load_n(&checked, __ATOMIC_ACQUIRE))
+	{
+		unsigned long long said, first_time, first_count, last_time, last_count, measured;
+
+		__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(said));
+		said &= 0xffffffffULL;
+		first_time = monotonic_nanoseconds();
+		first_count = cpu_timer_count();
+		do
+		{
+			last_time = monotonic_nanoseconds();
+			last_count = cpu_timer_count();
+		}
+		while (last_time - first_time < CPU_TIMER_MEASURED_NANOSECONDS);
+		measured = (last_count - first_count) * 1000000000ULL / (last_time - first_time);
+		frequency = said && measured * 100ULL >= said * (100ULL - CPU_TIMER_TOLERANCE_PERCENT) &&
+			measured * 100ULL <= said * (100ULL + CPU_TIMER_TOLERANCE_PERCENT) ? said : 0;
+		__atomic_store_n(&checked, 1, __ATOMIC_RELEASE);
+		if (!frequency)
+			platform_log("clock: the CPU's timer says %llu Hz and runs at about %llu Hz: the clocks are "
+				"clock_gettime's", said, measured);
+	}
+	return frequency;
+}
+
+/* the timer's count in units of a second's divisor ticks, without
+overflowing in 64 bits */
+static unsigned long long cpu_timer_in(unsigned long long divisor)
+{
+	unsigned long long count = cpu_timer_count(), frequency = cpu_timer_frequency();
+
+	return count / frequency * divisor + count % frequency * divisor / frequency;
+}
+#else
+#define PLATFORM_HAS_CPU_TIMER 0
+#endif
 
 /* The game's clocks count from when it started, as the Xbox's count from
 power-on. Its code keeps times in signed 32-bit variables, which a host up
@@ -660,8 +751,17 @@ static unsigned long long platform_clock_nanoseconds(void)
 #else
 	struct timespec now;
 
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	value = (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+#if PLATFORM_HAS_CPU_TIMER
+	if (cpu_timer_frequency())
+	{
+		value = cpu_timer_in(1000000000ULL);
+	}
+	else
+#endif
+	{
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		value = (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+	}
 #endif
 	__atomic_compare_exchange_n(&start, &expected, value - 10000000000ULL, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 	return value - __atomic_load_n(&start, __ATOMIC_RELAXED);

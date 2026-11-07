@@ -58,7 +58,7 @@ OBJECTS.C
 #include "structures/structure_bsp_definitions.h"
 #include "units/units.h"
 /* port: object_bounds_cache.c's */
-void object_bounds_cache_update(long object_index, real_point3d const *center, real radius);
+void object_bounds_cache_update(long object_index, short type, real_point3d const *center, real radius);
 /* port: port/linux/game/first_person_legs.c's */
 void first_person_legs_reset(void);
 
@@ -1128,6 +1128,24 @@ void objects_initialize_for_new_map(
 	object_globals->last_garbage_warn_time = 0;
 
 	return;
+}
+
+/* port: each object's header points at its block in the objects pool
+(game_state.c's game_state_image_relocate) */
+boolean objects_port_relocate(
+	struct game_state_relocation const *relocation)
+{
+	long index;
+
+	for (index = 0; index < object_header_data->maximum_count; index++)
+	{
+		struct object_header_datum *header = game_state_relocation_element(relocation, object_header_data, index);
+
+		if (header)
+			game_state_relocate(relocation, &header->datum);
+	}
+
+	return TRUE;
 }
 
 void objects_dispose_from_old_map(
@@ -3111,7 +3129,7 @@ void object_compute_node_matrices(
 		object->object.bounding_sphere_radius *= object->object.scale;
 	}
 	/* port: (and in the packed copy collision reads: object_bounds_cache.c) */
-	object_bounds_cache_update(object_index, &object->object.bounding_sphere_center, object->object.bounding_sphere_radius);
+	object_bounds_cache_update(object_index, object->object.type, &object->object.bounding_sphere_center, object->object.bounding_sphere_radius);
 
 	return;
 }
@@ -3244,11 +3262,11 @@ void object_render_debug(
 		real_vector3d velocity;
 		real_matrix4x3 world_matrix;
 		
-		char* model_name = strrchr(object_definition->object.model.name, '\\');
+		char* model_name = strrchr(TAG_REFERENCE_NAME(object_definition->object.model), '\\');
 		object_get_world_matrix(object_index, &world_matrix);
 		object_get_velocities(object_index, &velocity, NULL);
 
-		model_name = model_name ? &model_name[1] : object_definition->object.model.name;
+		model_name = model_name ? &model_name[1] : TAG_REFERENCE_NAME(object_definition->object.model);
 		
 		render_debug_string_at_point(0, &world_matrix.position, model_name, global_real_argb_orange);
 		render_debug_matrix(TRUE, &world_matrix, object->object.bounding_sphere_radius);

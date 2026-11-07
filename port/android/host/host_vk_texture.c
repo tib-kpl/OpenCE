@@ -219,9 +219,10 @@ static uint32_t level_bytes(const struct host_vk_image *image, unsigned level)
 static void barrier(VkCommandBuffer command, struct host_vk_image *image, VkImageLayout to)
 {
 	VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+	VkPipelineStageFlags source_stage, destination_stage;
 
-	barrier.srcAccessMask = image->layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-	barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	host_vk_barrier_scope(image->layout, to, &source_stage, &barrier.srcAccessMask, &destination_stage,
+		&barrier.dstAccessMask);
 	barrier.oldLayout = image->layout;
 	barrier.newLayout = to;
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -230,8 +231,7 @@ static void barrier(VkCommandBuffer command, struct host_vk_image *image, VkImag
 	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	barrier.subresourceRange.levelCount = image->levels;
 	barrier.subresourceRange.layerCount = image->layers;
-	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL,
-		1, &barrier);
+	vkCmdPipelineBarrier(command, source_stage, destination_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
 	image->layout = to;
 }
 
@@ -264,7 +264,11 @@ static void image_dirty_remove(struct host_vk_image *image)
 fence passing means both are done (the other was submitted before it) */
 static void image_retire(struct host_vk_image *image)
 {
-	unsigned slot = (unsigned)B.frame;
+	unsigned slot;
+
+	/* (the graveyard of a frame being recorded: host_vk_static_free_command) */
+	host_vk_frame_command();
+	slot = (unsigned)B.frame;
 
 	image_dirty_remove(image);
 	if (graveyard_count[slot] == graveyard_capacity[slot])
@@ -316,7 +320,8 @@ void host_vk_texture_command(const struct vk_command_texture *command)
 	}
 	image = images[command->id];
 	if (image && image->kind == command->kind && image->format == command->format && image->width == command->width &&
-		image->height == command->height && image->depth == command->depth && image->levels == command->levels)
+		image->height == command->height && image->depth == command->depth && image->levels == command->levels &&
+		image->swizzle == command->swizzle)
 		return; /* the same image: its texels are replaced by the data that follows */
 	if (image)
 	{
@@ -337,6 +342,7 @@ void host_vk_texture_command(const struct vk_command_texture *command)
 	image->depth = command->kind == VK_IMAGE_3D ? command->depth : 1;
 	image->levels = command->levels;
 	image->layers = layers;
+	image->swizzle = command->swizzle;
 	image->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 	info.imageType = command->kind == VK_IMAGE_3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
 	info.flags = command->kind == VK_IMAGE_CUBE ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
@@ -368,6 +374,14 @@ void host_vk_texture_command(const struct vk_command_texture *command)
 	view.viewType = command->kind == VK_IMAGE_3D ? VK_IMAGE_VIEW_TYPE_3D : command->kind == VK_IMAGE_CUBE ?
 		VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
 	view.format = format;
+	if (command->swizzle)
+	{
+		VkComponentSwizzle *components[4] = { &view.components.r, &view.components.g, &view.components.b, &view.components.a };
+		uint32_t channel;
+
+		for (channel = 0; channel < 4; channel++)
+			*components[channel] = (VkComponentSwizzle)(VK_COMPONENT_SWIZZLE_R + ((command->swizzle >> (8 * channel)) & 3));
+	}
 	view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	view.subresourceRange.levelCount = command->levels;
 	view.subresourceRange.layerCount = layers;
@@ -381,6 +395,85 @@ void host_vk_texture_command(const struct vk_command_texture *command)
 	return;
 fail:
 	image_destroy(image);
+}
+
+/* the image ready to be copied into, outside a rendering (made readable again at the next draw: the dirty list); 0 if
+it cannot be kept track of */
+static int copy_ready(VkCommandBuffer cmd, struct host_vk_image *image)
+{
+	if (image->layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+	{
+		barrier(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		if (dirty_count == dirty_capacity)
+		{
+			unsigned capacity = dirty_capacity ? dirty_capacity * 2 : 64;
+			struct host_vk_image **grown = realloc(dirty, sizeof(*grown) * capacity);
+
+			if (!grown)
+				return 0;
+			dirty = grown;
+			dirty_capacity = capacity;
+		}
+		dirty[dirty_count++] = image;
+	}
+	else
+	{
+		/* another copy into it since the last draw (the atlas's rows, a texture sent again): copies are not ordered without a
+		barrier between them */
+		barrier(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	}
+	return 1;
+}
+
+int host_vk_texture_from_levels(uint32_t id, unsigned width, unsigned height, unsigned levels, const unsigned char *texels)
+{
+	struct vk_command_texture make;
+	struct host_vk_image *image;
+	VkCommandBuffer cmd;
+	unsigned level;
+	size_t at = 0;
+
+	memset(&make, 0, sizeof(make));
+	make.id = id;
+	make.kind = VK_IMAGE_2D;
+	make.format = VK_IMAGE_FORMAT_BGRA;
+	make.width = width;
+	make.height = height;
+	make.depth = 1;
+	make.levels = levels;
+	host_vk_texture_command(&make);
+	image = host_vk_image_get(id);
+	if (!image || image->levels != levels)
+		return 0;
+	host_vk_rendering_end();
+	cmd = host_vk_frame_command();
+	if (!copy_ready(cmd, image))
+		return 0;
+	/* (a level at a time, each placed in the frame's ring: the largest a 2048 by 2048 sheet's 16 MB, a ring buffer's size) */
+	for (level = 0; level < levels; level++)
+	{
+		uint32_t bytes = level_bytes(image, level);
+		VkBuffer buffer;
+		VkDeviceSize offset;
+		VkBufferImageCopy copy;
+		unsigned char *place = host_vk_data_place(bytes, &buffer, &offset);
+
+		if (!place)
+			return 0;
+		memcpy(place, texels + at, bytes);
+		at += bytes;
+		memset(&copy, 0, sizeof(copy));
+		copy.bufferOffset = offset;
+		copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copy.imageSubresource.mipLevel = level;
+		copy.imageSubresource.layerCount = 1;
+		copy.imageExtent.width = level_dimension(image->width, level);
+		copy.imageExtent.height = level_dimension(image->height, level);
+		copy.imageExtent.depth = 1;
+		vkCmdCopyBufferToImage(cmd, buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+		B.counts.texture_bytes += bytes;
+	}
+	return 1;
 }
 
 void host_vk_texture_data_command(const struct vk_command_texture_data *command)
@@ -418,27 +511,8 @@ void host_vk_texture_data_command(const struct vk_command_texture_data *command)
 	}
 	host_vk_rendering_end();
 	cmd = host_vk_frame_command();
-	if (image->layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-	{
-		barrier(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-		if (dirty_count == dirty_capacity)
-		{
-			unsigned capacity = dirty_capacity ? dirty_capacity * 2 : 64;
-			struct host_vk_image **grown = realloc(dirty, sizeof(*grown) * capacity);
-
-			if (!grown)
-				return;
-			dirty = grown;
-			dirty_capacity = capacity;
-		}
-		dirty[dirty_count++] = image;
-	}
-	else
-	{
-		/* another copy into it since the last draw (the atlas's rows, a texture sent again): copies are not ordered without a
-		barrier between them */
-		barrier(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	}
+	if (!copy_ready(cmd, image))
+		return;
 	memset(&copy, 0, sizeof(copy));
 	copy.bufferOffset = offset;
 	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;

@@ -1,0 +1,116 @@
+# Panneau de configuration Android
+
+L'installation du disque et les réglages ouverts depuis le jeu partagent une
+interface bleu nuit/cyan. Son organisation reprend la référence demandée,
+le panneau Android du projet voisin `Unreal-Android` : rubriques latérales,
+choix réglables avec les flèches, navigation aux gâchettes et retour au jeu.
+Depuis le jeu, c'est un dialogue dans `HaloActivity`, avec le jeu visible
+dans les marges autour du panneau. Il n'ouvre plus `GraphicsActivity` dans
+une autre activité. L'accès depuis le lanceur garde son écran autonome ;
+les deux utilisent le même contrôleur `AndroidSettingsPanel`.
+Le dessin est réalisé par les vues Android et utilise la police Overpass
+déjà fournie dans le projet, avec sa licence.
+
+## Accès et commandes
+
+- Avec une manette connectée : **Start + Select** ouvre le panneau, dans les
+  deux ordres. La roue crantée tactile est masquée.
+- Sans manette : la roue crantée reste visible. L'ajout, le retrait et la
+  modification d'un périphérique actualisent sa visibilité.
+- **L1/R1** change de rubrique ; **A** valide ; **gauche/droite** ajuste un
+  choix. Les boutons et les flèches sont aussi utilisables au tactile.
+- **B**, ou **Start + Select** depuis le panneau en jeu, revient au jeu.
+- Start et Select seuls conservent leurs actions. Un bref délai de 250 ms
+  laisse le temps de former la combinaison. Les appuis d'une autre manette
+  ne peuvent pas la compléter. Une pause, perte de focus ou déconnexion
+  annule les appuis en attente et relâche ceux déjà transmis au moteur.
+
+## Rubriques
+
+| Rubrique | Contenu |
+| --- | --- |
+| Jeu et données | État des données et import du disque Xbox `.iso` / `.xiso`, avec prise en charge des éditions européennes. |
+| Graphismes | Choix Vulkan / OpenGL ES et accès aux pilotes. |
+| Pilotes | Pilote système, téléchargement Turnip, import d'archive et sélection des archives installées. |
+| Affichage | Résolution maximale, échelle de rendu et synchronisation verticale. |
+
+Les réglages graphiques sont écrits dans le `config.toml` existant et
+s'appliquent au prochain lancement. L'import utilise l'extracteur existant.
+Le téléchargement du pilote utilise le même habillage et indique sa progression.
+
+## Validation
+
+`python tools/test_touch_layout.py` vérifie le tactile, le gyroscope et la
+logique de combinaison du code de production : deux ordres, appuis simples,
+répétitions, combinaison après un appui déjà transmis, annulation et séparation
+des manettes. L'adaptateur Android est aussi exécuté avec une horloge contrôlée :
+un appui rejoué reste enfoncé au moins 50 ms pour être vu par SDL, et aucun
+relâchement retardé ne fuit après une perte de focus ou une déconnexion.
+L'APK compile en variante normale et en variante de test ; le
+manifeste confirme les paquets respectifs `com.halo.decomp` et
+`com.halo.decomp.test`. Le changement de variante invalide la cible APK Ninja.
+
+Les premiers essais sur Odin 2 Portal puis AYN Thor ont vérifié le rendu du
+panneau et le démarrage du menu principal Vulkan. Sur la Thor, la roue est
+masquée avec sa manette intégrée, Start + Select ouvre le panneau, L1/R1 change
+de rubrique et une modification de résolution a été confirmée dans le fichier.
+Les essais utilisent une application séparée et une copie des cartes et de la
+configuration ; l'application habituelle et ses sauvegardes restent intactes.
+
+Le retrait physique d'une manette n'est pas vérifié sur ces consoles à manette
+intégrée. Les captures et logs de test restent locaux dans `dist/integration/`.
+
+## Visée et textes français
+
+Dans les options du jeu, **Manettes > Visée au stick** propose maintenant une
+sensibilité horizontale et verticale indépendantes (1–10, ou PROFIL pour
+hériter de la sensibilité commune). Halo applique d'origine une vitesse
+verticale deux fois plus faible. **Vitesse verticale : Équilibrée** donne la
+même vitesse aux deux axes à niveau égal ; le mode Halo CE reste le défaut.
+Les choix sont enregistrés par profil et s'appliquent immédiatement, sans
+modifier le tactile, la souris, le gyroscope ni les limites des tourelles.
+
+La passe française couvre les textes des nouveaux menus, de l'overlay,
+du cinéma et des commandes tactiles. Les titres Cinéma et Jouabilité ont
+leurs images françaises. Les listes vidéo et l'aide des dispositions ont
+des espacements corrigés ; le panneau cinéma mesure la largeur réelle des
+lettres, conserve les accents et coupe les lignes aux mots. Le nom du pilote
+au menu principal est abrégé quand sa largeur dépasse l'espace disponible.
+
+Validation : 69 tests ciblés réussis (visée des quatre profils, Unicode,
+retours à la ligne, replays, menus, images et réaffectations manette), tests Java des contrôles réussis,
+42 XML traduits sans texte manquant. Sur l'AYN Thor, l'APK isolée démarre en
+Vulkan ; le menu X/Y et ses aides sont lisibles, et l'activation du mode
+équilibré est confirmée dans le fichier du profil. Le panneau cinéma vide et
+le nom du pilote ont également été contrôlés. Le ressenti de visée avec le
+stick physique et une lecture de replay complète restent à vérifier.
+
+## Navigation Mods et Cinéma
+
+Sur Android, **Importer, Supprimer, Monter, Descendre** sont sur une seule
+ligne dans cet ordre. **OK et Annuler** sont sur la ligne inférieure.
+Les deux lignes se trouvent entièrement sous le cadre de description :
+414 et 444 unités sur les 480 de l'écran, sans recouvrir le panneau de droite.
+Haut/Bas passe entre la liste et les lignes ; Gauche/Droite parcourt leurs
+boutons. Les barres restaurent leur bouton sélectionné après un changement
+de focus, avec sa surbrillance. Les actions de classement gardent le focus
+dans la barre. Le bouton Cinéma affiche **Supprimer** en entier ; le
+raccourci X reste disponible.
+
+Les tests compilent les fonctions réelles de focus et de navigation avec
+les barres XML générées : entrée, aller-retour, chaque bouton et bouclage,
+sur Android et sur desktop. Cette passe vérifie 36 tests ciblés et les
+contrôles Java. L'APK de test et l'APK normale compilent ; le dialogue a été
+contrôlé sur la Thor, avec changement de catégorie et fermeture par
+Start + Select. Les captures restent locales.
+
+La reprise des essais sur la Thor a confirmé le classement dans les deux sens,
+l'accès directionnel aux quatre actions et à OK/Annuler, l'écriture du
+`load_order.toml` par OK et le retour à l'ordre enregistré après Annuler.
+Une sélection restait dessinée sur l'ancienne barre : ses images sont maintenant
+actualisées aussi pendant le rendu, car une barre inactive ne reçoit plus de
+mise à jour d'entrée. La sélection unique et l'absence de chevauchement ont
+été contrôlées dans l'APK finale, ainsi que le libellé Supprimer du Cinéma.
+Un test de géométrie vérifie aussi les marges sous le panneau et la limite
+de l'écran. Deux mods factices ont servi aux essais,
+dans l'application isolée uniquement ; ils sont retirés ensuite.

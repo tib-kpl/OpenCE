@@ -6,7 +6,9 @@ static struct sdl_stream *streams=&stream;
 static struct dsound_globals dsound_globals;
 static int refills,unlocks,events,resets,lock_depth;
 static unsigned long status[8],completed[8];
-#define mixer_lock 0
+static int mixer_lock;
+#define pthread_mutex_trylock(...) (lock_depth++, 0)
+#define mixer_lock_take() pthread_mutex_lock(&mixer_lock)
 #define pthread_mutex_lock(...) ((void)lock_depth++)
 #define pthread_mutex_unlock(...) ((void)lock_depth--)
 #define channel_get(i) (&dsound_globals.channels[i])

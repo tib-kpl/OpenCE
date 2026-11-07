@@ -4,7 +4,8 @@
 `ninja android_apk` makes an app from it:
 `port/android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The game shows its graphics with OpenGL ES 3. It plays sound through SDL3
+The game shows its graphics with Vulkan (the default) or OpenGL ES 3
+(refer to "Graphics: OpenGL ES and Vulkan"). It plays sound through SDL3
 (AAudio). It accepts input from game controllers, for example a PlayStation
 5 DualSense on Bluetooth, and from the touchscreen (refer to "Controls").
 The app needs Android 9 (API 28) or later. It operates on 64-bit-only
@@ -29,8 +30,8 @@ ninja) and these items:
   The option `--android-ndk` selects a different NDK.
 - CMake, and a JDK 17 or later for Gradle.
 - A network connection for the first build. `configure.py` downloads musl
-  1.2.5 and SDL 3.4.16 to `build/android/third_party`. Gradle downloads the
-  Android Gradle Plugin.
+  1.2.5 (checked against its SHA-256) and SDL 3.4.16 to
+  `build/android/third_party`. Gradle downloads the Android Gradle Plugin.
 
 On Windows, build in WSL2 (Ubuntu 24.04). The Android build does not run
 on Windows itself. Enter
@@ -97,7 +98,7 @@ To install the data from a computer:
 | --- | --- |
 | Saved games (`z:\` and `u:\`) | `save` |
 | Mods (`docs/mods.md`) | `mods`: `adb push <mod folder> /sdcard/Android/data/com.halo.decomp/files/mods/`; the main menu's Mods orders them and turns them off |
-| Log | `debug.txt` |
+| Log | `debug.txt`, the log of the game, and `halo.log`, the log of the app (`log_files = false` and `halo_log = false` in `[debug]` turn them off) |
 | Settings | `config.toml` |
 
 To make a copy of the saved games, enter
@@ -212,13 +213,22 @@ The buttons at the top of the screen:
 
 - "Hide" removes the controls (and stops the gyroscope aiming and the
   vibration) until you push "Touch"; the app remembers it.
+
+Aiming with the phone's gyroscope is in the game's settings, as on the
+Switch: open a profile, **GAMEPADS**, then **GYRO AIM**. ON aims with it all
+the time, ONLY ON ZOOM only while you are zoomed in (a scope), for fine
+aiming; OFF (the default) is the swipe and the stick only. The same screen
+sets its sensitivity and invert each way (`1` is the phone's own turn).
+These are `input.gyro_aim` and the four after it, which each profile keeps in
+the `settings.toml` in its folder (`config.toml`'s are those of a profile that
+has not set them). The gyroscope aims while the touch controls show.
 - "Options" opens these items:
   - "General": the phone's vibration (on by default; it follows the
-    vibration setting of the game's profile), aiming with the gyroscope
-    (off by default), a floating move stick (off by default: the stick goes
+    vibration setting of the game's profile), a floating move stick (off by default: the stick goes
     where your thumb lands in the lower left of the screen), the opacity of
-    the controls, "Held buttons don't aim" (off by default: a finger
-    that swipes from a button only holds it),
+    the controls, how many fingers tap together to open the cheat menu
+    (three, the default, or four), "Held buttons don't aim" (off by
+    default: a finger that swipes from a button only holds it),
     "Hide or add buttons" (hide a button, add a copy of a
     button) and "Edit buttons size".
   - "Edit buttons layout": drag the controls, and the "Options" button
@@ -235,6 +245,30 @@ Removing the app's data or the app removes the layout.
 
 ## Settings
 
+The Android setup panel uses the same blue/cyan interface for disc import,
+graphics, Vulkan drivers and display options. In the game it is a dialog over
+the SDL activity, with the game visible around it; launcher access uses an
+independent setup screen backed by the same controller. On a controller, hold **Start +
+Select** together to open it while playing; either order works. **L1/R1**
+switch categories, **A** selects, the directional arrows adjust a value,
+and **B** or **Start + Select** returns to the game. Start and Select used separately retain their
+game bindings. The touch gear is shown only when no controller is connected;
+plugging or unplugging a controller updates it immediately. The Halo Graphics
+launcher entry also opens this panel before starting the game.
+
+The graphics choices are saved for the next game launch. The data page opens
+the existing Xbox disc importer, including European discs and French maps.
+
+In the game's Settings > Gamepads > Stick Aim (French: Paramètres > Manettes >
+Visée au stick), horizontal and vertical sensitivities can be set independently
+on Halo's 1–10 scale. PROFILE inherits the profile's shared sensitivity. The
+speed model HALO CE retains the original vertical rate, half the horizontal
+rate; EQUAL AXES makes matching X/Y values equally fast. These choices apply
+immediately and are saved for each local profile. They do not change touch,
+mouse, gyroscope or vehicle turret sensitivity. Their configuration keys are
+`input.stick_sensitivity_horizontal`, `input.stick_sensitivity_vertical` and
+`input.stick_equal_axes`; see the Linux settings table for defaults.
+
 The settings are in `config.toml` in the data folder of the app. To change
 them:
 
@@ -250,10 +284,10 @@ the paths. Refer to [port/linux/README.md](../linux/README.md#settings).
 Some video settings also apply on Android, with these notes; the first three
 have rows of their own in Video Setup:
 
-- `display.resolution_scaling` (`RESOLUTION` in the menus) is `"original"`
-  (the default) for the Xbox's 640x480 scaled up, or `"native"` for the
-  display's own resolution: sharper, but more work for the GPU, and the
-  display must fit in the GPU's largest render target.
+- `display.resolution_limit` (`MAXIMUM RESOLUTION` in the menus) is the
+  most lines the game draws at, no more than the screen has: `"native"`, or
+  `"2160"`, `"1440"`, `"1080"`, `"720"` or `"480"`. More are sharper, but more
+  work for the GPU.
 - `display.max_fps` (`FRAME RATE LIMIT`) limits the frame rate while
   `display.vsync` is off: `0` (the default) is twice the display's refresh
   rate, `-1` no limit, or the most frames each second.
@@ -269,16 +303,16 @@ These settings are only for Android:
 | `input.touch_controls` | The touch controls in a game. `"auto"` (the default): shown on a touchscreen while no controller is connected. `"on"`: also shown with a controller. `"off"`: never shown. A device without a touchscreen never shows them. The carnage report's CONTINUE and LEAVE buttons follow the same rule (otherwise it shows its A and B prompt). The menus take taps in any case. |
 | `display.screen_width` | The number of columns of the 480-line picture. `0` (the default): the shape of the display (1068 on a 20:9 phone). `640`: the 4:3 shape of the Xbox. |
 | `display.stats_log` | `false` (the default): `true` writes a line a second to the log with the frame rate, the mode, the map, the renderer and the size of the 3D view, for a bug report or to compare two builds. |
-| `display.resolution_scaling` | Also Linux's, with another default on Android. `"original"` (the default): the game draws the 480 lines of the Xbox, which the display scales up. `"native"`: the game draws at the display's resolution (1080 lines on a 1080p phone). `"75%"`, `"50%"` or `"25%"`: that part of the display's resolution each way, scaled up: less for the GPU to draw, for more frames a second and less heat. Video Setup's Resolution Scaling sets it, from the next frame. |
 | `debug.sample_seconds` | Refer to "Find problems". |
+| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Under OpenGL ES, geometry is streamed in either mode. Refer to "Limits". |
 | `debug.profile_hz` | Refer to "Find problems". |
-| `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
-| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. `"auto"`: Turnip on an Adreno, which the app downloads (refer to "Turn on Turnip"). `"custom"`: the driver archive you imported (`vk_driver_custom.zip` in the data folder; refer to "Import a driver or switch to OpenGL ES"). Otherwise the file name of a driver archive in the data folder. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK), `"auto"` (TURNIP) or `"custom"` (IMPORTED). |
+| `debug.profile_run` | `true`: each start records a profile of the run into its own folder, `Download/halo_profiles/DDMMYYYY_HHMMSS` (the day and time it started), to send as it is. Refer to "Find problems". `false` (the default): none. Takes effect the next time the game starts. |
+| `display.renderer` | How the game draws: `"vulkan"` (the default; OpenGL ES if Vulkan cannot start, which sets it to `"gl"`) or `"gl"` (OpenGL ES over the phone's driver). Takes effect the next time the game starts. The line below the version number in the main menu shows the renderer that runs. VIDEO SETUP's GRAPHICS BACKEND sets it. Refer to "Graphics: OpenGL ES and Vulkan". |
+| `display.vk_driver` | The Vulkan driver of the Vulkan renderer (and of the Vulkan probe). Empty (the default): the phone's own. Otherwise the file name of a driver archive in `freedreno_drivers` in the data folder (or in the data folder itself): the Turnip build the app downloads on an Adreno (refer to "Turn on Turnip"), or one that you add. VIDEO SETUP's VULKAN DRIVER sets `""` (STOCK) or the name of an archive in `freedreno_drivers`. `"auto"`, which was the downloaded Turnip build, is the phone's own driver now: the game writes `""` over it. |
 | `debug.vk_probe` | Refer to "Find problems". |
 | `debug.vk_validation` | Refer to "Find problems". |
 | `debug.vk_present_marker` | Under the Vulkan renderer, draws a red square at the top left and a green one at the top right of the picture, so that a screenshot shows which way up it is. Default `false`. |
 | `debug.vk_self_test` | Under the Vulkan renderer, at start-up tries the renderer's clears and the copying of a draw's data (rewritten buffers, data larger than the command stream) on small targets of its own; the log says `clears self-test: ok` and `data self-test: id N ok`, or `FAILED`. Default `false`. |
-| `debug.memory_watch` | `true` (the default): the app notices the game's writes to cached textures by page protection. `false`: it compares page contents once a frame instead, which is slower. Geometry uses the streaming path in either mode. Refer to "Limits". |
 
 ## Graphics: OpenGL ES and Vulkan
 
@@ -286,7 +320,7 @@ The game can draw in two ways:
 
 | Renderer | `display.renderer` | Driver (`display.vk_driver`) |
 | --- | --- | --- |
-| Vulkan (the default) | `"vulkan"` | `""` (the default): the phone's own Vulkan driver. `"auto"`: Turnip on an Adreno GPU (refer to "Turn on Turnip"). Or the file name of a driver archive that you add. |
+| Vulkan (the default) | `"vulkan"` | `""` (the default): the phone's own Vulkan driver. Or the file name of a driver archive: the Turnip build the app downloads on an Adreno GPU (refer to "Turn on Turnip"), or one that you add. |
 | OpenGL ES | `"gl"` | The phone's own. |
 
 If Vulkan cannot start on a phone, the game uses OpenGL ES.
@@ -297,51 +331,30 @@ If Vulkan cannot start on a phone, the game uses OpenGL ES.
    **VIDEO SETUP**.
 2. At the top of the screen:
    - **GRAPHICS BACKEND:** `VULKAN` or `OPENGL` (OpenGL ES).
-   - **VULKAN DRIVER:** `STOCK` (the phone's own driver), `TURNIP`
-     (refer to "Turn on Turnip") or `IMPORTED` (a driver you added: refer to
-     "Import a driver or switch to OpenGL ES"). This row shows only when the
-     backend is `VULKAN`.
+   - **VULKAN DRIVER:** `STOCK` (the phone's own driver), then every driver
+     archive in `freedreno_drivers` by its file name: the Turnip build the
+     app downloads (refer to "Turn on Turnip") and any that you add. This
+     row, and **IMPORT DRIVER**, show only when the backend is `VULKAN`.
 3. Select **OK**. The menu writes `display.renderer` and
    `display.vk_driver` in `config.toml`.
 4. Close the game and start it again. The renderer and the driver change
    only when the game starts, as the note below the rows says.
 
-**DEFAULTS** sets `VULKAN` and `STOCK`. A driver archive of your own (refer
-to "Try another Turnip build") is set in `config.toml` only: with one set,
-the menu shows `STOCK`, and the archive stays set unless you choose
-another driver and select **OK**.
+**DEFAULTS** sets `VULKAN` and `STOCK`. An archive named in `config.toml`
+that is not in `freedreno_drivers` (one in the data folder itself) is not
+listed: with one set, the menu shows `STOCK`, and the archive stays set
+unless you choose another driver and select **OK**.
 
 On some phones the phone's own driver draws the game with errors: shapes
 that stretch across the screen, textures that are missing or wrong. The
 Vulkan renderer lets the game use another driver. On phones with a
 Qualcomm Adreno GPU, that is Turnip, the open-source Vulkan driver for
-Adreno from the Mesa project. Turnip is off until you turn it on.
+Adreno from the Mesa project. Turnip is off until you choose it.
 
 To see which renderer and driver run, look at the main menu: the line
 below the game's version number (`01.01.14.2342`, at the lower right) says
 `OpenGL ES`, `Vulkan`, or `Vulkan` and the name of the driver. Refer to
 "Make sure that it operates".
-
-### Import a driver or switch to OpenGL ES
-
-In the game, a small faint gear at the top right (touch it) opens the graphics
-screen, including on launchers that do not show the **Halo Graphics** icon
-or the long-press **Graphics** shortcut. The **Graphics** button shown after
-a failed start also opens it. Its buttons work with a gamepad:
-
-- **OpenGL ES (no Vulkan)**: the game does not use the Vulkan renderer.
-- **Vulkan, the phone's own driver**, or **Vulkan, Turnip (Adreno GPU)**.
-- **Vulkan, import a driver (zip)...**: choose a driver archive in the
-  system file picker. It must be an adrenotools archive, a zip with a
-  `meta.json` that names the driver's library (`libraryName`) and the
-  library itself, as the Turnip releases are made; 256 MB at most. It is
-  copied to the data folder as `vk_driver_custom.zip` and
-  `display.vk_driver = "custom"` is set. Importing another one replaces it.
-  Without the archive, `"custom"` falls back to the phone's own driver.
-
-The screen is also the way back when the game does not start with the
-current choice. VIDEO SETUP offers OpenGL ES, Vulkan and Turnip; importing
-a driver archive uses this Android screen. Changes apply at the next start.
 
 ### Find your GPU
 
@@ -380,16 +393,18 @@ value after `=`, and keep the quotes.
 
 1. Start the app one time. On an Adreno 6xx, 7xx or 8xx, the app shows
    "Downloading the Vulkan driver" before the game starts: it downloads
-   the Turnip build for the GPU's series into the data folder
-   (approximately 2.5 to 3.5 MB, from
+   the Turnip build for the GPU's series into `freedreno_drivers` in the
+   data folder (approximately 2.5 to 3.5 MB, from
    [K11MCH1/AdrenoToolsDrivers](https://github.com/K11MCH1/AdrenoToolsDrivers/releases),
    release `v26.0.0-rc08`; the app keeps the file only if it is exactly
    the build that we chose). It does this only one time. If the download
    fails or you push "Skip", the app tries again at the next start.
    The download does not turn Turnip on.
-2. Set **VULKAN DRIVER** to `TURNIP` (refer to "Change the renderer in
-   the game"), select **OK**, close the game and start it again. Then go
-   to step 5. Or, to change `config.toml` instead, close the game.
+2. Set **VULKAN DRIVER** to the downloaded build, listed by its file name
+   without `.zip` (for example `Turnip_v26.0.0_R8`; refer to "Change the
+   renderer in the game"), select **OK**, close the game and start it
+   again. Then go to step 5. Or, to change `config.toml` instead, close
+   the game.
 3. Open `config.toml` (refer to "Get to the settings file"). Find the
    `[display]` section. It has these lines, with comments above them:
 
@@ -401,11 +416,14 @@ value after `=`, and keep the quotes.
    renderer = "vulkan"
    ```
 
-4. Change `vk_driver = ""` to:
+4. Change `vk_driver = ""` to the build's file name, for example:
 
    ```toml
-   vk_driver = "auto"
+   vk_driver = "Turnip_v26.0.0_R8.zip"
    ```
+
+   (`Turnip_v26.0.0_R8_A8xx.zip` on an Adreno 8xx: the name is the file's
+   in `freedreno_drivers`.)
 
    Make sure that `renderer = "vulkan"`. Save the file (and copy it back
    to the phone, if you changed it on a computer).
@@ -416,10 +434,10 @@ value after `=`, and keep the quotes.
    `Mesa Turnip driver v26.0.0 - R8`. If it says only `Vulkan`, Turnip is
    not on: refer to "Make sure that it operates".
 
-`"auto"` uses the build that the app downloaded for this phone (the app
-writes its name in `vk_driver_auto.txt` in the data folder). Instead of
-`"auto"`, you can write the file name of the archive, for example
-`vk_driver = "Turnip_v26.0.0_R8.zip"`.
+The app writes the name of the build it chose for this phone in
+`vk_driver_auto.txt` in the data folder. `vk_driver = "auto"`, which chose
+that build before, now means the phone's own driver: the game writes
+`vk_driver = ""` over it the next time it starts.
 
 To turn Turnip off, set **VULKAN DRIVER** to `STOCK` (or
 `vk_driver = ""` again).
@@ -441,12 +459,26 @@ To turn Turnip off, set **VULKAN DRIVER** to `STOCK` (or
    `meta.json` file and the driver library (`.so`) at its top level. Some
    of these sites also have Qualcomm's own drivers in this format; they
    load in the same way.
-2. Copy the `.zip` file into the data folder, next to `config.toml`.
-3. Set `vk_driver` to the exact file name of the archive, for example
-   `vk_driver = "Turnip_v26.0.0_R7.zip"`, and `renderer = "vulkan"`.
-4. Start the game, and look at the main menu.
+2. In **VIDEO SETUP**, with **GRAPHICS BACKEND** on `VULKAN`, select
+   **IMPORT DRIVER** and choose the `.zip` file (several at once if you
+   like). The app copies each one into the `freedreno_drivers` folder of
+   the data folder, once it has checked that it is a driver archive (a
+   `meta.json` naming a library that is in the zip, 256 MB at most); a
+   name the folder has already is left as it is. Leave Video Setup and open
+   it again to see it listed. Or copy the `.zip` file into that folder
+   yourself (`/sdcard/Android/data/com.halo.decomp/files/freedreno_drivers/`;
+   the app makes the folder when it looks for its own download).
+3. In **VIDEO SETUP**, set **VULKAN DRIVER** to the archive: every `.zip`
+   in `freedreno_drivers` is listed after `STOCK`, by its file
+   name without `.zip` (a long name shows its start and end). Select
+   **OK**. Or set `vk_driver` to the exact file name of the archive, for
+   example `vk_driver = "Turnip_v26.0.0_R7.zip"`, and
+   `renderer = "vulkan"`.
+4. Start the game again, and look at the main menu.
 
-You can keep more than one archive in the folder.
+You can keep more than one archive in the folder. An archive in the data
+folder itself, next to `config.toml`, still loads when `vk_driver` names
+it, but the menu does not list it.
 
 ### Choose another renderer or driver
 
@@ -455,11 +487,15 @@ In **VIDEO SETUP**, or in `config.toml`, in the `[display]` section:
 | You want | In VIDEO SETUP | In `config.toml` |
 | --- | --- | --- |
 | Vulkan on the phone's own driver (the default) | `VULKAN`, `STOCK` | `renderer = "vulkan"` and `vk_driver = ""` |
-| Vulkan on Turnip (Adreno) | `VULKAN`, `TURNIP` | `renderer = "vulkan"` and `vk_driver = "auto"` |
-| Vulkan on a driver archive that you add | (not in the menu) | `renderer = "vulkan"` and `vk_driver = "<file name>.zip"` |
+| Vulkan on Turnip (Adreno) | `VULKAN`, the downloaded build's name (for example `Turnip_v26.0.0_R8`) | `renderer = "vulkan"` and `vk_driver = "Turnip_v26.0.0_R8.zip"` |
+| Vulkan on a driver archive that you add | `VULKAN`, the archive's name | `renderer = "vulkan"` and `vk_driver = "<file name>.zip"` |
 | OpenGL ES | `OPENGL` | `renderer = "gl"` |
 
-Either way, the change applies the next time the game starts.
+Either way, the change applies the next time the game starts. If Vulkan
+does not start (the phone's Vulkan cannot run the renderer, or the driver
+chosen cannot be loaded), the game runs on OpenGL ES and sets `renderer =
+"gl"`, so that VIDEO SETUP shows `OPENGL`; choose `VULKAN` there to try
+again at the next start.
 
 When the app is updated to the version that makes Vulkan the default, it
 changes `renderer = "gl"` in an existing `config.toml` to `"vulkan"` one
@@ -473,7 +509,7 @@ number (`01.01.14.2342`) at the lower right:
 | The main menu shows | Meaning |
 | --- | --- |
 | `Vulkan` and a driver name (for example `Mesa Turnip driver v26.0.0 - R8`) | The Vulkan renderer on that driver. |
-| `Vulkan` | The Vulkan renderer on the phone's own driver. With `vk_driver = "auto"`: the download did not finish yet, or there is no Turnip build for this GPU. With an archive's name: the name is wrong, or the file is not a driver archive. |
+| `Vulkan` | The Vulkan renderer on the phone's own driver. With an archive's name in `vk_driver`: the name is wrong, the file is not a driver archive, or the archive's driver did not load (the log says why). |
 | `OpenGL ES` | The OpenGL ES renderer. With `renderer = "vulkan"`: Vulkan could not start, and the game used OpenGL ES. The phone's Vulkan cannot run the renderer, or the archive's driver was accepted but Android loaded the phone's driver in its place. |
 
 The reasons are in the log of the app: connect the phone to a computer and
@@ -502,6 +538,10 @@ again.
 - For each renderer and driver that you tried: the line from the main menu,
   what looked wrong, and screenshots of the same scene.
 - `debug.txt` from the data folder.
+- `halo.log` from the data folder: the lines of `adb logcat -s halo`,
+  without a computer. If **Write halo.log** in the overlay's System folder
+  (`halo_log` in the `[debug]` section of `config.toml`) is off, turn it
+  on, then start the game again and play until the problem.
 - If you can use adb: the output of `adb logcat -s halo` during the run.
 - If you want to help more: set `vk_probe = "all"` in the `[debug]` section
   of `config.toml` and start the app. The app tests the Vulkan driver
@@ -598,11 +638,30 @@ The guest is the game, the platform layer and a small runtime:
 
 The APK contains the image as an asset.
 
+`ARM64_32` in `tools/guest_arch.py` holds what in these steps is particular
+to the processor: the target and its options, the defines, the conversion
+of the assembly, the linker's emulation, the image's address, the
+builtins, the instructions of the import stubs and the calling convention
+of the host for the OpenGL stubs. The Android build and the desktop guest
+builds (`tools/linux_guest_build.py`) take it; the 64-bit x86 Linux build
+takes `X32` instead ("64-bit x86" in [port/linux/README.md](../linux/README.md#64-bit-x86)).
+`tools/guest_image_check.py` checks each linked image: no thread-local
+storage, no use of the thread pointer, nothing outside its range.
+
 The C library of the guest is a part of musl for a new `arm64_32`
-architecture (`guest/libc/arch/arm64_32`). It has ILP32 types and a 32-bit
-`time_t`, as in the MSVC runtime of the game. Its system calls go to the
-host (`syscall_arch.h`). `guest/runtime/guest_thread.c` makes the threads
+architecture (`guest/libc/arch/arm64_32`; `x32` for the x86-64 guest). It
+has ILP32 types and a 32-bit `time_t`, as in the MSVC runtime of the game.
+Its system calls go to the host (`guest/libc/arch/generic/syscall_arch.h`). `guest/runtime/guest_thread.c` makes the threads
 and supplies the thread pointer and TLS.
+
+The system calls have an interface of their own, the same for every guest
+architecture (`include/halo_guest_syscall.h`, and for musl
+`guest/libc/arch/generic`): AArch64's numbers, kernel `stat` and open
+flags, with `_llseek` in place of `lseek` so that a 64-bit file offset
+fits the guest's 32-bit result. The host translates each call to its own
+kernel's (`host/host_syscall.c`), so the same guest runs on an AArch64 or
+an x86-64 host. `tools/test_host_syscall.py` tests the translation on the
+build machine.
 
 ### The host library
 
@@ -612,7 +671,11 @@ and supplies the thread pointer and TLS.
 - Reserves the address space of the guest below 4 GB: the Xbox memory at
   `0x80000000`, the image, and pools for the memory of the guest
   (`host/host_memory.c`). Refer to "The fixed addresses".
-- Loads the image and fills its import table (`host/host_loader.c`).
+- Loads the image and fills its import table (`host/host_loader.c`). The
+  image must be a static executable of the host's guest (a 64-bit AArch64
+  ELF file of `arm64_32` code), whose segments, header and import table lie
+  in the file and in the image's reserved range; the loader checks each
+  before it uses it.
 - Starts the `main` of the game and each guest thread on a stack in guest
   memory, because ILP32 code keeps stack addresses in 32-bit registers
   (`host/host_thread.c`).
@@ -623,8 +686,14 @@ and supplies the thread pointer and TLS.
   UPnP and DTLS functions of `port/linux/src/posix_*.c` (DTLS with Mbed TLS,
   for internet play with browsers: `posix_dtls.c`).
 
-The guest calls the host through stubs (`tools/android_imports.py`). The
-two ABIs use the same registers for 32-bit integers, floats and pointers.
+The guest calls the host through stubs (`tools/android_imports.py`, with the
+instructions of `import_stub` in `tools/guest_arch.py`). The two ABIs use
+the same registers for 32-bit integers, floats and pointers.
+`host_imports.list` lists every guest's imports, `android_imports.list` the
+app's own (its folders, gesture edges and touch controls).
+`tools/check_host_imports.py` checks the lists against their declarations,
+and that every argument has a register on each host (on x86-64, six for
+integers and pointers: a later one may be an integer, never a pointer).
 `tools/android_gl_stubs.py` makes the OpenGL ES stubs from
 `port/linux/src/gl.h`. `tools/android_posix_stubs.py` makes the stubs of the
 `posix_*` functions, which copy the `errno` of the host.
@@ -716,22 +785,29 @@ floating-point contraction, as on x86.
 
 ### Game source changes
 
-The port's code tells three things apart, each its own macro, which the
+The port's code tells these things apart, each its own macro, which the
 Android build defines all of (`tools/android_build.py`):
 
-- `HALO_ARM64_GUEST`: the guest's ABI (ILP32 AArch64 code in a 64-bit
-  process);
+- `HALO_GUEST`: the game is an ILP32 guest in a 64-bit process (its
+  memory, its host imports, the SDL it reaches). The instruction set is the
+  compiler's own macro, `__aarch64__`;
+- `HALO_GUEST_MACHO`: the guest is compiled for clang's Darwin target
+  (`arm64_32`), whose Mach-O objects are converted afterwards;
 - `HALO_GLES`: the OpenGL ES renderer;
 - `HALO_ANDROID`: the app (its display, input, files and lifecycle).
 
+`HALO_ARM64_GUEST`, the name of `HALO_GUEST` before, is still defined:
+`HALO_GUEST` on AArch64.
+
 The x86 inline assembly is replaced by C (refer to
 [port/linux/README.md](../linux/README.md#game-source-changes)).
-These changes are in `#ifdef HALO_ARM64_GUEST`:
+These changes, which the Linux arm64 build shares, are:
 
-- Seven `#pragma bss_seg(".bss")` lines are removed. The Darwin target does
-  not accept them.
-- A stack walker follows the AArch64 frame records. Thus the log of an
-  assertion (`debug.txt`) shows the call sites.
+- Seven `#pragma bss_seg(".bss")` lines are removed (`#ifndef
+  HALO_GUEST_MACHO`). The Darwin target does not accept them.
+- A stack walker follows the 64-bit frame records (`__aarch64__`, and
+  `__x86_64__`'s, which are alike). Thus the log of an assertion
+  (`debug.txt`) shows the call sites.
 
 The musl of the guest uses its C math, not the AArch64 assembly. The only
 assembly of the port is necessary:
@@ -792,8 +868,12 @@ and reload, address reuse and allocation failure.
 ## Find problems
 
 - Enter `adb logcat -s halo` to see the log of the port and the errors of
-  the game. `files/debug.txt` is the log of the game.
-- If the guest code stops, the log shows the registers and the frame chain.
+  the game. `files/debug.txt` is the log of the game, and
+  `files/halo.log` has logcat's lines too, begun again each start
+  (`debug.halo_log`, the overlay's **Write halo.log**, from the next start).
+- If the guest code stops, the log shows the registers and the frame chain
+  (`host/host_arch.c`), from a stack of the signal handler's own, so a
+  stack overflow is reported too.
   To find the functions, enter
   `llvm-symbolizer --obj=build/android/halo_guest.elf <address>`.
 - Set `sample_seconds = <seconds>` in `[debug]` of `config.toml`. The log
@@ -801,6 +881,8 @@ and reload, address reuse and allocation failure.
   at this interval. This finds hangs on devices without root access.
 - Set `gl_debug = true` in `[debug]` of `config.toml`. The log then shows
   the OpenGL ES errors.
+- The log says which write tracking the app uses: "page protection"
+  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 - Set `profile_hz = 1000` in `[debug]` of `config.toml` to profile. Every
   game thread is interrupted 1000 times a second, and every ten seconds the
   app appends the samples (the program counter, the link register and the
@@ -812,6 +894,31 @@ and reload, address reuse and allocation failure.
   driver and everything else, and the milliseconds of CPU for each frame.
   `--from` and `--to` select seconds of the run. Set `gpu_stats = true` too,
   for the frames per second.
+- Set `profile_run = true` in `[debug]` of `config.toml` to profile a
+  player's run without adb. Each start then makes a folder,
+  `Download/halo_profiles/DDMMYYYY_HHMMSS`, that a file manager or a USB
+  cable reaches, and the game writes into it:
+  - `profile.bin`: the samples of `profile_hz` (500 a second if it is `0`),
+    and the length of each frame shown;
+  - `gpu.txt`: under Vulkan, every 300 frames, the GPU's time for each
+    rendering, by what it draws into (its size, colour and depth) and by
+    the part of the frame it began in (the sky, the objects, the HUD...),
+    the time between renderings (copies and barriers), the renderings a
+    frame and the time between presents. A phone's GPU gives every
+    timestamp inside a rendering the same time, so the parts within one
+    are not told apart;
+  - `halo.log`: the log of the run, as logcat has it;
+  - `run.txt` and `config.toml`: the build, the phone, its GPU and driver,
+    and the settings.
+
+  Android 9 and 10 ask once for access to the storage; without it, the
+  folder is `files/halo_profiles/` in the data folder. The player sends
+  the folder, and `tools/android_profile_report.py <folder>` prints the
+  same report as for `profile.bin`, with the slowest frames and where each
+  thread was during each. It needs the game image of the same build:
+  `--apk` takes it from that build's APK (a release's, from its zip), or
+  `--elf` names it (`halo_guest_vk.elf`, or `halo_guest.elf` for OpenGL ES). The
+  profile costs some speed: compare runs with it on.
 - Set `vk_probe = "all"` in `[debug]` of `config.toml` to run the Vulkan
   probe (port/android/VULKAN.md, phase 0) instead of the game. The value
   can be a list of `caps`, `memory`, `compile`, `pipelines`, `draw` and `present`.
@@ -825,8 +932,8 @@ and reload, address reuse and allocation failure.
 - To run the probe on another Vulkan driver (Turnip, for an Adreno GPU), copy
   an adrenotools archive (a zip with a `meta.json` and the driver's library,
   for example `Turnip_v26.0.0_R8.zip` from the K11MCH1/AdrenoToolsDrivers
-  releases) into the data folder and set `display.vk_driver = "<the file's
-  name>"`. The app unpacks it into its private storage (Android loads a library
+  releases) into `freedreno_drivers` in the data folder and set
+  `display.vk_driver = "<the file's name>"`. The app unpacks it into its private storage (Android loads a library
   only from there) and opens it with libadrenotools; the report's `driver.*`
   lines say which driver is running (`driver.check` says if the archive's
   library was really loaded). An archive that does not work is logged
@@ -837,8 +944,6 @@ and reload, address reuse and allocation failure.
   `HALO_APPLICATION_ID_SUFFIX=.vk` when you run `ninja android_apk`. The
   package is then `com.halo.decomp.vk`, with a data folder of its own, which
   needs a copy of `maps/`.
-- The log says which write tracking the app uses: "page protection"
-  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 
 ## Limits
 

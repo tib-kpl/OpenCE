@@ -1,13 +1,17 @@
 package com.halo.decomp;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.widget.ScrollView;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
@@ -25,6 +29,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.channels.FileChannel;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /**
  * Starts the game once its data is in place.
@@ -39,13 +46,15 @@ import java.nio.channels.FileChannel;
  * Before the game starts, on an Adreno whose data folder lacks it, the
  * open-source Vulkan driver for its series is downloaded
  * (Updater.driverDownload), its progress on screen, so that the game finds
- * it when the player turns it on (display.vk_driver = "auto"). A failed download does not stop the game,
+ * it when the player chooses it (Video Setup's VULKAN DRIVER lists it by its name). A failed download does not stop the game,
  * and "Skip" starts it at once.
  */
 public class LauncherActivity extends Activity {
     private static final int PICK_IMAGE = 1;
+    private static final int PROFILE_STORAGE = 2;
     /** set by the "Import disc image" launcher shortcut: import even with data in place */
     static final String EXTRA_IMPORT = "com.halo.decomp.IMPORT";
+    static final String EXTRA_PICK_IMAGE = "com.halo.decomp.PICK_IMAGE";
     /** set by the "Graphics" launcher shortcut: GraphicsActivity (OpenGL ES or Vulkan, and its driver) */
     static final String EXTRA_GRAPHICS = "com.halo.decomp.GRAPHICS";
     private boolean importRequested;
@@ -81,6 +90,10 @@ public class LauncherActivity extends Activity {
             return;
         }
         buildInterface();
+        if (getIntent().getBooleanExtra(EXTRA_PICK_IMAGE, false)) {
+            getIntent().removeExtra(EXTRA_PICK_IMAGE);
+            handler.post(() -> { if (!isFinishing() && pick != null) pick.performClick(); });
+        }
     }
 
     /**
@@ -294,15 +307,86 @@ public class LauncherActivity extends Activity {
     }
 
     private boolean gameStarted;
+    private boolean profileStorageAsked;
 
     private void startGame() {
         if (gameStarted)
             return;
+        Updater.migrateLegacyDriver(dataRoot);
+        if (!profileFolderReady())
+            return;
         gameStarted = true;
-        // the menus in French when the maps are (MenuTranslation)
         MenuTranslation.sync(this, dataRoot);
         startActivity(new Intent(this, HaloActivity.class));
         finish();
+    }
+
+    /* ---------- a profiled run's folder (debug.profile_run) */
+
+    /**
+     * The run's profile folder made and named for the game, when the settings ask for one; false while storage is
+     * being asked for (Android 9 and 10: the answer starts the game, whatever it is).
+     */
+    private boolean profileFolderReady() {
+        File config = dataRoot != null ? new File(dataRoot, "config.toml") : null;
+        File named = dataRoot != null ? new File(dataRoot, "profile_folder.txt") : null;
+        String value = config != null && config.isFile() ? Updater.readSetting(config, "debug", "profile_run") : null;
+
+        if (named == null)
+            return true;
+        named.delete();
+        if (value == null || !value.startsWith("true"))
+            return true;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+            && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+            && !profileStorageAsked) {
+            profileStorageAsked = true;
+            requestPermissions(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, PROFILE_STORAGE);
+            return false;
+        }
+        String stamp = new SimpleDateFormat("ddMMyyyy_HHmmss", Locale.US).format(new Date());
+        File folder = new File(new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "halo_profiles"), stamp);
+        // (not made: the game makes one in the data folder, and its log says so)
+        if (!folder.mkdirs() && !folder.isDirectory())
+            return true;
+        String text = "Halo for Android, build " + BuildConfig.HALO_BUILD_NUMBER + " (" + BuildConfig.VERSION_NAME + ")\n"
+            + "started " + stamp + "\n"
+            + "phone: " + Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.DEVICE + ")\n"
+            + "android: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n"
+            + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? "soc: " + Build.SOC_MANUFACTURER + " " + Build.SOC_MODEL + "\n" : "")
+            + "abis: " + String.join(", ", Build.SUPPORTED_ABIS) + "\n";
+        try (OutputStream out = new FileOutputStream(new File(folder, "run.txt"))) {
+            out.write(text.getBytes("UTF-8"));
+        } catch (java.io.IOException e) {
+            return true;
+        }
+        copyFile(config, new File(folder, "config.toml"));
+        try (OutputStream out = new FileOutputStream(named)) {
+            out.write(folder.getAbsolutePath().getBytes("UTF-8"));
+        } catch (java.io.IOException e) {
+            named.delete();
+        }
+        return true;
+    }
+
+    private static void copyFile(File from, File to) {
+        try (FileInputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
+            byte[] buffer = new byte[65536];
+            int got;
+
+            while ((got = in.read(buffer)) > 0)
+                out.write(buffer, 0, got);
+        } catch (java.io.IOException e) {
+            // (the settings are in the game's log too)
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == PROFILE_STORAGE)
+            startGame();
     }
 
     /* ---------- the Vulkan driver, before the game */
@@ -328,67 +412,36 @@ public class LauncherActivity extends Activity {
             handler.post(() -> buildDriverInterface(choice));
             try {
                 Updater.driverDownload(dataRoot, choice.driver, choice.gpu, (received, total) -> report(
-                    "Downloading the driver... (" + (received >> 10) + " of " + (total >> 10) + " KB)",
+                    t("Téléchargement du pilote… (", "Downloading the driver… (") + (received >> 10)
+                        + t(" sur ", " of ") + (total >> 10) + t(" Ko)", " KB)"),
                     total > 0 ? (int) (received * 1000 / total) : 0));
                 handler.post(this::startGame);
             } catch (Exception exception) {
-                report("The driver could not be downloaded: " + exception.getMessage()
-                    + "\nStarting the game. The download is tried again at the next start.", -1);
+                report(t("Impossible de télécharger le pilote : ", "The driver could not be downloaded: ") + exception.getMessage()
+                    + t("\nLe jeu va démarrer. Le téléchargement sera réessayé au prochain lancement.",
+                        "\nStarting the game. The download is tried again at the next start."), -1);
                 handler.postDelayed(this::startGame, 3000);
             }
         }, "driver download").start();
     }
 
     private void buildDriverInterface(Updater.Choice choice) {
-        if (gameStarted)
-            return;
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setGravity(Gravity.CENTER);
-        layout.setPadding(dp(48), dp(24), dp(48), dp(24));
-        layout.setBackgroundColor(Color.rgb(12, 16, 20));
-
-        TextView title = new TextView(this);
-        title.setText("Downloading the Vulkan driver");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
-        title.setGravity(Gravity.CENTER);
-        layout.addView(title);
-
-        TextView message = new TextView(this);
-        message.setText("This phone's GPU (" + choice.gpu + ") can run the game's Vulkan renderer on Turnip, the "
-            + "open-source Vulkan driver for Adreno GPUs. It is downloaded once into the game's data folder (about "
-            + ((choice.driver.size + (1 << 19)) >> 20) + " MB), and is not used until you turn it on: set vk_driver = "
-            + "\"auto\" in the [display] section of config.toml (the README says how).");
-        message.setTextColor(Color.rgb(200, 205, 210));
-        message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        message.setGravity(Gravity.CENTER);
-        message.setPadding(0, dp(16), 0, dp(16));
-        layout.addView(message);
-
+        if (gameStarted) return;
+        setupUi = new HaloSettingsUi(this, t("PARAMÈTRES", "SETTINGS"),
+            t("Halo: Combat Evolved · configuration Android", "Halo: Combat Evolved · Android setup"),
+            t("Passer et jouer", "Skip and play"), this::startGame);
+        setupUi.current.setText("TURNIP · ADRENO");
+        setupUi.heading(t("PRÉPARATION", "PREPARING"), t("Pilote Vulkan", "Vulkan driver"), choice.gpu);
+        setupUi.content.addView(setupUi.label(t("Téléchargement du pilote Turnip adapté à cette console. "
+            + "Il sera disponible dans la rubrique Pilotes. Vous pouvez jouer avec le pilote système pendant ce téléchargement.",
+            "Downloading the Turnip driver for this console. It will be available under Drivers. You can play using the system driver while it downloads."), 14, HaloSettingsUi.MUTED));
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(HaloSettingsUi.CYAN));
         progress.setMax(1000);
-        LinearLayout.LayoutParams progressLayout = new LinearLayout.LayoutParams(dp(480),
-            LinearLayout.LayoutParams.WRAP_CONTENT);
-        progressLayout.topMargin = dp(16);
-        layout.addView(progress, progressLayout);
-
-        status = new TextView(this);
-        status.setText("Connecting...");
-        status.setTextColor(Color.rgb(160, 200, 160));
-        status.setGravity(Gravity.CENTER);
-        status.setPadding(0, dp(8), 0, dp(16));
-        layout.addView(status);
-
-        // (the download goes on; the game starting first uses the phone's driver for this run)
-        Button skip = new Button(this);
-        skip.setText("Skip");
-        skip.setOnClickListener(v -> startGame());
-        layout.addView(skip, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        setContentView(layout);
-        skip.requestFocus();
+        setupUi.content.addView(progress, new LinearLayout.LayoutParams(-1, setupUi.dp(32)));
+        status = setupUi.status;
+        status.setText(t("Connexion…", "Connecting…"));
+        setupUi.primary.requestFocus();
     }
 
     private int dp(float value) {
@@ -396,69 +449,63 @@ public class LauncherActivity extends Activity {
             getResources().getDisplayMetrics());
     }
 
+    private HaloSettingsUi setupUi;
+
     private void buildInterface() {
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setGravity(Gravity.CENTER);
-        layout.setPadding(dp(48), dp(24), dp(48), dp(24));
-        layout.setBackgroundColor(Color.rgb(12, 16, 20));
-
-        TextView title = new TextView(this);
-        title.setText(importRequested && haveData()
-            ? t("Importer une image disque", "Import a disc image")
-            : t("Halo a besoin des données du jeu", "Halo needs its game data"));
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
-        title.setGravity(Gravity.CENTER);
-        layout.addView(title);
-
-        TextView message = new TextView(this);
-        String adb = "adb push <folder with maps>/. " + (dataRoot != null ? dataRoot.getAbsolutePath() : "") + "/";
-        message.setText(t("Choisissez une image disque Xbox de Halo: Combat Evolved (fichier .iso ou .xiso, "
-            + "toute version) sur cet appareil. Son dossier maps est copié dans le stockage de l'app (environ "
-            + "1,8 Go) ; vous pourrez ensuite supprimer l'image. Une image européenne avec un dossier maps_fr "
-            + "installe le jeu en français.\n\n"
-            + "Vous pouvez aussi copier un dossier maps depuis un ordinateur :\n" + adb,
-            "Choose an Xbox disc image of Halo: Combat Evolved (an .iso or .xiso file, any "
-            + "version) on this device. Its maps folder is copied into the app's storage (about 1.8 GB), "
-            + "and you can delete the image afterwards. A European image with a maps_fr folder installs "
-            + "the game in French when the app's language is French.\n\n"
-            + "You can also copy a maps folder from a computer:\n" + adb));
-        message.setTextColor(Color.rgb(200, 205, 210));
-        message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        message.setGravity(Gravity.CENTER);
-        message.setPadding(0, dp(16), 0, dp(16));
-        layout.addView(message);
-
-        pick = new Button(this);
-        pick.setText(t("Choisir l'image disque", "Choose disc image"));
-        pick.setOnClickListener(v -> {
-            // (disc images have no MIME type of their own: any file, checked
-            // when it is read)
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("*/*");
-            startActivityForResult(intent, PICK_IMAGE);
-        });
-        layout.addView(pick, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT));
-
+        boolean fromGame = getIntent().getBooleanExtra(GraphicsActivity.EXTRA_FROM_GAME, false);
+        setupUi = new HaloSettingsUi(this, t("PARAMÈTRES", "SETTINGS"),
+            t("Halo: Combat Evolved · configuration Android", "Halo: Combat Evolved · Android setup"),
+            fromGame ? t("B  Reprendre", "B  Resume") : t("Lancer le jeu", "Start game"), () -> {
+                if (fromGame) finish();
+                else if (haveData()) startGameAfterDriver();
+            });
+        setupUi.current.setText(haveData() ? t("DONNÉES PRÊTES", "DATA READY") : t("INSTALLATION REQUISE", "SETUP REQUIRED"));
+        setupUi.primary.setEnabled(fromGame || haveData());
+        setupUi.tab(1, t("Jeu et données", "Game data"), true, () -> {});
+        String[] categories = {t("Graphismes", "Graphics"), t("Pilotes", "Drivers"), t("Affichage", "Display")};
+        for (int i = 0; i < categories.length; i++) {
+            final int page = i + 1;
+            setupUi.tab(i + 2, categories[i], false, () -> {
+                if (pick != null && !pick.isEnabled()) return;
+                startActivity(new Intent(this, GraphicsActivity.class).putExtra("settings_page", page)
+                    .putExtra(GraphicsActivity.EXTRA_FROM_GAME, fromGame));
+            });
+        }
+        setupUi.heading(t("INSTALLATION", "INSTALLATION"), t("Jeu et données", "Game data"),
+            haveData() ? t("Vos fichiers Halo sont prêts. Vous pouvez jouer ou importer un autre disque.",
+                "Your Halo files are ready. Play now or import another disc.")
+                : t("Installez les données de votre disque Xbox pour jouer.", "Install your Xbox disc data to play."));
+        pick = setupUi.row(t("Importer le jeu", "Import game data"),
+            t("Choisir une image disque · .iso / .xiso", "Choose a disc image · .iso / .xiso"), false, "", () -> {
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                startActivityForResult(intent, PICK_IMAGE);
+            });
+        TextView description = setupUi.label(t("Tous les disques Xbox de Halo: Combat Evolved sont pris en charge. "
+            + "L’import copie les fichiers dans le stockage de l’application (environ 1,8 Go). Vous pourrez ensuite retirer l’image disque.",
+            "All Xbox Halo: Combat Evolved discs are supported. Import copies the files into the app's storage (about 1.8 GB). You can remove the disc image afterwards."), 13, HaloSettingsUi.MUTED);
+        description.setPadding(0, setupUi.dp(10), 0, setupUi.dp(14));
+        setupUi.content.addView(description);
+        setupUi.content.addView(setupUi.label(t("VERSION EUROPÉENNE", "EUROPEAN EDITION"), 10, HaloSettingsUi.CYAN));
+        setupUi.content.addView(setupUi.label(t("Les fichiers français des dossiers maps_fr sont reconnus automatiquement.",
+            "French files in maps_fr folders are detected automatically."), 12, HaloSettingsUi.MUTED));
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(HaloSettingsUi.CYAN));
         progress.setMax(1000);
         progress.setVisibility(View.GONE);
-        LinearLayout.LayoutParams progressLayout = new LinearLayout.LayoutParams(dp(480),
-            LinearLayout.LayoutParams.WRAP_CONTENT);
-        progressLayout.topMargin = dp(16);
-        layout.addView(progress, progressLayout);
-
-        status = new TextView(this);
-        status.setTextColor(Color.rgb(160, 200, 160));
-        status.setGravity(Gravity.CENTER);
-        status.setPadding(0, dp(8), 0, 0);
-        layout.addView(status);
-
-        setContentView(layout);
+        setupUi.content.addView(progress, new LinearLayout.LayoutParams(-1, setupUi.dp(16)));
+        status = setupUi.status;
+        status.setText(t("A  Choisir     L1 / R1  Rubriques     B  Retour", "A  Select     L1 / R1  Categories     B  Back"));
         pick.requestFocus();
+    }
+
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        return (setupUi != null && setupUi.key(event)) || super.dispatchKeyEvent(event);
+    }
+
+    @Override public boolean onGenericMotionEvent(android.view.MotionEvent event) {
+        return (setupUi != null && setupUi.motion(event)) || super.onGenericMotionEvent(event);
     }
 
     @Override

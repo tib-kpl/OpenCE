@@ -13,8 +13,8 @@ NDK supplies that clang along with `llvm-ar` and `ld.lld`; devkitA64 cannot
 build the guest, because it is LP64 only.
 
 The host is the Android host library (`port/android/host`) with three files
-replaced and two more added, linked by devkitA64 against libnx, SDL2 and
-Mesa. Refer to [port/android/README.md](../android/README.md) for the guest
+replaced and two more added, linked by devkitA64 against libnx, SDL2,
+Mesa and deko3d. Refer to [port/android/README.md](../android/README.md) for the guest
 and the platform layer, and [port/linux/README.md](../linux/README.md) for
 the platform layer the two share.
 
@@ -28,7 +28,7 @@ The host changes are these:
 | `host_gl.c` | Mesa is linked in, so there is no `libGLESv3.so` to open |
 | `host_mman.c` | `mmap`/`mprotect` over the console's memory services |
 | `host_futex.c` | futuxes over libnx's mutex and condition variable |
-| `host_net_stub.c` | stands in for `posix_net.c`; see Internet play |
+| `host_net.c` | the network calls over libnx's sockets; see Internet play |
 
 ## Requirements
 
@@ -109,6 +109,62 @@ The game checks for `sdmc:/switch/halo/maps/ui.map` and, with no image
 either, refuses to start and says so. Saves go in `sdmc:/switch/halo/save/`,
 and the settings file `config.toml` goes in `sdmc:/switch/halo/`.
 
+Custom Edition maps go in `sdmc:/switch/halo/custom_maps/`, with
+`bitmaps.map`, `sounds.map` and `loc.map` in that folder. A map in a
+subfolder is listed under the folder's name: campaign maps under CUSTOM
+SINGLEPLAYER, multiplayer maps under CUSTOM MULTIPLAYER. One level of
+folders is read. A map you do not have is downloaded from the other players
+while you wait in the lobby. Refer to the root
+[README.md](../../README.md#custom-edition-maps).
+
+The maps and Custom Edition maps can be in other folders: set
+`game.maps.path` and `game.custom_maps.path` under `[game]` in
+`config.toml` (`maps.path = "sdmc:/halo/maps"`; a relative path is in
+`sdmc:/switch/halo/`). The game reads them once, at the start. A disc image
+is only unpacked into `sdmc:/switch/halo/maps/`, so a maps folder named
+there must already hold the maps: if it is missing or has no `ui.map`, the
+game says so and quits. A custom maps folder that is missing gets a warning,
+and the game goes on without Custom Edition maps.
+
+## Gyro aiming
+
+The stick aims as it does anywhere else. Open a profile, choose Gamepads, and
+then Gyro Aim. That screen is the Switch's only. Gyro Aim is off until it is
+set to ON, which aims with the gyroscope all the time, or ONLY ON ZOOM, which
+aims with it only while you are zoomed in (a scope), for fine aiming; the
+stick aims the rest of the time. Horizontal and vertical sensitivity are how far the view turns
+each way (`1` is the sensor's own turn; the screen goes from `0.25` to `10`).
+Invert horizontal and invert vertical are separate, and neither follows the
+stick's Invert Look. The same five are `input.gyro_aim`,
+`input.gyro_sensitivity_horizontal`, `input.gyro_sensitivity_vertical`,
+`input.gyro_invert_horizontal` and `input.gyro_invert_vertical`, which each
+profile keeps in the `settings.toml` in its folder (`config.toml`'s are those
+of a profile that has not set them). Each local player reads their own
+controller, with their own profile's settings. A Pro Controller,
+the console held in the hands, and a single Joy-Con each use their one sensor;
+when two Joy-Con are attached, the right one is read. It is not used in the
+menus. In a split-screen match on this console alone, the pause menu's LEAVE
+GAME leaves the match for both players and returns to the main menu. Each
+player's window is cleared only inside itself, so the second player's clear
+does not wipe the first player's view.
+
+## Performance
+
+The console shows the game at 1280x720 in handheld and 1920x1080 docked.
+Video Setup's RESOLUTION LIMIT chooses the lines the game draws at, which
+are scaled up to that: 480P (the default, the game's own), 720P or 1080P,
+no more than the console shows (1080P draws at 720 in handheld). Docking or
+undocking switches at once. It is `display.resolution_limit` in
+`config.toml` (`"480"`, `"720"` or `"1080"`).
+
+Video Setup also has a PERFORMANCE screen, the Switch's only, with the CPU's
+clock: 1.7 GHZ (the default, the fastest Nintendo's own games use), 1 GHZ
+(the console's handheld rate: cooler, and the battery lasts longer) or
+STOCK (left at the rate the console started the game with). It changes at
+once. It is `performance.cpu_clock` in `config.toml` (`"1785"`, `"1020"`
+or `"stock"`). The memory and the GPU stay at the rates the game sets for
+itself, and every clock goes back to the console's when the game exits.
+
 ## The memory model
 
 This is the part of the port that is not like the others, and it is worth
@@ -118,7 +174,7 @@ that was established by experiment rather than by reading a manual.
 Everything the guest can address has to be below 4 GB, because the guest's
 pointers are 32 bits. That is not a restriction the console imposes: it is
 the same restriction the game's data formats impose, and it is why the
-guest image is linked at `HALO_GUEST_IMAGE_BASE` (0x40000000) with the Xbox
+guest image is linked at `HALO_GUEST_IMAGE_BASE` (0x3c000000) with the Xbox
 contiguous window at 0x80000000 (port/android/include/halo_android_abi.h).
 
 The answers below were measured on a console running Horizon 21.2.0 with
@@ -141,7 +197,7 @@ way the Android host gives it one and then `mprotect`s it. `host_mman.c`
 splits the image by permission instead, placing each part at the offset the
 guest was linked for:
 
-- executable pages become a code memory slave at `0x40000000` plus their
+- executable pages become a code memory slave at `HALO_GUEST_IMAGE_BASE` plus their
   offset, filled in through a writable view at a scratch address;
 - `.data`, `.bss`, the guest's arenas and the Xbox window become ordinary
   `svcMapMemory` regions.
@@ -173,21 +229,20 @@ early. devkitPro's SDL2 is built with `--disable-filesystem` and links
 `switch-mesa`: Mesa 20.1.0 over `libdrm_nouveau`, statically. SDL2's Switch
 video driver puts an EGL surface on the console's default `nwindow`, so
 `SDL_GL_CreateContext` and `SDL_GL_SwapWindow` — the two calls the renderer
-makes — work as they do anywhere else. There is no deko3d and no NVN here,
-and the tile-based renderer work that the Anbernic port carries for its
-Mali-G31 is not applicable to this GPU.
+makes — work as they do anywhere else. The port started out drawing that
+way. The game now draws with deko3d, the console's native interface,
+through its own renderer (`port/switch/guest/d3d8_dk.c` and
+`port/switch/host/host_dk.c`; see [DEKO3D.md](DEKO3D.md)); Mesa remains
+linked because SDL2 needs it.
 
 ## Internet play
 
-`host_net_stub.c` stands in for `posix_net.c`, which cannot be built here:
-there are no sockets. Every network entry point answers failure, which
-leaves the menus saying the feature is unavailable rather than crashing.
-`posix_random_bytes` is the exception and is really implemented, since the
-game uses it for nonces and it needs no network.
-
-Bringing internet play to the Switch means a socket layer - lwIP over libnx
-is what the homebrew scene uses - and then a `posix_net.c` that speaks to
-it. The stub is written so that replacing it is that change and no other.
+`host_net.c` gives the game libnx's BSD sockets, through the same
+translation to Winsock that `posix_net.c` does on the other builds, so
+system link and internet play work as on Android. The desktop-only parts of
+`posix_net.c` (URL schemes, Discord, UPnP) are answered as having nothing
+to offer. Voice chat records from a headset in the console's jack
+(`host_microphone.c`).
 
 ## What the port does not have
 

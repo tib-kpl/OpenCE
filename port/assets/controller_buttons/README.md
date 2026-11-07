@@ -24,10 +24,6 @@ L/R/ZL/ZR for Switch. The project owner explicitly approved these deterministic
 corrections. Source silhouettes, face artwork and original source files remain
 unchanged. No commercial map fonts are used.
 
-The short ASCII labels explicitly use Pillow's Basic text layout, matching
-the committed artwork. Pillow otherwise selects Raqm automatically when it
-is installed, which changes some label metrics and pixels on Linux.
-
 The generator preserves each silhouette's aspect ratio within the established
 HUD cell, and records half-alpha bounds for the renderer. Transparent padding
 does not affect prompt centering. Thumbsticks retain the supplied three frames;
@@ -36,8 +32,3 @@ D-pad, Start and Back retain the existing renderer's fallback.
 `tools/test_controller_buttons.py` regenerates and compares every output and
 checks the production renderer's bounds, advances, split-screen scale, opacity,
 allocation failure and cleanup. Asset generation does not require retail maps.
-
-RGBA resizing explicitly disables Pillow's preliminary reduction pass so the
-generated pixels match the committed artwork on both Pillow 12.3 and 13.
-[Pillow 13 began applying `reducing_gap` to RGBA thumbnails](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html#resizing-images-with-alpha);
-the supplied Xbox gem/control generator uses the same explicit setting.

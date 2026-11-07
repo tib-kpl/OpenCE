@@ -26,6 +26,8 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
@@ -89,12 +91,51 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static final long SHOW_DELAY_MS = 200;
     private static final long VIBRATION_MS = 110;
     private static final long VIBRATION_RENEW_MS = 70;
+    /**
+     * three or four fingers down together (the layout's menuFingers, the last
+     * within MENU_TAP_MS of the first) open the game's overlay menu
+     * (port/linux/game/overlay_menu.c): a press held this long in the
+     * buttons the game reads (port/linux/src/touch_input.c's
+     * TOUCH_OVERLAY_BUTTON_BIT: past SDL's 15)
+     */
+    private static final int MENU_BIT = 15;
+    private static final long MENU_TAP_MS = 250;
+    private static final long MENU_PRESS_MS = 150;
 
     /** the game's HALO_TOUCH_SCENE bits (port/linux/src/touch_input.c) */
     private static final int SCENE_KNOWN = 1;
     private static final int SCENE_MENUS = 2;
     private static final int SCENE_ON = 4;
     private static final int SCENE_OFF = 8;
+    /** a replay plays: its own buttons (the game's targets) and the stick, the view swipe its camera's */
+    private static final int SCENE_REPLAY = 16;
+
+    /**
+     * a replay's buttons, which the game draws and says where they are
+     * (port/linux/game/network_replay_playback.c, through host_touch_targets):
+     * each a rectangle, in ten-thousandths of the screen, and the game's
+     * controller button it holds down; a finger on one owns TARGET + its index
+     */
+    private static final int MAXIMUM_TARGETS = 16;
+    private static final int TARGET_FIELDS = 5;
+    private static final int TARGET = 1000;
+
+    /**
+     * a replay's own controls, beside the game's buttons: a column at the
+     * right edge (the view swipe's side) of the free camera's up and down
+     * (the triggers, held) and PLAYER (the D-pad's Down: the free camera put
+     * behind the player watched, network_replay_playback.c); each its kind
+     * (KINDS' index), its word and its height (parts of the display's); a
+     * finger on one owns REPLAY_CONTROL + its index
+     */
+    private static final int REPLAY_CONTROL = 2000;
+    private static final int[] REPLAY_CONTROL_KINDS = {4, 5, 13};
+    private static final String[] REPLAY_CONTROL_NAMES = {"Up", "Down", "Player"};
+    private static final String[] FRENCH_REPLAY_CONTROL_NAMES = {"Haut", "Bas", "Joueur"};
+    private static final float[] REPLAY_CONTROL_HEIGHTS = {0.28f, 0.44f, 0.60f};
+    private static final float REPLAY_CONTROL_RADIUS = 38;
+    /** (their centres from the right edge, the system's inset aside) */
+    private static final float REPLAY_CONTROL_MARGIN = 70;
 
     private static final String PREFERENCES = "touch-layout-v1";
     private static final String KEY_CONFIGURATION = "configuration";
@@ -148,6 +189,10 @@ public final class TouchControls extends View implements SensorEventListener, In
         "Jump", "Gren. type", "Reload", "Weapon", "Melee", "Light",
         "Grenade", "Fire", "Pause", "Back", "Crouch", "Zoom",
     };
+    private static final String[] FRENCH_GAME_CONTROLS = {
+        "Saut", "Grenades", "Action", "Arme", "C-à-c", "Lampe",
+        "Grenade", "Tir", "Pause", "Retour", "Accroupi", "Zoom",
+    };
     /** the default profile's mapping, until the game sends the player's own */
     private static final int[] DEFAULT_BINDINGS = {
         0, 4, 2, 3, 1, 5, 6, 7, -1, -1, -1, -1, 8, 9, 10, 11,
@@ -157,12 +202,22 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static native void nativeLook(float dx, float dy);
     private static native void nativeGyro(float dx, float dy);
     private static native void nativeLookReset();
+    private static native int nativeGyroMode();
     private static native int nativeRumble();
     private static native int nativeScene();
     private static native int nativeBindings(int[] controls);
+    private static native void nativeMenuFingers(int fingers);
     private static native void nativeDevices(boolean touchscreen, boolean controller);
+    private static native int nativeTargets(int[] targets);
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    /**
+     * what the overlay shows, as a hash of every circle drawn (render): the one drawn last, and the one being made. A
+     * finger that changes nothing shown (the look finger, nearly all the time in play) redraws nothing: each redraw
+     * is a full-screen layer drawn by Android's renderer on the GPU the game draws with, at the display's rate while
+     * a finger moves
+     */
+    private long drawnSignature, signature;
     private final SharedPreferences preferences;
     private final SensorManager sensors;
     private final Sensor gyroscope;
@@ -191,6 +246,10 @@ public final class TouchControls extends View implements SensorEventListener, In
     /** each finger on a toolbar item: {x, y, item}; the item acts when it lifts there */
     private final SparseArray<float[]> toolbarFingers = new SparseArray<>();
     private final int[] axes = new int[6];
+    /** until when the menu fingers' press is sent (0: it is not) */
+    private long menuPressedUntil;
+    /** the fingers that opened the overlay, ignored until all are lifted */
+    private boolean menuFingersDown;
     private int lookPointer = -1;
     private float lookX;
     private float lookY;
@@ -218,8 +277,13 @@ public final class TouchControls extends View implements SensorEventListener, In
     private boolean showing;
     private long shownSince = -1;
     private boolean gyroRegistered;
+    /** the game's Gyro Aim, polled: 0 off, 1 on, 2 only on zoom */
+    private int gyroMode;
     private int lastAmplitude;
     private long lastVibration;
+    /** the replay's buttons: their count, then TARGET_FIELDS each; and the game's count of their changes */
+    private final int[] targets = new int[1 + MAXIMUM_TARGETS * TARGET_FIELDS];
+    private int targetsSerial;
     private final int[] bindings = DEFAULT_BINDINGS.clone();
     private final int[] bindingsRead = new int[bindings.length];
     private int bindingsSerial;
@@ -231,9 +295,20 @@ public final class TouchControls extends View implements SensorEventListener, In
             if (!deviceInputActive)
                 return;
             scene = nativeScene();
+            int mode = nativeGyroMode();
+            if (mode != gyroMode) {
+                gyroMode = mode;
+                updateSensors();
+            }
             updateShowing();
             readBindings();
+            readTargets();
             updateRumble();
+            // (the menu fingers' press let go of once it has been sent a while)
+            if (menuPressedUntil != 0 && SystemClock.uptimeMillis() >= menuPressedUntil) {
+                menuPressedUntil = 0;
+                publish();
+            }
             postDelayed(this, POLL_MS);
         }
     };
@@ -252,6 +327,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         touchscreenFeature = context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
         preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
         loadLayout(context);
+        nativeMenuFingers(layout.menuFingers);
         hidden = preferences.getBoolean(KEY_HIDDEN, false);
         refreshInputDevices();
         setFocusable(false);
@@ -398,7 +474,7 @@ public final class TouchControls extends View implements SensorEventListener, In
     }
 
     /** a game controller: a stick or a hat, not a phone's few gamepad keys */
-    private static boolean isController(InputDevice device) {
+    static boolean isController(InputDevice device) {
         if (device == null || device.isVirtual())
             return false;
         if ((device.getSources() & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK)
@@ -477,6 +553,28 @@ public final class TouchControls extends View implements SensorEventListener, In
         axes[5] = 0;
         for (int i = 0; i < owners.size(); i++) {
             int control = owners.valueAt(i);
+            if (control >= REPLAY_CONTROL && control < REPLAY_CONTROL + REPLAY_CONTROL_KINDS.length) {
+                Kind kind = KINDS[REPLAY_CONTROL_KINDS[control - REPLAY_CONTROL]];
+                if (kind.bit >= 0)
+                    bits |= 1 << kind.bit;
+                if (kind.trigger >= 0)
+                    axes[kind.trigger] = 32767;
+                continue;
+            }
+            if (control >= TARGET && control < TARGET + targets[0]) {
+                // (a replay's button: the game's controller button, as a kind sends it)
+                int button = targets[1 + (control - TARGET) * TARGET_FIELDS + 4];
+                for (Kind kind : KINDS) {
+                    if (kind.gamepadButton != button)
+                        continue;
+                    if (kind.bit >= 0)
+                        bits |= 1 << kind.bit;
+                    if (kind.trigger >= 0)
+                        axes[kind.trigger] = 32767;
+                    break;
+                }
+                continue;
+            }
             if (control < 0 || control >= layout.size())
                 continue;
             Kind kind = KINDS[layout.type(control)];
@@ -485,6 +583,8 @@ public final class TouchControls extends View implements SensorEventListener, In
             if (kind.trigger >= 0)
                 axes[kind.trigger] = 32767;
         }
+        if (menuPressedUntil != 0 && SystemClock.uptimeMillis() < menuPressedUntil)
+            bits |= 1 << MENU_BIT;
         nativeState(axes[0], axes[1], axes[2], axes[3], axes[4], axes[5], bits);
     }
 
@@ -555,9 +655,21 @@ public final class TouchControls extends View implements SensorEventListener, In
         return NOTHING;
     }
 
-    /** the control under a point (logical units), or NOTHING */
+    /** the control under a point (logical units), or NOTHING; in a replay, its buttons and the stick alone */
     private int hitControl(float x, float y) {
-        for (int i = 0; i < layout.size(); i++) {
+        boolean replay = replay() && !editing;
+        if (replay) {
+            int target = hitTarget(x, y);
+            if (target != NOTHING)
+                return target;
+            if (!hidden) {
+                for (int i = 0; i < REPLAY_CONTROL_KINDS.length; i++) {
+                    if (inside(x, y, replayControlX(), replayControlY(i), replayControlRadius()))
+                        return REPLAY_CONTROL + i;
+                }
+            }
+        }
+        for (int i = 0; i < layout.size() && !replay; i++) {
             if (layout.shown(i) && layout.type(i) != TouchLayout.LEFT
                     && inside(x, y, layout.x(i), layout.y(i), layout.radius(i)))
                 return i;
@@ -600,7 +712,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         else
             gameTouch(event);
         publish();
-        invalidate();
+        invalidateIfChanged();
         return true;
     }
 
@@ -613,7 +725,27 @@ public final class TouchControls extends View implements SensorEventListener, In
     private void gameTouch(MotionEvent event) {
         int index = event.getActionIndex();
         int id = event.getPointerId(index);
-        switch (event.getActionMasked()) {
+        int action = event.getActionMasked();
+        // three or four fingers down together open the overlay menu: the controls
+        // they held let go, and the fingers do nothing more until all are lifted
+        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount() == layout.menuFingers
+                && event.getEventTime() - event.getDownTime() <= MENU_TAP_MS) {
+            reset();
+            menuFingersDown = true;
+            menuPressedUntil = SystemClock.uptimeMillis() + MENU_PRESS_MS;
+            publish();
+            return;
+        }
+        // (a first finger is a new touch: the menu's fingers were lifted, perhaps
+        // while the overlay hid the controls and the fingers went to the game)
+        if (action == MotionEvent.ACTION_DOWN)
+            menuFingersDown = false;
+        if (menuFingersDown) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                menuFingersDown = false;
+            return;
+        }
+        switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
                 fingerDown(id, event.getX(index), event.getY(index));
@@ -647,6 +779,8 @@ public final class TouchControls extends View implements SensorEventListener, In
         }
         if (target == TOOLBAR_OPTIONS || target == TOOLBAR_TOGGLE) {
             toolbarFingers.put(id, new float[] {px, py, target});
+        } else if (target >= TARGET) {
+            owners.put(id, target);
         } else if (target != NOTHING) {
             owners.put(id, target);
             if (layout.type(target) == TouchLayout.LEFT)
@@ -672,7 +806,7 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     private void fingerMoved(int id, float px, float py) {
         int control = owners.get(id, NOTHING);
-        if (control >= 0 && layout.type(control) == TouchLayout.LEFT)
+        if (control >= 0 && control < layout.size() && layout.type(control) == TouchLayout.LEFT)
             moveStick(control, logical(px), logical(py));
         float[] toolbar = toolbarFingers.get(id);
         if (toolbar != null && movedPastSlop(toolbar, px, py)) {
@@ -710,7 +844,7 @@ public final class TouchControls extends View implements SensorEventListener, In
             return;
         }
         int control = owners.get(id, NOTHING);
-        if (control >= 0 && layout.type(control) == TouchLayout.LEFT) {
+        if (control >= 0 && control < layout.size() && layout.type(control) == TouchLayout.LEFT) {
             axes[0] = 0;
             axes[1] = 0;
             stickFloating = false;
@@ -780,6 +914,62 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     // ---------- the buttons' names, from the player's profile
 
+    /** the replay's buttons, when the game has changed them */
+    private void readTargets() {
+        int serial = nativeTargets(null);
+        if (serial == targetsSerial)
+            return;
+        targetsSerial = nativeTargets(targets);
+        targets[0] = Math.max(0, Math.min(targets[0], MAXIMUM_TARGETS));
+    }
+
+    private float replayControlX() {
+        return logicalWidth - insetRight / scale - REPLAY_CONTROL_MARGIN;
+    }
+
+    private float replayControlY(int index) {
+        return logicalHeight * REPLAY_CONTROL_HEIGHTS[index];
+    }
+
+    /** (a finger's size at least) */
+    private float replayControlRadius() {
+        return Math.max(REPLAY_CONTROL_RADIUS, minimumRadius());
+    }
+
+    private boolean replay() {
+        return (scene & SCENE_REPLAY) != 0;
+    }
+
+    /**
+     * the replay's button under a point (logical units), or NOTHING: the one
+     * whose rectangle it is in, else the nearest whose rectangle made a
+     * finger's height (the game's are its bar's) it is in; the game's boxes
+     * can be in two rows, whose grown rectangles overlap
+     */
+    private int hitTarget(float x, float y) {
+        float finger = minimumRadius();
+        int nearest = NOTHING;
+        float nearestDistance = Float.MAX_VALUE;
+        for (int i = 0; i < targets[0]; i++) {
+            int field = 1 + i * TARGET_FIELDS;
+            float x0 = logicalWidth * targets[field] / 10000f;
+            float y0 = logicalHeight * targets[field + 1] / 10000f;
+            float x1 = logicalWidth * targets[field + 2] / 10000f;
+            float y1 = logicalHeight * targets[field + 3] / 10000f;
+            float grow = Math.max(0, (2 * finger - (y1 - y0)) / 2);
+            if (x < x0 || x >= x1 || y < y0 - grow || y >= y1 + grow)
+                continue;
+            if (y >= y0 && y < y1)
+                return TARGET + i;
+            float distance = y < y0 ? y0 - y : y - y1;
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = TARGET + i;
+            }
+        }
+        return nearest;
+    }
+
     private void readBindings() {
         int serial = nativeBindings(bindingsRead);
         if (serial == 0 || serial == bindingsSerial)
@@ -799,11 +989,20 @@ public final class TouchControls extends View implements SensorEventListener, In
         int control = bindings[kind.gamepadButton];
         if (control < 0 || control >= GAME_CONTROLS.length)
             return kind.buttonName;
-        return kind.faceButton ? kind.buttonName + " / " + GAME_CONTROLS[control] : GAME_CONTROLS[control];
+        String action = (french() ? FRENCH_GAME_CONTROLS : GAME_CONTROLS)[control];
+        return kind.faceButton ? kind.buttonName + " / " + action : action;
+    }
+
+    private boolean french() {
+        return "fr".equals(getResources().getConfiguration().getLocales().get(0).getLanguage());
+    }
+
+    private String tr(String english, String french) {
+        return french() ? french : english;
     }
 
     private String controlName(int type) {
-        return type == TouchLayout.LEFT ? "Move stick" : label(type);
+        return type == TouchLayout.LEFT ? tr("Move stick", "Stick de déplacement") : label(type);
     }
 
     // ---------- the layout, saved and in files
@@ -811,7 +1010,7 @@ public final class TouchControls extends View implements SensorEventListener, In
     private boolean saveLayout() {
         boolean saved = preferences.edit().putString(KEY_CONFIGURATION, exportLayout()).commit();
         if (!saved)
-            Toast.makeText(getContext(), "The touch layout could not be saved. Try again.", Toast.LENGTH_LONG).show();
+            Toast.makeText(getContext(), tr("The touch layout could not be saved. Try again.", "Impossible d’enregistrer les commandes tactiles. Réessayez."), Toast.LENGTH_LONG).show();
         return saved;
     }
 
@@ -826,10 +1025,11 @@ public final class TouchControls extends View implements SensorEventListener, In
         imported.layout.setMinimumRadius(minimumRadius());
         String normalized = imported.layout.exportConfiguration(imported.sensitivity);
         if (!preferences.edit().putString(KEY_CONFIGURATION, normalized).commit())
-            throw new IllegalArgumentException("Could not save the imported layout");
+            throw new IllegalArgumentException(tr("Could not save the imported layout", "Impossible d’enregistrer la disposition importée"));
         reset();
         layout = imported.layout;
         sensitivity = imported.sensitivity;
+        nativeMenuFingers(layout.menuFingers);
         setHidden(false);
         cancelRumble();
         invalidate();
@@ -854,7 +1054,7 @@ public final class TouchControls extends View implements SensorEventListener, In
     }
 
     private void showOptions() {
-        String[] items = {"General", "Edit buttons layout", "Look sensitivity"};
+        String[] items = {tr("General", "Général"), tr("Edit buttons layout", "Disposition des boutons"), tr("Look sensitivity", "Sensibilité tactile")};
         AlertDialog dialog = new AlertDialog.Builder(getContext())
             .setTitle("Options")
             .setItems(items, (d, which) -> {
@@ -867,7 +1067,7 @@ public final class TouchControls extends View implements SensorEventListener, In
                     post(this::showSensitivity);
                 }
             })
-            .setNegativeButton("Close", null)
+            .setNegativeButton(tr("Close", "Fermer"), null)
             .create();
         openDialog(dialog);
     }
@@ -893,7 +1093,7 @@ public final class TouchControls extends View implements SensorEventListener, In
 
         boolean hasRumble = vibrator != null && vibrator.hasVibrator();
         Switch rumble = new Switch(getContext());
-        rumble.setText(hasRumble ? "Vibration" : "Vibration (not on this phone)");
+        rumble.setText(hasRumble ? "Vibration" : tr("Vibration (not on this phone)", "Vibration indisponible"));
         rumble.setChecked(layout.rumbleEnabled);
         rumble.setEnabled(hasRumble);
         rumble.setOnCheckedChangeListener((view, enabled) -> {
@@ -903,19 +1103,13 @@ public final class TouchControls extends View implements SensorEventListener, In
         });
         panel.addView(rumble);
 
-        Switch gyro = new Switch(getContext());
-        gyro.setText(gyroscope != null ? "Gyroscope aiming (experimental)" : "Gyroscope aiming (not on this phone)");
-        gyro.setChecked(layout.gyroscopeEnabled);
-        gyro.setEnabled(gyroscope != null);
-        gyro.setOnCheckedChangeListener((view, enabled) -> {
-            layout.gyroscopeEnabled = enabled;
-            gyroAim.reset();
-            saveLayout();
-        });
-        panel.addView(gyro);
+        // (gyroscope aiming is the game's: a profile's Gamepads, Gyro Aim)
+        panel.addView(text(gyroscope != null ?
+            tr("Gyroscope aiming: in the game's settings, a profile's Gamepads, Gyro Aim", "Gyroscope : Paramètres du jeu > Manettes > Visée au gyroscope") :
+            tr("Gyroscope aiming: not on this phone", "Gyroscope indisponible sur cet appareil")));
 
         Switch floating = new Switch(getContext());
-        floating.setText("Floating move stick: it goes where your thumb lands in the lower left");
+        floating.setText(tr("Floating move stick: it goes where your thumb lands in the lower left", "Stick flottant : se place sous le pouce dans la zone en bas à gauche"));
         floating.setChecked(layout.floatingStick);
         floating.setOnCheckedChangeListener((view, enabled) -> {
             layout.floatingStick = enabled;
@@ -924,7 +1118,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         panel.addView(floating);
 
         Switch buttonsStill = new Switch(getContext());
-        buttonsStill.setText("Held buttons don't aim: a finger that swipes from a button only holds it");
+        buttonsStill.setText(tr("Held buttons don't aim: a finger that swipes from a button only holds it", "Appuis fixes : glisser depuis un bouton ne fait pas tourner la caméra"));
         buttonsStill.setChecked(!layout.buttonsAim);
         buttonsStill.setOnCheckedChangeListener((view, enabled) -> {
             layout.buttonsAim = !enabled;
@@ -932,12 +1126,29 @@ public final class TouchControls extends View implements SensorEventListener, In
         });
         panel.addView(buttonsStill);
 
+        panel.addView(text(tr("Fingers that tap together to open the cheat menu:", "Doigts simultanés pour ouvrir le panneau en jeu :")));
+        RadioGroup fingers = new RadioGroup(getContext());
+        fingers.setOrientation(RadioGroup.HORIZONTAL);
+        for (int count = TouchLayout.MIN_MENU_FINGERS; count <= TouchLayout.MAX_MENU_FINGERS; count++) {
+            RadioButton choice = new RadioButton(getContext());
+            choice.setId(count);
+            choice.setText(count + tr(" fingers", " doigts"));
+            fingers.addView(choice);
+        }
+        fingers.check(layout.menuFingers);
+        fingers.setOnCheckedChangeListener((group, count) -> {
+            layout.menuFingers = count;
+            nativeMenuFingers(count);
+            saveLayout();
+        });
+        panel.addView(fingers);
+
         TextView opacityLabel = text("");
         SeekBar opacity = new SeekBar(getContext());
         int steps = Math.round((TouchLayout.MAX_OPACITY - TouchLayout.MIN_OPACITY) * 20);
         opacity.setMax(steps);
         opacity.setProgress(Math.round((layout.opacity - TouchLayout.MIN_OPACITY) * 20));
-        Runnable showOpacity = () -> opacityLabel.setText(String.format(Locale.US, "Opacity: %d%%",
+        Runnable showOpacity = () -> opacityLabel.setText(String.format(Locale.US, tr("Opacity: %d%%", "Opacité : %d%%"),
             Math.round(layout.opacity * 100)));
         showOpacity.run();
         opacity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -964,15 +1175,15 @@ public final class TouchControls extends View implements SensorEventListener, In
         ScrollView scroll = new ScrollView(getContext());
         scroll.addView(panel);
         AlertDialog dialog = new AlertDialog.Builder(getContext())
-            .setTitle("General")
+            .setTitle(tr("General", "Général"))
             .setView(scroll)
-            .setPositiveButton("Done", null)
+            .setPositiveButton(tr("Done", "Terminé"), null)
             .create();
-        panel.addView(button("Hide or add buttons", view -> {
+        panel.addView(button(tr("Hide or add buttons", "Afficher ou ajouter des boutons"), view -> {
             dialog.dismiss();
             post(this::showButtonManager);
         }));
-        panel.addView(button("Edit buttons size", view -> {
+        panel.addView(button(tr("Edit buttons size", "Taille des boutons"), view -> {
             dialog.dismiss();
             post(this::showButtonSizes);
         }));
@@ -982,9 +1193,9 @@ public final class TouchControls extends View implements SensorEventListener, In
     private String rowName(int control, boolean withHidden) {
         String name = controlName(layout.type(control));
         if (control >= TouchLayout.BASE_COUNT)
-            name += " (copy)";
+            name += tr(" (copy)", " (copie)");
         if (withHidden && !layout.shown(control))
-            name += " (hidden)";
+            name += tr(" (hidden)", " (masqué)");
         return name;
     }
 
@@ -1026,9 +1237,9 @@ public final class TouchControls extends View implements SensorEventListener, In
         ScrollView scroll = new ScrollView(getContext());
         scroll.addView(list);
         openDialog(new AlertDialog.Builder(getContext())
-            .setTitle("Edit buttons size")
+            .setTitle(tr("Edit buttons size", "Taille des boutons"))
             .setView(scroll)
-            .setPositiveButton("Done", null)
+            .setPositiveButton(tr("Done", "Terminé"), null)
             .create());
     }
 
@@ -1050,7 +1261,7 @@ public final class TouchControls extends View implements SensorEventListener, In
             for (int i = 0; i < layout.size(); i++) {
                 final int control = i;
                 LinearLayout row = row(control, false);
-                row.addView(button(layout.shown(control) ? "Hide" : "Show", view -> {
+                row.addView(button(layout.shown(control) ? tr("Hide", "Masquer") : tr("Show", "Afficher"), view -> {
                     reset();
                     layout.setShown(control, !layout.shown(control));
                     saveLayout();
@@ -1058,10 +1269,10 @@ public final class TouchControls extends View implements SensorEventListener, In
                     invalidate();
                 }));
                 if (layout.type(control) != TouchLayout.LEFT) {
-                    row.addView(button("Duplicate", view -> {
+                    row.addView(button(tr("Duplicate", "Dupliquer"), view -> {
                         reset();
                         if (layout.duplicate(control) < 0)
-                            toast("At most " + TouchLayout.MAX_CONTROLS + " controls. Reset removes the copies.");
+                            toast(tr("At most ", "Au plus ") + TouchLayout.MAX_CONTROLS + tr(" controls. Reset removes the copies.", " boutons. Réinitialiser supprime les copies."));
                         else
                             saveLayout();
                         refresh[0].run();
@@ -1075,11 +1286,11 @@ public final class TouchControls extends View implements SensorEventListener, In
         ScrollView scroll = new ScrollView(getContext());
         scroll.addView(list);
         AlertDialog dialog = new AlertDialog.Builder(getContext())
-            .setTitle("Hide or add buttons")
+            .setTitle(tr("Hide or add buttons", "Afficher ou ajouter des boutons"))
             .setView(scroll)
-            .setPositiveButton("Done", null)
-            .setNegativeButton("Reset", null)
-            .setNeutralButton("Add button", null)
+            .setPositiveButton(tr("Done", "Terminé"), null)
+            .setNegativeButton(tr("Reset", "Réinitialiser"), null)
+            .setNeutralButton(tr("Add button", "Ajouter un bouton"), null)
             .create();
         openDialog(dialog);
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> confirmReset(refresh[0]));
@@ -1088,10 +1299,10 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     private void confirmReset(Runnable refresh) {
         new AlertDialog.Builder(getContext())
-            .setTitle("Reset the buttons?")
-            .setMessage("This puts every button, Options too, back in its place and size, shows them all and removes the copies.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Reset", (d, which) -> {
+            .setTitle(tr("Reset the buttons?", "Réinitialiser les boutons ?"))
+            .setMessage(tr("This puts every button, Options too, back in its place and size, shows them all and removes the copies.", "Tous les boutons, y compris Options, retrouveront leur position et leur taille. Ils seront affichés et les copies seront supprimées."))
+            .setNegativeButton(tr("Cancel", "Annuler"), null)
+            .setPositiveButton(tr("Reset", "Réinitialiser"), (d, which) -> {
                 reset();
                 layout.resetDefaults();
                 setHidden(false);
@@ -1107,17 +1318,17 @@ public final class TouchControls extends View implements SensorEventListener, In
         for (int i = 0; i < names.length; i++)
             names[i] = controlName(i);
         new AlertDialog.Builder(getContext())
-            .setTitle("Add button")
+            .setTitle(tr("Add button", "Ajouter un bouton"))
             .setItems(names, (d, type) -> {
                 reset();
                 if (layout.add(type) < 0)
-                    toast(type == TouchLayout.LEFT ? "The move stick already shows." : "At most " + TouchLayout.MAX_CONTROLS + " controls.");
+                    toast(type == TouchLayout.LEFT ? tr("The move stick already shows.", "Le stick de déplacement est déjà affiché.") : tr("At most ", "Au plus ") + TouchLayout.MAX_CONTROLS + tr(" controls.", " boutons."));
                 else
                     saveLayout();
                 refresh.run();
                 invalidate();
             })
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton(tr("Cancel", "Annuler"), null)
             .show();
     }
 
@@ -1130,7 +1341,7 @@ public final class TouchControls extends View implements SensorEventListener, In
         int steps = Math.round((TouchLayout.MAX_SENSITIVITY - TouchLayout.MIN_SENSITIVITY) / 0.025f);
         slider.setMax(steps);
         slider.setProgress(Math.round((sensitivity - TouchLayout.MIN_SENSITIVITY) / 0.025f));
-        Runnable showValue = () -> value.setText(String.format(Locale.US, "Look sensitivity: %.2fx", sensitivity));
+        Runnable showValue = () -> value.setText(String.format(Locale.US, tr("Look sensitivity: %.2fx", "Sensibilité tactile : %.2fx"), sensitivity));
         showValue.run();
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -1151,9 +1362,9 @@ public final class TouchControls extends View implements SensorEventListener, In
         panel.addView(value);
         panel.addView(slider);
         openDialog(new AlertDialog.Builder(getContext())
-            .setTitle("Look sensitivity")
+            .setTitle(tr("Look sensitivity", "Sensibilité tactile"))
             .setView(panel)
-            .setPositiveButton("Done", null)
+            .setPositiveButton(tr("Done", "Terminé"), null)
             .create());
     }
 
@@ -1163,8 +1374,13 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     // ---------- the gyroscope and the vibration
 
+    /** the game's Gyro Aim (input.gyro_aim): on, or only on zoom, which the game itself applies */
+    private boolean gyroscopeWanted() {
+        return gyroMode != 0;
+    }
+
     private void updateSensors() {
-        boolean needed = deviceInputActive && showing && !hidden && layout.gyroscopeEnabled && gyroscope != null;
+        boolean needed = deviceInputActive && showing && !hidden && gyroscopeWanted() && gyroscope != null;
         if (needed && !gyroRegistered) {
             gyroAim.reset();
             gyroRegistered = sensors.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
@@ -1177,16 +1393,16 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!deviceInputActive || !showing || hidden || !layout.gyroscopeEnabled || editing || openDialogs > 0) {
+        if (!deviceInputActive || !showing || hidden || !gyroscopeWanted() || editing || openDialogs > 0) {
             gyroAim.reset();
             return;
         }
         int rotation = ((WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE))
             .getDefaultDisplay().getRotation();
         if (gyroAim.sample(event.timestamp, event.values[0], event.values[1], rotation, gyroDelta)) {
-            // as a swipe of this many logical units (which the profile's invert leaves alone)
-            nativeGyro(-gyroDelta[0] / LOOK_RADIANS_PER_UNIT * sensitivity,
-                -gyroDelta[1] / LOOK_RADIANS_PER_UNIT * sensitivity);
+            // as a swipe of this many logical units, the phone's own turn (the game applies
+            // Gyro Aim's sensitivity and invert; the profile's invert leaves it alone)
+            nativeGyro(-gyroDelta[0] / LOOK_RADIANS_PER_UNIT, -gyroDelta[1] / LOOK_RADIANS_PER_UNIT);
         }
     }
 
@@ -1235,8 +1451,26 @@ public final class TouchControls extends View implements SensorEventListener, In
         return (color & 0x00ffffff) | (Math.max(0, Math.min(255, alpha)) << 24);
     }
 
+    private void sign(long value) {
+        signature = (signature ^ value) * 0x100000001b3L;
+    }
+
+    private void sign(float value) {
+        sign((long) Float.floatToIntBits(value));
+    }
+
+    /** a circle shown: into the signature, and drawn unless canvas is null (signatureNow) */
     private void circle(Canvas canvas, float x, float y, float radius, String label, boolean active,
             float textSize, float opacity) {
+        sign(x);
+        sign(y);
+        sign(radius);
+        sign((long) label.hashCode());
+        sign(active ? 1L : 2L);
+        sign(textSize);
+        sign(opacity);
+        if (canvas == null)
+            return;
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(alpha(active ? 0x9983d9ff : 0x55304050, opacity));
         canvas.drawCircle(x, y, radius, paint);
@@ -1266,15 +1500,17 @@ public final class TouchControls extends View implements SensorEventListener, In
         toolbarItem(canvas, optionsX(), optionsY(), OPTIONS_RADIUS, "Options", dragControl == TOOLBAR_OPTIONS);
         if (editing) {
             float middle = logicalWidth / 2;
-            toolbarItem(canvas, middle - EDITOR_SPACING, editorY(), OPTIONS_RADIUS, "Export", false);
-            toolbarItem(canvas, middle, editorY(), OPTIONS_RADIUS, "Import", false);
-            toolbarItem(canvas, middle + EDITOR_SPACING, editorY(), OPTIONS_RADIUS, "Save", false);
-            paint.setColor(Color.WHITE);
-            paint.setTextSize(14);
-            canvas.drawText("Drag the controls and Options, then push Save", middle,
-                editorY() + toolbarRadius(OPTIONS_RADIUS) + 24, paint);
+            toolbarItem(canvas, middle - EDITOR_SPACING, editorY(), OPTIONS_RADIUS, tr("Export", "Exporter"), false);
+            toolbarItem(canvas, middle, editorY(), OPTIONS_RADIUS, tr("Import", "Importer"), false);
+            toolbarItem(canvas, middle + EDITOR_SPACING, editorY(), OPTIONS_RADIUS, tr("Save", "Enreg."), false);
+            if (canvas != null) {
+                paint.setColor(Color.WHITE);
+                paint.setTextSize(14);
+                canvas.drawText(tr("Drag the controls and Options, then push Save", "Déplacez les boutons et Options, puis appuyez sur Enreg."), middle,
+                    editorY() + toolbarRadius(OPTIONS_RADIUS) + 24, paint);
+            }
         } else {
-            toolbarItem(canvas, logicalWidth / 2, toolbarY(), TOOLBAR_RADIUS, hidden ? "Touch" : "Hide", false);
+            toolbarItem(canvas, logicalWidth / 2, toolbarY(), TOOLBAR_RADIUS, hidden ? tr("Touch", "Tactile") : tr("Hide", "Masquer"), false);
         }
     }
 
@@ -1285,21 +1521,53 @@ public final class TouchControls extends View implements SensorEventListener, In
         // (a floating stick near an edge is drawn whole, nearer the middle than its centre)
         float x = Math.max(radius, Math.min(logicalWidth - radius, stickCenterX()));
         float y = Math.max(radius, Math.min(logicalHeight - radius, stickCenterY()));
-        circle(canvas, x, y, radius, "Move", false, 11 * size, layout.opacity);
+        circle(canvas, x, y, radius, tr("Move", "Déplacer"), false, 11 * size, layout.opacity);
         circle(canvas, x + axes[0] / 32767f * radius, y + axes[1] / 32767f * radius,
             Math.max(STICK_KNOB_RADIUS * size, radius * 0.375f), "", held(stick), 11, layout.opacity);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
+        render(canvas);
+        drawnSignature = signature;
+    }
+
+    /** the signature of what render would draw now */
+    private long signatureNow() {
+        render(null);
+        return signature;
+    }
+
+    /** a finger moved: drawn again only if what is shown changes (the editor always) */
+    private void invalidateIfChanged() {
+        if (editing || signatureNow() != drawnSignature)
+            invalidate();
+    }
+
+    /** the overlay, into canvas; with none, only into the signature */
+    private void render(Canvas canvas) {
+        signature = 0xcbf29ce484222325L;
+        sign(showing ? 1L : 2L);
+        sign(editing ? 1L : 2L);
+        sign(hidden ? 1L : 2L);
+        sign(scale);
         if (!showing && !editing)
             return;
-        canvas.save();
-        canvas.scale(scale, scale);
+        if (canvas != null) {
+            canvas.save();
+            canvas.scale(scale, scale);
+        }
         if (!hidden || editing) {
             if (layout.shown(TouchLayout.LEFT))
                 drawStick(canvas);
-            for (int i = 0; i < layout.size(); i++) {
+            // (a replay's own controls; its buttons are the game's, drawn on its screen)
+            if (replay() && !editing) {
+                for (int i = 0; i < REPLAY_CONTROL_KINDS.length; i++)
+                    circle(canvas, replayControlX(), replayControlY(i), replayControlRadius(),
+                        (french() ? FRENCH_REPLAY_CONTROL_NAMES : REPLAY_CONTROL_NAMES)[i],
+                        held(REPLAY_CONTROL + i), 13, layout.opacity);
+            }
+            for (int i = 0; i < layout.size() && !(replay() && !editing); i++) {
                 if (!layout.shown(i) || layout.type(i) == TouchLayout.LEFT)
                     continue;
                 float textSize = 11 * Math.max(layout.sizeScale(i), layout.radius(i) / 36f);
@@ -1308,6 +1576,7 @@ public final class TouchControls extends View implements SensorEventListener, In
             }
         }
         drawToolbar(canvas);
-        canvas.restore();
+        if (canvas != null)
+            canvas.restore();
     }
 }

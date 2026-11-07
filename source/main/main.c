@@ -369,6 +369,7 @@ symbols in this file:
 #include "interface/marketing_and_strategic_business_development.h"
 #include "interface/player_ui.h"
 #include "interface/terminal.h"
+#include "network_replay.h" /* port: port/linux/game/network_replay_playback.c */
 #include "saved games/player_profile.h"
 #include "saved games/game_state.h"
 #include "sound/sound_manager.h"
@@ -684,6 +685,9 @@ typedef char screenshot_and_framerate_globals_size_assert[
 	sizeof(struct _screenshot_and_framerate_globals) == 0x38B ? 1 : -1];
 
 void network_test_update(boolean main_menu_loaded, real seconds);
+void benchmark_update(boolean main_menu_loaded);
+/* port: the Switch's link page (port/linux/src/link_page.c) */
+void link_page_update(void);
 #include "server_director.h" /* port: port/linux/game/server_director.c */
 
 /* ---------- prototypes */
@@ -2260,6 +2264,44 @@ static void main_load_core_private(
 	return;
 }
 
+long config_integer(const char *name);
+const char *config_string(const char *name);
+
+/* port: a core of the first level written at the game tick that
+config.toml's debug.core_dump_tick names, named
+for where this run's game state is: two runs with the window at different
+places give two cores to compare, which says which of the game state's
+words are addresses (tools/game_state_compare.py). With debug.core_load,
+that core is loaded at the tick instead, as core_load_name does: a core of
+another run's window, taken in this one's */
+static void main_port_core_dump(
+	void)
+{
+	static long tick = -1;
+	static boolean written = FALSE;
+	char name[64];
+	const char *load;
+
+	if (tick < 0)
+		tick = config_integer("debug.core_dump_tick");
+	if (tick <= 0 || written || global_scenario_index == NONE || !game_in_progress() ||
+		!strcmp(tag_get_name(global_scenario_index), "levels\\ui\\ui") || game_time_get() < tick)
+	{
+		return;
+	}
+	written = TRUE;
+	load = config_string("debug.core_load");
+	if (load && *load)
+	{
+		error(_error_silent, "loading the core d:\\core\\%s at tick %ld", load, (long)game_time_get());
+		main_load_core_name(load);
+		return;
+	}
+	sprintf(name, "game_state_%08lx.bin", (unsigned long)game_state_port_base_address());
+	game_state_save_core(name);
+	error(_error_silent, "wrote the core d:\\core\\%s at tick %ld", name, (long)game_time_get());
+}
+
 static void main_save_core_private(
 	void)
 {
@@ -3016,10 +3058,21 @@ static void screenshot_render(
 	return;
 }
 
+/* port: debug.show_resolution shows the frame rate with the resolution
+drawn at (halo_screen_width and halo_screen_pixel_scale, every renderer's),
+and the Switch's renderer says whether display.dynamic_resolution has
+dropped a step (weak: NULL elsewhere) */
+int config_boolean(const char *name);
+long halo_screen_width(void);
+float halo_screen_pixel_scale(void);
+extern int halo_screen_dynamic_resolution_dropped(void) __attribute__((weak));
+
 void main_framerate_render(
 	void)
 {
-	if (display_framerate)
+	boolean show_resolution = config_boolean("debug.show_resolution") != 0;
+
+	if (display_framerate || show_resolution)
 	{
 		long font_tag_index;
 
@@ -3031,8 +3084,9 @@ void main_framerate_render(
 			long frame_rate;
 			rectangle2d bounds;
 			/* room for three digits under C99 snprintf, which (unlike MSVC's
-			_snprintf) keeps a byte of the count for the terminator */
-			char frame_rate_string[8];
+			_snprintf) keeps a byte of the count for the terminator; and with
+			debug.show_resolution, the resolution after them */
+			char frame_rate_string[48];
 
 			bounds = render.camera.window_bounds;
 			/* The native ports draw at the display's refresh rate, up to
@@ -3062,13 +3116,30 @@ void main_framerate_render(
 				(void)frame_rate_real;
 			}
 
-			_snprintf(
-				frame_rate_string,
-				NUMBEROF(frame_rate_string) - 1,
-				"%d",
-				(short)frame_rate);
+			if (show_resolution)
+			{
+				float pixel_scale = halo_screen_pixel_scale();
+
+				_snprintf(
+					frame_rate_string,
+					NUMBEROF(frame_rate_string) - 1,
+					"%d %ldx%ld%s",
+					(short)frame_rate,
+					(long)(halo_screen_width() * pixel_scale + 0.5f),
+					(long)(480 * pixel_scale + 0.5f),
+					halo_screen_dynamic_resolution_dropped && halo_screen_dynamic_resolution_dropped() ?
+						" (dynamic)" : "");
+			}
+			else
+			{
+				_snprintf(
+					frame_rate_string,
+					NUMBEROF(frame_rate_string) - 1,
+					"%d",
+					(short)frame_rate);
+			}
 			frame_rate_string[NUMBEROF(frame_rate_string) - 1] = 0;
-			bounds.x0 = (short)(bounds.x1 - 50);
+			bounds.x0 = (short)(bounds.x1 - (show_resolution ? 230 : 50));
 			bounds.y0 = (short)(bounds.y1 - 50);
 			draw_string_set_format(NONE, _text_justification_left, 0);
 			draw_string_set_color(
@@ -3310,6 +3381,10 @@ void main_loop_of_death(
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
+		overlay_menu_update();
+		link_page_update();
+		/* port: the Theater's replay page (port/linux/game/network_replay_page.c) */
+		network_replay_page_update();
 		process_ui_widgets();
 		main_pregame_render();
 		main_rasterizer_throttle();
@@ -3333,6 +3408,9 @@ static void main_game_render(
 
 	lock_global_random_seed();
 	collision_log_continue_period(TRUE);
+	/* port: a replay's playback's view, made once for the frame, before the
+	sound listens from it (port/linux/game/network_replay_playback.c) */
+	network_replay_playback_frame();
 	sound_render();
 	force_single_screen = game_engine_force_single_screen();
 	last_local_player_index = NONE;
@@ -3374,9 +3452,22 @@ static void main_game_render(
 				}
 			}
 
-			window->local_player_index = last_local_player_index;
-			observer = observer_get_camera(window->local_player_index);
-			observer = render_interpolation_camera(window->local_player_index, observer);
+			/* port: a replay's playback has no local player: the window is
+			local player 0's, as film playback's is above, so that it is drawn
+			as a player's, with the playback's own view of the player watched
+			(port/linux/game/network_replay_playback.c) */
+			if (window_index == 0 && network_replay_playing() && network_replay_camera())
+			{
+				last_local_player_index = 0;
+				window->local_player_index = 0;
+				observer = network_replay_camera();
+			}
+			else
+			{
+				window->local_player_index = last_local_player_index;
+				observer = observer_get_camera(window->local_player_index);
+				observer = render_interpolation_camera(window->local_player_index, observer);
+			}
 		}
 		else
 		{
@@ -3583,6 +3674,10 @@ static boolean main_loop_iteration(
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
+		overlay_menu_update();
+		link_page_update();
+		/* port: the Theater's replay page (port/linux/game/network_replay_page.c) */
+		network_replay_page_update();
 		profile_scope_exit(main_platform_events_section)
 
 		if (!shell_application_is_paused())
@@ -3591,6 +3686,8 @@ static boolean main_loop_iteration(
 
 			/* automated system link tests (port/linux/game/network_test.c) */
 			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			/* port: the benchmark run (port/linux/game/benchmark.c) */
+			benchmark_update(main_globals.main_menu_scenario_loaded);
 			/* port: a dedicated server's hosting, rotation and commands
 			(port/linux/game/server_director.c) */
 			server_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
@@ -3636,6 +3733,12 @@ static boolean main_loop_iteration(
 				break;
 			}
 			profile_scope_exit(main_network_start_frame_section)
+
+			/* port: the network game ended this frame and asked for the main
+			menu. Its widgets are already closed; updating or drawing the
+			match now faults. The menu loads at the start of the next frame. */
+			if (main_globals.want_to_be_at_main_menu)
+				goto network_game_ended_this_frame;
 
 			/* port: a dedicated server's frames paced by its clock, with no
 			display to wait for (port/linux/src/server_mode.c) */
@@ -3694,10 +3797,20 @@ static boolean main_loop_iteration(
 					render_frame = main_globals.main_menu_scenario_loaded ||
 						(main_globals.halt_time_scale &&
 							(game_time_get_paused() || game_time_get_elapsed()>0 || game_time_get_speed()<1.0f));
-					/* frames between ticks too (render_interpolation.c) */
+					/* frames between ticks too (render_interpolation.c), but
+					none of a map before its first tick: the frame after a load
+					runs none (the load stopped the clock), and drawn it showed
+					the map before the startup scripts' fade and cinematic. On
+					the Xbox every frame ran a tick */
 					if (halo_interpolation_enabled())
-						render_frame = main_globals.main_menu_scenario_loaded || main_globals.halt_time_scale;
+						render_frame = main_globals.main_menu_scenario_loaded ||
+							(main_globals.halt_time_scale && game_time_get()>0);
 					render_frame &= !game_engine_running() || game_time_get()>=3;
+					/* port: a replay's skip ahead: the frame it holds drawn, and its
+					held frames with its lines, though they run no tick or many
+					(port/linux/game/network_replay_playback.c) */
+					if (network_replay_hold_wanted() || network_replay_frozen())
+						render_frame = TRUE;
 
 					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);
@@ -3737,6 +3850,8 @@ static boolean main_loop_iteration(
 			{
 				profile_scope(main_present_section, main_present_frame();)
 			}
+network_game_ended_this_frame:
+			;
 		}
 
 		input_frame_end();

@@ -28,6 +28,11 @@ static int player_link_begin(int master){begun=master;begin_count++;return 1;}
 static void player_link_unlink(void){unlink_count++;}
 static struct pc_menu_setting link_setting={7,"link.action",6,{"none","link_1","link_2","link_3","link_4","unlink"},NONE};
 static struct pc_menu_setting *pc_menu_setting_get(long definition_index){return definition_index==7?&link_setting:NULL;}
+static const char *settings_profile_folder(void) { return ""; }
+static int config_profile_text(const char *folder, const char *name, char *text, unsigned size)
+{ (void)folder; return config_text(name, text, size); }
+static int config_profile_write(const char *folder, const char *name, const char *value)
+{ (void)folder; return config_write(name, value); }
 #include "under_test.inc"
 static struct widget_instance spinner;
 /* the screen opened (the spinner's "port setting load"), the spinner moved

@@ -124,6 +124,9 @@ symbols in this file:
 
 #include "cseries.h"
 #include "cseries_windows.h"
+/* where the window is in this process, and how big the tag cache is */
+#include "halo_port_window.h"
+#include "halo_port_capacity.h"
 #include "errors.h"
 #include "tag_files/tag_groups.h"
 #include "tag_files/files.h"
@@ -145,6 +148,7 @@ void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stri
 void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices);
 void xgpu_static_range_add(const void *start, unsigned long size, int indices);
 void xgpu_static_range_remove(const void *start, int indices);
+void xgpu_static_forget_all(void);
 #endif
 
 /* ---------- constants */
@@ -158,6 +162,9 @@ enum
 	(cache_files_windows.c) */
 	CACHE_FILE_SECTOR_SIZE = 512,
 };
+
+/* where the tag cache is in this process (halo_port_window.h) */
+#define TAG_CACHE_ADDRESS PORT_WINDOW_ADDRESS(0x803A6000)
 
 /* ---------- macros */
 
@@ -281,6 +288,47 @@ static char const *data_00316820[] =
 };
 
 /* ---------- private code */
+
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+/* A map's tag directory is linked to the addresses of the window the game
+was built for: the header names its vertex and index buffers, and every tag
+instance names where its data and its name live. Where the host put the
+window instead, all of those addresses move by the same amount, so the
+loaded tag data is moved here once it is in memory. */
+
+/* An address the game data was written with, moved to where the window
+actually is. A value that is not one (already moved, or a count) is left
+alone, so this can be done where the value is used even if that happens
+more than once for the same field. */
+static void *cache_file_rebase_address(
+	void *address)
+{
+	return PORT_WINDOW_REBASE(address);
+}
+
+static void cache_file_rebase_tag_data(
+	struct cache_file_tag_header *header)
+{
+	long index;
+
+	header->tag_instances = (struct cache_file_tag_instance *)cache_file_rebase_address(header->tag_instances);
+	header->vertex_buffers = (D3DVertexBuffer *)cache_file_rebase_address(header->vertex_buffers);
+	header->index_buffers = (D3DIndexBuffer *)cache_file_rebase_address(header->index_buffers);
+	for (index = 0; index < header->tag_count; index++)
+	{
+		header->tag_instances[index].name = (char *)cache_file_rebase_address(header->tag_instances[index].name);
+		header->tag_instances[index].base_address = cache_file_rebase_address(header->tag_instances[index].base_address);
+	}
+}
+
+static void cache_file_rebase_structure_bsp(
+	struct cache_file_structure_bsp_header *header)
+{
+	header->base_address = cache_file_rebase_address(header->base_address);
+	header->vertex_buffers = cache_file_rebase_address(header->vertex_buffers);
+	header->index_buffers = cache_file_rebase_address(header->index_buffers);
+}
+#endif
 
 static struct cache_file_tag_instance *cache_get_tag_instance(
 	long tag_index)
@@ -459,6 +507,11 @@ static boolean cache_file_tag_header_verify(
 		{
 			void const *base_address = tag_header->tag_instances[absolute_index].base_address;
 
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+			/* (checked where it is moved to, as it is once this passes) */
+			base_address = cache_file_rebase_address((void *)base_address);
+#endif
+
 			if (base_address &&
 				!cache_file_region_contains(tag_header, TAG_CACHE_SIZE, base_address, 1, 1))
 			{
@@ -599,6 +652,31 @@ char const *cache_files_map_directory(
 	return map_directory;
 }
 
+/* port: tag_loaded's recent answers, found ones and NONE alike. Each of its
+walks compares the name with every loaded tag of the group, and the menus,
+the HUD and the widgets' event routing ask by name each frame (a sixtieth of
+the game thread's time on a phone, 48 bots). An answer holds until the
+loaded tags change: their table is made, replaced or let go
+(tag_loaded_forget), which also covers the menus' tags added to a copy of it.
+A name too long for an entry is looked up as before. */
+#define TAG_LOADED_MEMO_SIZE 256
+#define TAG_LOADED_MEMO_NAME_SIZE 96
+
+static struct
+{
+	unsigned long serial;
+	long group_tag;
+	long result;
+	char name[TAG_LOADED_MEMO_NAME_SIZE];
+} tag_loaded_memo[TAG_LOADED_MEMO_SIZE];
+static unsigned long tag_loaded_serial = 1;
+
+static void tag_loaded_forget(
+	void)
+{
+	tag_loaded_serial++;
+}
+
 void scenario_tags_unload(
 	void)
 {
@@ -616,6 +694,13 @@ void scenario_tags_unload(
 		extern void mods_tags_unloaded(void);
 
 		mods_tags_unloaded();
+	}
+	/* port: the menus' Spartan goes, before the menus' table it extends
+	(port/linux/game/menu_chief.c) */
+	{
+		extern void menu_chief_tags_unloaded(void);
+
+		menu_chief_tags_unloaded();
 	}
 	/* port: the menus' tags go, and the map's own table comes back
 	(port/linux/game/menu_tags.c): after the texture cache, which writes to
@@ -640,9 +725,15 @@ void scenario_tags_unload(
 #endif
 		tags_header_deregister_vertex_and_index_buffers(cache_file_globals.tag_header);
 	}
+#ifdef HALO_ANDROID
+	/* port: every static range goes with the tags (a Custom Edition map's too), the BSP's among them, which is let go
+	only later (xgpu.h) */
+	xgpu_static_forget_all();
+#endif
 	cache_file_globals.tags_loaded = FALSE;
 	global_tag_instances = NULL;
 	global_tag_count = 0;
+	tag_loaded_forget();
 
 	return;
 }
@@ -662,6 +753,7 @@ void cache_files_set_tag_instances(
 {
 	global_tag_instances = instances;
 	global_tag_count = count;
+	tag_loaded_forget();
 }
 
 void tag_files_open(
@@ -705,6 +797,26 @@ long tag_loaded(
 	0x7FFF, and the walk never ended) */
 	long absolute_index;
 	long result = NONE;
+	/* port: the memo's entry for the group and the name, case aside */
+	unsigned long hash = 2166136261UL ^ (unsigned long)group_tag;
+	long length;
+	boolean memo;
+
+	for (length = 0; name[length] && length < TAG_LOADED_MEMO_NAME_SIZE; length++)
+	{
+		unsigned char character = (unsigned char)name[length];
+
+		hash = (hash ^ (character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character)) * 16777619UL;
+	}
+	memo = length < TAG_LOADED_MEMO_NAME_SIZE;
+	hash %= TAG_LOADED_MEMO_SIZE;
+	if (memo &&
+		tag_loaded_memo[hash].serial == tag_loaded_serial &&
+		tag_loaded_memo[hash].group_tag == group_tag &&
+		!_stricmp(name, tag_loaded_memo[hash].name))
+	{
+		return tag_loaded_memo[hash].result;
+	}
 
 	if (cache_file_globals.tags_loaded)
 	{
@@ -725,6 +837,13 @@ long tag_loaded(
 			}
 		}
 	}
+	if (memo)
+	{
+		tag_loaded_memo[hash].group_tag = group_tag;
+		tag_loaded_memo[hash].result = result;
+		csmemcpy(tag_loaded_memo[hash].name, name, length + 1);
+		tag_loaded_memo[hash].serial = tag_loaded_serial;
+	}
 
 	return result;
 }
@@ -732,7 +851,7 @@ long tag_loaded(
 void cache_files_enable_writes(
 	void)
 {
-	XPhysicalProtect((void *)0x803A6000, 0x01600000, PAGE_READWRITE);
+	XPhysicalProtect((void *)TAG_CACHE_ADDRESS, TAG_CACHE_SIZE, PAGE_READWRITE);
 
 	return;
 }
@@ -740,7 +859,7 @@ void cache_files_enable_writes(
 void cache_files_disable_writes(
 	void)
 {
-	XPhysicalProtect((void *)0x803A6000, 0x01600000, PAGE_READONLY);
+	XPhysicalProtect((void *)TAG_CACHE_ADDRESS, TAG_CACHE_SIZE, PAGE_READONLY);
 	XPhysicalProtect(
 		cache_file_globals.tag_header->vertex_buffers,
 		cache_file_globals.tag_header->vertex_buffer_count * 12,
@@ -1230,8 +1349,15 @@ long scenario_tags_load(
 			&cache_file_globals.header);
 		if (cache_file_globals.tag_header)
 		{
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+			/* (its tag directory names its tags' data and names as it was
+			written for, 0x40440000: moved to where its tag cache is, as
+			this build's maps' are to the window's, halo_port_window.h) */
+			cache_file_rebase_tag_data(cache_file_globals.tag_header);
+#endif
 			global_tag_instances = cache_file_globals.tag_header->tag_instances;
 			global_tag_count = cache_file_globals.tag_header->tag_count;
+			tag_loaded_forget();
 			cache_file_globals.tags_loaded = TRUE;
 			/* (the menus' tags, as for this build's maps below) */
 			{
@@ -1262,7 +1388,7 @@ long scenario_tags_load(
 		tag_cache_base_address = physical_memory_get_tag_cache_base_address();
 		if (cache_file_header_verify(&cache_file_globals.header, scenario_name, TRUE))
 		{
-			csmemset(tag_cache_base_address, 0xCD, 0x01600000);
+			csmemset(tag_cache_base_address, 0xCD, TAG_CACHE_SIZE);
 			cache_file_read(
 				NONE,
 				cache_file_globals.header.tag_data_offset,
@@ -1285,6 +1411,17 @@ long scenario_tags_load(
 
 				return NONE;
 			}
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+			/* the header's own addresses are moved before they are checked
+			against where the tags were read; its tags', once they are */
+			{
+				struct cache_file_tag_header *tag_header = (struct cache_file_tag_header *)tag_cache_base_address;
+
+				tag_header->tag_instances = (struct cache_file_tag_instance *)cache_file_rebase_address(tag_header->tag_instances);
+				tag_header->vertex_buffers = (D3DVertexBuffer *)cache_file_rebase_address(tag_header->vertex_buffers);
+				tag_header->index_buffers = (D3DIndexBuffer *)cache_file_rebase_address(tag_header->index_buffers);
+			}
+#endif
 			if (!cache_file_tag_header_verify(
 				tag_cache_base_address,
 				cache_file_globals.header.tag_data_size,
@@ -1294,6 +1431,12 @@ long scenario_tags_load(
 
 				return NONE;
 			}
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+			/* the tags' names and data moved too, before the validator
+			follows them (it moves every other address it reads:
+			port/linux/game/tag_validate.c) */
+			cache_file_rebase_tag_data((struct cache_file_tag_header *)tag_cache_base_address);
+#endif
 			/* port: and every tag checked against its group's schema before
 			anything reads it (port/linux/game/tag_validate.c): a map whose
 			tags' pointers cannot be trusted is refused; what can be
@@ -1327,6 +1470,7 @@ long scenario_tags_load(
 					's'));
 			global_tag_instances = cache_file_globals.tag_header->tag_instances;
 			global_tag_count = cache_file_globals.tag_header->tag_count;
+			tag_loaded_forget();
 			tags_header_register_vertex_and_index_buffers(cache_file_globals.tag_header);
 #ifdef HALO_ANDROID
 			/* port: (an Xbox map's model vertices and indices, in its tags
@@ -1358,6 +1502,12 @@ long scenario_tags_load(
 				extern void menu_tags_loaded(char const *map_name);
 
 				menu_tags_loaded(cache_file_globals.header.name);
+			}
+			/* port: the menus' Spartan, from another map (port/linux/game/menu_chief.c) */
+			{
+				extern void menu_chief_tags_loaded(char const *map_name);
+
+				menu_chief_tags_loaded(cache_file_globals.header.name);
 			}
 			/* port: the bitmaps the high-res HUD stands for (port/linux/game/hud_hires_tags.c) */
 			{
@@ -1394,6 +1544,12 @@ boolean scenario_structure_bsp_load(
 	/* port: the bsp's header, once read and checked */
 	struct cache_file_structure_bsp_header *structure_bsp_header;
 
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+	/* the scenario's own tag data names where the level is read to, in an
+	address the map was written with */
+	reference->base_address = cache_file_rebase_address(reference->base_address);
+#endif
+
 	/* port: the tag data's size was checked as the map loaded
 	(cache_file_header_verify); the bsp's reference is the map's, and is
 	checked before anything is read where it says (a Custom Edition map's
@@ -1422,7 +1578,7 @@ boolean scenario_structure_bsp_load(
 		csmemset(
 			tag_cache_base_address + cache_file_globals.header.tag_data_size,
 			0xCD,
-			0x01600000 - cache_file_globals.header.tag_data_size);
+			TAG_CACHE_SIZE - cache_file_globals.header.tag_data_size);
 	}
 	{
 		boolean read_complete;
@@ -1446,6 +1602,12 @@ boolean scenario_structure_bsp_load(
 		/* port: a bsp that did not all read, or whose header's pointers
 		leave what was read, is not loaded */
 		structure_bsp_header = reference->base_address;
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+		if (read_complete == TRUE)
+		{
+			cache_file_rebase_structure_bsp(structure_bsp_header);
+		}
+#endif
 		if (read_complete != TRUE ||
 			structure_bsp_header->signature != CACHE_FILE_STRUCTURE_BSP_HEADER_SIGNATURE ||
 			!cache_file_region_contains(

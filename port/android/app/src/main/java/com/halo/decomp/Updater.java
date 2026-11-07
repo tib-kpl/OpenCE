@@ -39,9 +39,9 @@ import java.util.zip.ZipInputStream;
 /**
  * The app's self-updater, as the desktop games' (port/linux/src/updater.c).
  *
- * A build of the main branch made by GitHub Actions knows its build number
- * (BuildConfig.HALO_BUILD_NUMBER, the workflow's run number, which names its
- * release: build-number); other builds have none and never look. When
+ * A release's build, made by GitHub Actions for a pushed tag v<number>, knows
+ * its build number (BuildConfig.HALO_BUILD_NUMBER, the tag's number, which
+ * names its release: build-number); other builds have none and never look. When
  * update.auto in config.toml is true (the default), the game asks GitHub for
  * the latest release when it starts, on a thread of its own, and if it is
  * newer asks the player whether to update:
@@ -54,7 +54,7 @@ import java.util.zip.ZipInputStream;
  * - Do not ask again: after the player confirms it, update.auto = false is
  *   written to config.toml.
  *
- * Every build of main is signed with the same key (the workflow's), which an
+ * Every build the workflow makes is signed with the same key (its own), which an
  * app must keep for Android to install a new version over it.
  *
  * It also downloads the open-source Vulkan driver for Adreno GPUs, for
@@ -87,16 +87,18 @@ final class Updater {
 
     /* ---------- the open-source Vulkan driver for Adreno GPUs
 
-    On an Adreno, the Turnip build (Mesa's Vulkan driver for Adreno) for its series is downloaded into the data folder when it
-    is not there, from the project that releases it (port/android/README.md, "Graphics: OpenGL ES and Vulkan"). The download
+    On an Adreno, the Turnip build (Mesa's Vulkan driver for Adreno) for its series is downloaded into the data folder's
+    freedreno_drivers when it is not there (one downloaded before into the data folder itself is moved there), where Video
+    Setup lists every archive as a driver to choose (port/linux/game/menu_functions.c), from the project that releases it (port/android/README.md, "Graphics: OpenGL ES and Vulkan"). The download
     must have the size and SHA-256 of the build that was chosen, or it is dropped. Every build looks, whatever update.auto says:
     the driver is not an update of the game. LauncherActivity does it before the game starts, with the download's progress on
     screen, so that the game finds the driver on its first start.
 
     Which archive is this phone's is decided once, from the GPU's name, and written to vk_driver_auto.txt in the data folder
-    (the archive's name, or an empty line for a GPU that has none): display.vk_driver = "auto" is that archive
-    (port/android/host/host_vk_driver.c), so that a player turns Turnip on with one setting. The default driver is the
-    phone's own (display.vk_driver = ""): the archive is downloaded, not used, until the player sets "auto". */
+    (the archive's name, or an empty line for a GPU that has none), so that it is not decided again. The default driver
+    is the phone's own (display.vk_driver = ""): the archive is downloaded, not used, until the player chooses it by its
+    name in Video Setup, as any other archive in freedreno_drivers. (display.vk_driver = "auto", which was this archive,
+    is the phone's own driver now: port_config.c writes "" over it.) */
 
     static final class Driver {
         final String name, url, sha256, series;
@@ -124,6 +126,24 @@ final class Updater {
             "27e400a39cae06ac22695d74b837449868f712c679662c5793776bd575eca3bd", 800, 899, "8xx"),
     };
     private static final String AUTO_FILE = "vk_driver_auto.txt";
+    static final String DRIVER_FOLDER = "freedreno_drivers";
+
+    /** where an archive goes: the data folder's freedreno_drivers (made, and the archive moved there from the data folder
+     * if it was downloaded there before) */
+    private static File driverFile(File root, Driver driver) {
+        File folder = new File(root, DRIVER_FOLDER);
+        File archive = new File(folder, driver.name);
+        File old = new File(root, driver.name);
+
+        if (!folder.isDirectory() && !folder.mkdirs())
+            android.util.Log.i("halo", "driver: could not make " + folder);
+        if (old.length() == driver.size && archive.length() != driver.size) {
+            archive.delete();
+            if (old.renameTo(archive))
+                android.util.Log.i("halo", "driver: moved " + driver.name + " into " + DRIVER_FOLDER);
+        }
+        return archive;
+    }
 
     private static Driver driverNamed(String name) {
         for (Driver driver : DRIVERS) {
@@ -131,6 +151,24 @@ final class Updater {
                 return driver;
         }
         return null;
+    }
+
+    /** Preserve driver choices written by the French fork's older graphics screen. */
+    static void migrateLegacyDriver(File root) {
+        if (root == null)
+            return;
+        File config = new File(root, "config.toml");
+        String value = config.isFile() ? readSetting(config, "display", "vk_driver") : null;
+        if ("\"custom\"".equals(value)) {
+            writeSetting(config, "display", "vk_driver", "\"" + GraphicsActivity.CUSTOM_ARCHIVE + "\"");
+        } else if ("\"auto\"".equals(value)) {
+            List<String> lines = readLines(new File(root, AUTO_FILE));
+            if (!lines.isEmpty()) {
+                Driver driver = driverNamed(lines.get(0).trim());
+                if (driver != null && driverPresent(root, driver))
+                    writeSetting(config, "display", "vk_driver", "\"" + driver.name + "\"");
+            }
+        }
     }
 
     /** whether this phone's archive was decided and is in the data folder at root (or it has none) */
@@ -143,7 +181,7 @@ final class Updater {
             return false;
         Driver driver = driverNamed(lines.get(0).trim());
 
-        return driver == null || new File(root, driver.name).length() == driver.size;
+        return driver == null || driverFile(root, driver).length() == driver.size;
     }
 
     /** the GPU's name, and this phone's archive (null for a GPU that has none) */
@@ -185,15 +223,16 @@ final class Updater {
         return new Choice(renderer, chosen);
     }
 
-    /** whether an archive is in the data folder at root */
+    /** whether an archive is in the data folder at root's freedreno_drivers */
     static boolean driverPresent(File root, Driver driver) {
-        return new File(root, driver.name).length() == driver.size;
+        return driverFile(root, driver).length() == driver.size;
     }
 
-    /** the archive downloaded into root (as a .partial file, renamed once it is checked); throws why it could not be */
+    /** the archive downloaded into root's freedreno_drivers (as a .partial file, renamed once it is checked); throws why it
+     * could not be */
     static void driverDownload(File root, Driver driver, String gpu, Progress progress) throws Exception {
-        File archive = new File(root, driver.name);
-        File partial = new File(root, driver.name + ".partial");
+        File archive = driverFile(root, driver);
+        File partial = new File(archive.getParentFile(), driver.name + ".partial");
 
         try {
             android.util.Log.i("halo", "driver: downloading " + driver.url + " for the " + gpu);
@@ -203,7 +242,7 @@ final class Updater {
             archive.delete();
             if (!partial.renameTo(archive))
                 throw new IOException("it could not be renamed to " + archive);
-            android.util.Log.i("halo", "driver: " + driver.name + " is in the data folder");
+            android.util.Log.i("halo", "driver: " + driver.name + " is in " + DRIVER_FOLDER);
         } catch (Exception e) {
             partial.delete();
             android.util.Log.i("halo", "driver: could not download " + driver.name + ": " + e);

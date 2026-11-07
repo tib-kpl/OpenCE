@@ -97,6 +97,7 @@ symbols in this file:
 #include "cseries.h"
 #include "cseries_windows.h"
 #include "cseries/errors.h"
+#include "halo_port_window.h"
 #include "real_math.h"
 #include "console.h"
 #include "game_state.h"
@@ -321,6 +322,8 @@ void game_state_initialize_for_new_map(
 	game_state_globals.header->difficulty = game_difficulty_level_get();
 	game_state_globals.header->cache_file_checksum = cache_files_get_checksum();
 	game_state_globals.header->allocation_size_checksum = game_state_globals.allocation_size_checksum;
+	game_state_globals.header->layout_address = (unsigned long)game_state_globals.base_address;
+	game_state_globals.header->image_shift = PORT_IMAGE_SHIFT;
 
 	return;
 }
@@ -361,6 +364,35 @@ void game_state_port_restamp_revert_time(
 	void)
 {
 	game_state_globals.revert_time = game_time_get();
+}
+
+/* port: the parts of the game state in use, for a replay's keyframes
+(port/linux/game/network_replay_playback.c): its CPU allocations, from its
+start, and its GPU ones, at its end */
+void game_state_port_used(
+	void **cpu,
+	long *cpu_size,
+	void **gpu,
+	long *gpu_size)
+{
+	*cpu = game_state_globals.base_address;
+	*cpu_size = game_state_globals.cpu_allocation_size;
+	*gpu = (byte *)game_state_globals.base_address + GAME_STATE_SIZE - game_state_globals.gpu_allocation_size;
+	*gpu_size = game_state_globals.gpu_allocation_size;
+}
+
+/* port: a keyframe's game state put back, as a core is loaded
+(game_state_load_core): the procedures before, read (which writes the
+parts game_state_port_used gave, and what else it keeps), and the
+procedures after */
+void game_state_port_restore(
+	void (*read)(void *context),
+	void *context)
+{
+	game_state_note_event("replay keyframe");
+	game_state_call_before_load_procs();
+	read(context);
+	game_state_call_after_load_procs();
 }
 
 void game_state_revert(
@@ -466,6 +498,9 @@ static boolean game_state_header_valid(
 {
 	boolean valid = FALSE;
 
+	/* (a save written where the game state sat at some other address, or
+	with the game's image moved elsewhere, PORT_IMAGE_SHIFT, is moved to
+	this run's when its image is taken: game_state_image_accept) */
 	if (csstrcmp(header->map_name, tag_get_name(global_scenario_index)))
 	{
 		if (halt_on_error)
@@ -833,14 +868,186 @@ static boolean game_state_image_lruv_cache_valid(
 	return game_state_image_data_valid(image, blocks_live, allocation->maximum_count, sizeof(struct lruv_cache_block));
 }
 
+/* ---------- port: an image moved to this run's window
+
+The game state lies at the same offset into the window in every run of a
+build (halo_port_capacity.h), so the header's layout_address says where the
+saved game's window was, and one distance moves every address into it: the
+game state's own, and the map's tag data, which is loaded at the same offset
+for the same map. The game's image only matters to what the game state holds
+of its procedures and string literals (the lruv caches' procedures are put
+back below anyway). The sources of the game state's allocations were read
+for every field that holds an address, and two runs with the window and the
+image moved were compared to confirm it (docs/saved_game_relocation.md). */
+
+typedef boolean (*game_state_relocate_proc)(struct game_state_relocation const *relocation);
+
+boolean objects_port_relocate(struct game_state_relocation const *relocation);
+boolean glow_port_relocate(struct game_state_relocation const *relocation);
+boolean effects_port_relocate(struct game_state_relocation const *relocation);
+boolean hs_runtime_port_relocate(struct game_state_relocation const *relocation);
+boolean recorded_animations_port_relocate(struct game_state_relocation const *relocation);
+boolean hud_messaging_port_relocate(struct game_state_relocation const *relocation);
+boolean rasterizer_cinematics_port_relocate(struct game_state_relocation const *relocation);
+
+/* (the structure detail objects' cells point into themselves and the BSP,
+and are built again after a load: structure_detail_objects_flush) */
+static game_state_relocate_proc relocate_procs[] =
+{
+	objects_port_relocate,
+	glow_port_relocate,
+	effects_port_relocate,
+	hs_runtime_port_relocate,
+	recorded_animations_port_relocate,
+	hud_messaging_port_relocate,
+	rasterizer_cinematics_port_relocate,
+};
+
+void *game_state_relocation_pointer(
+	struct game_state_relocation const *relocation,
+	void const *live)
+{
+	return game_state_image_pointer(relocation->image, live);
+}
+
+void game_state_relocate(
+	struct game_state_relocation const *relocation,
+	void *field)
+{
+	byte *pointer = field;
+	unsigned long value;
+
+	/* (a module's walk of the image that has gone astray writes nothing
+	outside it; what it then took is refused by the checks) */
+	if (pointer < relocation->image || pointer > relocation->image + GAME_STATE_SIZE - sizeof(value))
+		return;
+	csmemcpy(&value, field, sizeof(value));
+	if (value - relocation->window_from < PORT_WINDOW_SIZE)
+	{
+		value += relocation->window_delta;
+		csmemcpy(field, &value, sizeof(value));
+	}
+}
+
+void *game_state_relocation_element(
+	struct game_state_relocation const *relocation,
+	struct data_array *live,
+	long index)
+{
+	struct data_array const *data = game_state_relocation_pointer(relocation, live);
+	struct datum_header const *datum;
+
+	if (index < 0 || index >= live->maximum_count || index >= data->count)
+		return NULL;
+	datum = (struct datum_header const *)((byte const *)(data + 1) + index * live->size);
+
+	return datum->identifier ? (void *)datum : NULL;
+}
+
+/* a memory pool's addresses: its own, and each block's, walked from the
+first (compacting leaves old block headers past the last one, which a scan
+for their signatures would find) */
+static void game_state_relocate_memory_pool(
+	struct game_state_relocation const *relocation,
+	struct memory_pool *live,
+	long size)
+{
+	struct memory_pool *pool = game_state_relocation_pointer(relocation, live);
+	byte const *first = (byte const *)(live + 1);
+	byte const *last = first + size;
+	struct memory_pool_block *block_live;
+	long count = 0;
+
+	game_state_relocate(relocation, &pool->base_address);
+	game_state_relocate(relocation, &pool->first_block);
+	game_state_relocate(relocation, &pool->last_block);
+	for (block_live = pool->first_block;
+		block_live && (byte const *)block_live >= first && (byte const *)block_live <= last - sizeof(*block_live) &&
+			!((unsigned long)block_live & 3) && count++ <= size / (long)sizeof(*block_live);
+		block_live = ((struct memory_pool_block *)game_state_relocation_pointer(relocation, block_live))->next_block)
+	{
+		struct memory_pool_block *block = game_state_relocation_pointer(relocation, block_live);
+
+		game_state_relocate(relocation, &block->reference);
+		game_state_relocate(relocation, &block->next_block);
+		game_state_relocate(relocation, &block->previous_block);
+	}
+}
+
+/* the addresses of the image's containers and of what the modules keep, to
+this run's window; FALSE if something in it cannot be moved */
+static boolean game_state_image_relocate(
+	struct game_state_relocation const *relocation)
+{
+	struct game_state_header *header = game_state_relocation_pointer(relocation, game_state_globals.header);
+	long index;
+
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		struct game_state_allocation const *allocation = &game_state_allocations[index];
+
+		switch (allocation->kind)
+		{
+		case _game_state_allocation_data:
+			game_state_relocate(relocation,
+				&((struct data_array *)game_state_relocation_pointer(relocation, allocation->address))->data);
+			break;
+		case _game_state_allocation_memory_pool:
+			game_state_relocate_memory_pool(relocation, allocation->address, allocation->size);
+			break;
+		case _game_state_allocation_lruv_cache:
+		{
+			struct lruv_cache *live = allocation->address;
+
+			game_state_relocate(relocation, &((struct lruv_cache *)game_state_relocation_pointer(relocation, live))->blocks);
+			game_state_relocate(relocation,
+				&((struct data_array *)game_state_relocation_pointer(relocation, live + 1))->data);
+			break;
+		}
+		}
+	}
+	for (index = 0; index < NUMBEROF(relocate_procs); index++)
+	{
+		if (!relocate_procs[index](relocation))
+			return FALSE;
+	}
+	header->layout_address = (unsigned long)game_state_globals.base_address;
+	header->image_shift = PORT_IMAGE_SHIFT;
+
+	return TRUE;
+}
+
 boolean game_state_image_accept(
 	void *image,
 	long size)
 {
+	struct game_state_header const *header;
 	long index;
 
 	if (size != GAME_STATE_SIZE)
 		return game_state_image_refuse("the image", "is of another size");
+	header = game_state_image_pointer(image, game_state_globals.header);
+	if (header->layout_address != (unsigned long)game_state_globals.base_address ||
+		header->image_shift != PORT_IMAGE_SHIFT)
+	{
+		struct game_state_relocation relocation;
+		unsigned long offset = (unsigned long)game_state_globals.base_address - PORT_WINDOW_BASE;
+
+		relocation.image = image;
+		relocation.window_from = header->layout_address - offset;
+		relocation.window_delta = PORT_WINDOW_BASE - relocation.window_from;
+		relocation.image_delta = PORT_IMAGE_SHIFT - header->image_shift;
+		error(_error_silent, "the saved game was written with the window at %08lx and the image shifted by %08lx; "
+			"moved to %08lx and %08lx", relocation.window_from, (unsigned long)header->image_shift,
+			(unsigned long)PORT_WINDOW_BASE, (unsigned long)PORT_IMAGE_SHIFT);
+		/* (a window starts on a whole number of 64 KB at least; one that
+		does not had its game state at another offset into it, in another
+		build) */
+		if (relocation.window_from & 0xFFFFUL)
+			return game_state_image_refuse("the image", "has its game state at another offset into its window");
+		if (!game_state_image_relocate(&relocation))
+			return FALSE;
+	}
 	for (index = 0; index < game_state_allocation_count; index++)
 	{
 		struct game_state_allocation const *allocation = &game_state_allocations[index];
@@ -1061,7 +1268,7 @@ void game_state_initialize(
 	crc_new(&game_state_globals.allocation_size_checksum);
 	/* the native builds place their larger game state above the tag cache
 	(halo_port_capacity.h, cache/physical_memory_map.c) */
-	game_state_globals.base_address = game_state_allocate_buffer(HALO_PORT_GAME_STATE_BASE_ADDRESS, GAME_STATE_CPU_SIZE, GAME_STATE_GPU_SIZE);
+	game_state_globals.base_address = game_state_allocate_buffer(PORT_WINDOW_ADDRESS(HALO_PORT_GAME_STATE_BASE_ADDRESS), GAME_STATE_CPU_SIZE, GAME_STATE_GPU_SIZE);
 	game_state_create_or_open_file();
 	game_state_globals.header = game_state_malloc("header", NULL, sizeof(*game_state_globals.header));
 

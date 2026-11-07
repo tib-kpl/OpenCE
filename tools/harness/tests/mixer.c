@@ -65,7 +65,7 @@ static void voice_audio_mix(float *output, unsigned long frames)
 #include "under_test.inc"
 
 #define PI 3.14159265358979323846
-#define CHUNK 512 /* frames a mix, as SDL asks on Linux */
+#define CHUNK MIX_CHUNK_FRAMES /* maximum frames accepted by the real mixer */
 
 /* ---------- voices */
 
