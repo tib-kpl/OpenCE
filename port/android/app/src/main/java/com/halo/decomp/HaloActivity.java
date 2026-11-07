@@ -178,16 +178,20 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         Updater.start(this);
     }
 
+    private String tr(String english, String french) {
+        return "fr".equals(getResources().getConfiguration().getLocales().get(0).getLanguage()) ? french : english;
+    }
+
     /** the system's file picker, for the touch layout; no storage permission */
     public void chooseLayoutFile(boolean export, String configuration) {
         String message = export
-            ? "Choose the folder and the name of the touch layout file."
-            : "Choose a touch layout file. It replaces your buttons, the look sensitivity and the General settings.";
+            ? tr("Choose the folder and the name of the touch layout file.", "Choisissez le dossier et le nom du fichier de commandes tactiles.")
+            : tr("Choose a touch layout file. It replaces your buttons, the look sensitivity and the General settings.", "Choisissez une disposition tactile. Elle remplacera les boutons, la sensibilité tactile et les réglages généraux.");
         new AlertDialog.Builder(this)
-            .setTitle(export ? "Export the layout" : "Import a layout")
+            .setTitle(export ? tr("Export the layout", "Exporter la disposition") : tr("Import a layout", "Importer une disposition"))
             .setMessage(message)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton(export ? "Choose the place" : "Choose the file", (dialog, which) -> {
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(export ? tr("Choose the place", "Choisir le dossier") : tr("Choose the file", "Choisir le fichier"), (dialog, which) -> {
                 Intent intent = new Intent(export ? Intent.ACTION_CREATE_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.setType(export ? "text/plain" : "*/*");
@@ -199,7 +203,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                     startActivityForResult(intent, export ? EXPORT_LAYOUT : IMPORT_LAYOUT);
                 } catch (android.content.ActivityNotFoundException e) {
                     pendingLayoutExport = null;
-                    Toast.makeText(this, "This device has no file picker.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, tr("This device has no file picker.", "Aucun sélecteur de fichiers sur cet appareil."), Toast.LENGTH_LONG).show();
                 }
             })
             .show();
@@ -225,7 +229,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         runOnUiThread(() -> {
             File[] replays = replayFiles(folder);
             if (replays.length == 0) {
-                Toast.makeText(this, "There are no replays to export yet.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("There are no replays to export yet.", "Aucun enregistrement à exporter."), Toast.LENGTH_LONG).show();
                 return;
             }
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -234,7 +238,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 startActivityForResult(intent, EXPORT_REPLAYS);
             } catch (android.content.ActivityNotFoundException e) {
                 pendingReplaysFolder = null;
-                Toast.makeText(this, "This device has no folder picker.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("This device has no folder picker.", "Aucun sélecteur de dossier sur cet appareil."), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -285,9 +289,9 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 break;
             }
         }
-        String text = failed != null ? "The export stopped: " + failed
-            : copied + (copied == 1 ? " replay exported" : " replays exported")
-                + (skipped > 0 ? " (" + skipped + " already there)" : "") + ".";
+        String text = failed != null ? tr("The export stopped: ", "Export interrompu : ") + failed
+            : copied + (copied == 1 ? tr(" replay exported", " enregistrement exporté") : tr(" replays exported", " enregistrements exportés"))
+                + (skipped > 0 ? " (" + skipped + tr(" already there)", " déjà présent(s))") : "") + ".";
         report("export replays", text);
     }
 
@@ -308,7 +312,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 startActivityForResult(intent, IMPORT_REPLAYS);
             } catch (android.content.ActivityNotFoundException e) {
                 pendingImportFolder = null;
-                Toast.makeText(this, "This device has no file picker.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("This device has no file picker.", "Aucun sélecteur de fichiers sur cet appareil."), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -391,10 +395,10 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 break;
             }
         }
-        String text = failed != null ? "The import stopped: " + failed
-            : copied + (copied == 1 ? " replay imported" : " replays imported")
-                + (skipped > 0 ? " (" + skipped + " already there)" : "")
-                + (refused > 0 ? " (" + refused + (refused == 1 ? " is" : " are") + " not a replay)" : "") + ".";
+        String text = failed != null ? tr("The import stopped: ", "Import interrompu : ") + failed
+            : copied + (copied == 1 ? tr(" replay imported", " enregistrement importé") : tr(" replays imported", " enregistrements importés"))
+                + (skipped > 0 ? " (" + skipped + tr(" already there)", " déjà présent(s))") : "")
+                + (refused > 0 ? " (" + refused + tr(" invalid replay file(s))", " fichier(s) non reconnu(s))") : "") + ".";
         report("import replays", text);
     }
 
@@ -419,7 +423,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 startActivityForResult(intent, IMPORT_MODS);
             } catch (android.content.ActivityNotFoundException e) {
                 pendingModsFolder = null;
-                Toast.makeText(this, "This device has no file picker.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("This device has no file picker.", "Aucun sélecteur de fichiers sur cet appareil."), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -524,7 +528,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         List<String> copied = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         List<String> failed = new ArrayList<>();
-        runOnUiThread(() -> Toast.makeText(this, "Importing...", Toast.LENGTH_SHORT).show());
+        runOnUiThread(() -> Toast.makeText(this, tr("Importing...", "Import en cours…"), Toast.LENGTH_SHORT).show());
         for (Uri document : documents) {
             String chosen = documentName(document);
             String name = modFolderName(chosen);
@@ -553,11 +557,11 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
             }
         }
         deleteTree(staging);
-        String text = (copied.isEmpty() ? "" : "Imported " + String.join(", ", copied) + ". ")
-            + (skipped.isEmpty() ? "" : String.join(", ", skipped) + (skipped.size() == 1 ? " was" : " were")
-                + " already there (delete " + (skipped.size() == 1 ? "it" : "them") + " first to import again). ")
-            + (failed.isEmpty() ? "" : "Not imported: " + String.join("; ", failed) + ".")
-            + (copied.isEmpty() && skipped.isEmpty() && failed.isEmpty() ? "Nothing imported." : "");
+        String text = (copied.isEmpty() ? "" : tr("Imported: ", "Importé : ") + String.join(", ", copied) + ". ")
+            + (skipped.isEmpty() ? "" : tr("Already present: ", "Déjà présent : ") + String.join(", ", skipped)
+                + tr(" (delete before importing again). ", " (supprimez avant de réimporter). "))
+            + (failed.isEmpty() ? "" : tr("Not imported: ", "Non importé : ") + String.join("; ", failed) + ".")
+            + (copied.isEmpty() && skipped.isEmpty() && failed.isEmpty() ? tr("Nothing imported.", "Aucun fichier importé.") : "");
         report("import mods", text.trim());
     }
 
@@ -580,7 +584,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 startActivityForResult(intent, IMPORT_VK_DRIVERS);
             } catch (android.content.ActivityNotFoundException e) {
                 pendingDriversFolder = null;
-                Toast.makeText(this, "This device has no file picker.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("This device has no file picker.", "Aucun sélecteur de fichiers sur cet appareil."), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -599,13 +603,13 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
     }
 
     /** why an archive is not one the game can load (as host_vk_driver.c reads it), else null */
-    private static String driverArchiveProblem(File archive) {
+    private String driverArchiveProblem(File archive) {
         try (ZipFile zip = new ZipFile(archive)) {
             if (zip.size() > DRIVER_MAXIMUM_ENTRIES)
-                return "it has more than " + DRIVER_MAXIMUM_ENTRIES + " files";
+                return tr("too many files: ", "trop de fichiers : ") + DRIVER_MAXIMUM_ENTRIES;
             ZipEntry meta = zip.getEntry("meta.json");
             if (meta == null)
-                return "it has no meta.json at its top (it is not a driver archive)";
+                return tr("it has no meta.json at its top (it is not a driver archive)", "meta.json absent à la racine (archive de pilote non reconnue)");
             String library;
             try (InputStream input = zip.getInputStream(meta)) {
                 ByteArrayOutputStream text = new ByteArrayOutputStream();
@@ -613,19 +617,19 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 int size;
                 while ((size = input.read(buffer)) != -1) {
                     if (text.size() + size > 65536)
-                        return "its meta.json is too large";
+                        return tr("its meta.json is too large", "meta.json trop volumineux");
                     text.write(buffer, 0, size);
                 }
                 library = new org.json.JSONObject(new String(text.toByteArray(), StandardCharsets.UTF_8))
                     .optString("libraryName", "");
             }
             if (library.isEmpty() || library.contains("/") || library.contains("\\") || library.contains(".."))
-                return "its meta.json names no library";
+                return tr("its meta.json names no library", "bibliothèque absente ou invalide dans meta.json");
             if (zip.getEntry(library) == null)
-                return "it has no " + library;
+                return tr("missing library: ", "bibliothèque absente : ") + library;
             return null;
         } catch (Exception e) {
-            return "it is not a zip file (" + e.getMessage() + ")";
+            return tr("invalid archive (", "archive invalide (") + e.getMessage() + ")";
         }
     }
 
@@ -676,10 +680,10 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 part.delete();
             }
         }
-        String text = (copied.isEmpty() ? "" : "Imported " + String.join(", ", copied)
-                + ". Open Video Setup again and choose it as VULKAN DRIVER. ")
-            + (skipped > 0 ? skipped + (skipped == 1 ? " archive was" : " archives were") + " already there. " : "")
-            + (failed != null ? "The import stopped: " + failed : copied.isEmpty() && skipped == 0 ? "Nothing imported." : "");
+        String text = (copied.isEmpty() ? "" : tr("Imported: ", "Importé : ") + String.join(", ", copied)
+                + tr(". Open Video Setup again and choose it as VULKAN DRIVER. ", ". Rouvrez les réglages vidéo et sélectionnez le pilote Vulkan. "))
+            + (skipped > 0 ? skipped + tr(" archive(s) already present. ", " archive(s) déjà présente(s). ") : "")
+            + (failed != null ? tr("The import stopped: ", "Import interrompu : ") + failed : copied.isEmpty() && skipped == 0 ? tr("Nothing imported.", "Aucun fichier importé.") : "");
         report("import driver", text.trim());
     }
 
@@ -702,7 +706,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 startActivityForResult(intent, IMPORT_MAPS);
             } catch (android.content.ActivityNotFoundException e) {
                 pendingMapsFolder = null;
-                Toast.makeText(this, "This device has no file picker.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, tr("This device has no file picker.", "Aucun sélecteur de fichiers sur cet appareil."), Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -937,9 +941,9 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         String text = (outcome.copied.isEmpty() ? "" : "Imported " + String.join(", ", outcome.copied) + ". ")
             + (outcome.skipped.isEmpty() ? "" : String.join(", ", outcome.skipped) + (outcome.skipped.size() == 1
                 ? " was" : " were") + " already there. ")
-            + (outcome.failed.isEmpty() ? "" : "Not imported: " + String.join("; ", outcome.failed) + ".")
+            + (outcome.failed.isEmpty() ? "" : tr("Not imported: ", "Non importé : ") + String.join("; ", outcome.failed) + ".")
             + (outcome.copied.isEmpty() && outcome.skipped.isEmpty() && outcome.failed.isEmpty()
-                ? "Nothing imported." : "");
+                ? tr("Nothing imported.", "Aucun fichier importé.") : "");
         report("import maps", text.trim());
     }
 
@@ -1036,7 +1040,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 throw new IOException("the file cannot be opened");
             output.write(configuration.getBytes(StandardCharsets.UTF_8));
         }
-        runOnUiThread(() -> Toast.makeText(this, "The layout is exported.", Toast.LENGTH_SHORT).show());
+        runOnUiThread(() -> Toast.makeText(this, tr("The layout is exported.", "Disposition exportée."), Toast.LENGTH_SHORT).show());
     }
 
     private void readLayoutFile(Uri document) throws IOException {
@@ -1060,7 +1064,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
                 return;
             try {
                 touchControls.importLayout(configuration);
-                Toast.makeText(this, "The layout is imported and saved.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, tr("The layout is imported and saved.", "Disposition importée et enregistrée."), Toast.LENGTH_SHORT).show();
             } catch (IllegalArgumentException e) {
                 layoutFileError(e);
             }
@@ -1071,8 +1075,8 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         if (isFinishing() || isDestroyed())
             return;
         new AlertDialog.Builder(this)
-            .setTitle("Touch layout file")
-            .setMessage("The operation did not complete: " + error.getMessage())
+            .setTitle(tr("Touch layout file", "Fichier de commandes tactiles"))
+            .setMessage(tr("The operation did not complete: ", "Opération interrompue : ") + error.getMessage())
             .setPositiveButton("OK", null)
             .show();
     }

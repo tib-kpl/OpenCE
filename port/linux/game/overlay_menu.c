@@ -47,6 +47,7 @@ the data root (below, "the files' entries").
 #include "tag_files/tag_groups.h"
 #include "text/font_group.h"
 #include "halo_overlay_menu.h"
+#include "halo_port_french.h"
 #include "halo_ui_pointer.h"
 
 #include "../src/posix.h"
@@ -115,6 +116,44 @@ enum
 ui_widget.c's draw_string_and_hack_in_icons; the Switch's and the PS5's are
 their own) */
 #define OVERLAY_HINT L"%a-button Select   %b-button Back"
+
+static char const *overlay_localized(char const *text)
+{
+	static struct { char const *english; char const *french; } const labels[] = {
+#include "overlay_french.inc"
+	};
+	unsigned int index;
+	if (!port_french() || !text) return text;
+	for (index = 0; index < NUMBEROF(labels); index++)
+		if (!strcmp(text, labels[index].english)) return labels[index].french;
+	return text;
+}
+
+/* The narrow renderer reads bytes, so translated accents need Unicode. */
+static void overlay_unicode(char const *text, wchar_t *wide, unsigned int size)
+{
+	unsigned int count = 0;
+	if (!size) return;
+	while (text && *text && count + 1 < size)
+	{
+		unsigned char first = (unsigned char)*text++;
+		unsigned int character = first;
+		int remaining = first >= 0xF0 ? 3 : first >= 0xE0 ? 2 : first >= 0xC0 ? 1 : 0;
+		if (first >= 0x80)
+		{
+			character = first & (0x3F >> remaining);
+			while (remaining && ((unsigned char)*text & 0xC0) == 0x80)
+			{
+				character = (character << 6) | ((unsigned char)*text++ & 0x3F);
+				remaining--;
+			}
+			if (remaining || first < 0xC2 || character > 0xFFFF ||
+				(character >= 0xD800 && character <= 0xDFFF)) character = '?';
+		}
+		wide[count++] = (wchar_t)character;
+	}
+	wide[count] = 0;
+}
 
 /* what an entry is */
 enum overlay_entry_type
@@ -1291,16 +1330,18 @@ static void overlay_choose(
 		if (entry->type == _overlay_entry_toggle)
 		{
 			entry->remembered = on;
-			snprintf(status, sizeof(status), "%s: %s", entry->label, on ? "on" : "off");
+			snprintf(status, sizeof(status), "%s: %s", overlay_localized(entry->label),
+				on ? PORT_TEXT("on", "activé") : PORT_TEXT("off", "désactivé"));
 		}
 		else
 		{
-			snprintf(status, sizeof(status), "%s: done", entry->label);
+			snprintf(status, sizeof(status), PORT_TEXT("%s: done", "%s : effectué"), overlay_localized(entry->label));
 		}
 	}
 	else
 	{
-		snprintf(status, sizeof(status), "%s: %s", entry->label, why[0] ? why : "not done");
+		snprintf(status, sizeof(status), "%s: %s", overlay_localized(entry->label),
+			why[0] ? why : PORT_TEXT("not done", "échec"));
 	}
 	overlay_set_status(status);
 	error(_error_silent, "overlay menu: %s (%s)", command, status);
@@ -1332,8 +1373,10 @@ static void overlay_text(
 	real_argb_color const *color,
 	char const *text)
 {
+	wchar_t wide[512];
+	overlay_unicode(overlay_localized(text), wide, NUMBEROF(wide));
 	draw_string_set_draw_mode(font_index, NONE, justification, 0, color);
-	rasterizer_draw_string(bounds, bounds, NULL, 0, text);
+	rasterizer_draw_unicode_string(bounds, bounds, NULL, 0, wide);
 }
 
 /* a rectangle with rounded corners, of strips a unit tall at its top and
@@ -1397,9 +1440,22 @@ static void overlay_capitals(
 	char const *text)
 {
 	size_t index;
+	text = overlay_localized(text);
 
 	for (index = 0; index + 1 < size && text[index]; index++)
+	{
+		unsigned char first = (unsigned char)text[index];
+		size_t bytes = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : first >= 0xC0 ? 2 : 1;
+		if (index + bytes >= size) break;
 		capitals[index] = (char)(text[index] >= 'a' && text[index] <= 'z' ? text[index] - 'a' + 'A' : text[index]);
+		if ((unsigned char)text[index] == 0xC3 && index + 2 < size &&
+			(unsigned char)text[index + 1] >= 0xA0 && (unsigned char)text[index + 1] <= 0xBE &&
+			(unsigned char)text[index + 1] != 0xB7)
+		{
+			index++;
+			capitals[index] = (char)((unsigned char)text[index] - 0x20);
+		}
+	}
 	capitals[index] = 0;
 }
 
@@ -1416,13 +1472,15 @@ static void overlay_label(
 	rectangle2d text_bounds;
 	rectangle2d cursor_bounds;
 	short overflow;
+	wchar_t unicode[512];
+	overlay_unicode(overlay_localized(text), unicode, NUMBEROF(unicode));
 
 	draw_string_set_draw_mode(font_index, NONE, _overlay_text_left, 0, color);
 	if (chosen)
 	{
 		/* (its width, laid out in as much room as it wants) */
 		wide.x1 = (short)(wide.x0 + 4000);
-		draw_string_compute_bounds(&wide, text, &text_bounds, &cursor_bounds);
+		draw_unicode_string_compute_bounds(&wide, unicode, &text_bounds, &cursor_bounds);
 		overflow = (short)(cursor_bounds.x0 - room->x1);
 		if (overflow > 0)
 		{
@@ -1439,11 +1497,11 @@ static void overlay_label(
 				offset = overflow;
 			wide.x0 = (short)(room->x0 - offset);
 			wide.x1 = (short)(wide.x0 + 4000);
-			rasterizer_draw_string(&wide, room, NULL, 0, text);
+			rasterizer_draw_unicode_string(&wide, room, NULL, 0, unicode);
 			return;
 		}
 	}
-	rasterizer_draw_string(room, room, NULL, 0, text);
+	rasterizer_draw_unicode_string(room, room, NULL, 0, unicode);
 }
 
 /* ---------- public code */
@@ -1664,7 +1722,7 @@ void overlay_menu_draw(
 	/* the panel, down the left of the screen */
 	panel.x0 = 0;
 	panel.y0 = 0;
-	panel.x1 = (short)(width * OVERLAY_PANEL_PERCENT / 100);
+	panel.x1 = (short)(width * (port_french() ? 38 : OVERLAY_PANEL_PERCENT) / 100);
 	panel.y1 = height;
 	draw_quad(&panel, (pixel32)OVERLAY_PANEL_ALPHA << 24);
 
@@ -1849,7 +1907,8 @@ void overlay_menu_draw(
 	else
 	{
 		draw_string_set_draw_mode(small_font_index, NONE, _overlay_text_left, 0, &white);
-		draw_string_and_hack_in_icons(&bounds, NULL, NULL, 0, OVERLAY_HINT, FALSE);
+		draw_string_and_hack_in_icons(&bounds, NULL, NULL, 0,
+			PORT_TEXT(OVERLAY_HINT, L"%a-button Choisir   %b-button Retour"), FALSE);
 	}
 
 	overlay.panel_right = panel.x1;

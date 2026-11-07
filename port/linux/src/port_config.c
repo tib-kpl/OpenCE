@@ -468,6 +468,18 @@ static const struct config_setting config_settings[] =
 		"The touch controls' swipe aiming gets a controller's aim assist: the\n"
 		"aim slows over a target and follows a moving one. false: none, as a\n"
 		"mouse (the bullets' own autoaim stays)." },
+	{ "input.stick_sensitivity_horizontal", _config_real, "0.0", "HALO_STICK_SENSITIVITY_HORIZONTAL",
+		_environment_value, _platform_all,
+		"Horizontal stick sensitivity, 1 to 10. 0 keeps the saved player's\n"
+		"look sensitivity. Stored per player profile when set in the menus." },
+	{ "input.stick_sensitivity_vertical", _config_real, "0.0", "HALO_STICK_SENSITIVITY_VERTICAL",
+		_environment_value, _platform_all,
+		"Vertical stick sensitivity, 1 to 10. 0 keeps the saved player's\n"
+		"look sensitivity. Halo's stock vertical speed is half its horizontal." },
+	{ "input.stick_equal_axes", _config_boolean, "false", "HALO_STICK_EQUAL_AXES", _environment_value, _platform_all,
+		"Use the same speed scale for both stick axes: true doubles the\n"
+		"stock vertical rate. false keeps Halo's original half-speed pitch.\n"
+		"Mouse, touch swipes, gyroscope and vehicle seat limits are unchanged." },
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"How far the view turns for the mouse's movement." },
 	{ "input.playstation_kernel_driver", _config_boolean, "false", "HALO_PLAYSTATION_KERNEL_DRIVER",
@@ -3485,6 +3497,7 @@ static const char *const config_profile_names[] =
 	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
 	"controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.vote_yes", "controls.vote_no",
 	"input.mouse_sensitivity", "input.mouse_vertical_sensitivity", "input.invert_mouse", "input.mouse_aim_assist",
+	"input.stick_sensitivity_horizontal", "input.stick_sensitivity_vertical", "input.stick_equal_axes",
 	"input.gyro_aim", "input.gyro_sensitivity_horizontal", "input.gyro_sensitivity_vertical",
 	"input.gyro_invert_horizontal", "input.gyro_invert_vertical",
 };
@@ -3492,8 +3505,8 @@ static const char *const config_profile_names[] =
 
 /* (written at the top of a profile's file, the first time it has one) */
 static const char config_profile_preamble[] =
-	"# This profile's own settings: its keys (Controls Setup), its mouse's and\n"
-	"# its gyroscope's (Gyro Aim). Those not here are config.toml's.\n\n";
+	"# This profile's own settings: its keys (Controls Setup), its stick aim,\n"
+	"# its mouse and its gyroscope (Gyro Aim). Others are config.toml's.\n\n";
 
 /* the profile each local player plays with: its folder, with its
 separator ("" for none), and the settings its file sets */

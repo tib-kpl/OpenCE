@@ -3891,18 +3891,18 @@ static boolean mods_delete(void)
 	if (strcmp(mods_screen.deleting, folder))
 	{
 		strcpy(mods_screen.deleting, folder);
-		snprintf(mods_screen.why, sizeof(mods_screen.why), "Press DELETE again to delete it.");
+		snprintf(mods_screen.why, sizeof(mods_screen.why), PORT_TEXT("Press DELETE again to delete it.", "Appuyez encore sur SUPPRIMER pour confirmer."));
 		return TRUE;
 	}
 	mods_screen.deleting[0] = 0;
 	port_mods_save();
 	if (port_mods_delete(mod))
 	{
-		snprintf(mods_screen.why, sizeof(mods_screen.why), "%s deleted.", folder);
+		snprintf(mods_screen.why, sizeof(mods_screen.why), PORT_TEXT("%s deleted.", "%s supprimé."), folder);
 		platform_log("mods: %s deleted", folder);
 	}
 	else
-		snprintf(mods_screen.why, sizeof(mods_screen.why), "%s could not be deleted whole.", folder);
+		snprintf(mods_screen.why, sizeof(mods_screen.why), PORT_TEXT("%s could not be deleted whole.", "Suppression incomplète de %s."), folder);
 	mods_found_again();
 	return TRUE;
 }
@@ -3971,7 +3971,13 @@ static struct
 	/* DELETE's first press: the one it would delete at the second (its
 	name, empty for none) */
 	char deleting[NETWORK_REPLAY_NAME_SIZE];
+	long details_font;
+	short details_width;
 } theater;
+
+/* The renderer caption's actual text box, as last drawn. */
+static long renderer_caption_font;
+static short renderer_caption_width;
 
 /* the folder's replays, again when it is time, the one chosen kept; a
 replay's header read only when its name is new */
@@ -4048,6 +4054,26 @@ static short theater_row_place(struct widget_instance *row)
 
 /* text after what `text` holds, broken into the panel's lines: at the
 characters' count, at a space or a slash when there is one in the line */
+static boolean menu_text_fits(long font, short width, char const *text, size_t count, short fallback)
+{
+	static real_argb_color const white = { 1.f, 1.f, 1.f, 1.f };
+	char part[THEATER_TEXT_LENGTH];
+	wchar_t wide[THEATER_TEXT_LENGTH];
+	rectangle2d bounds;
+	rectangle2d measured, cursor;
+	if (width <= 0) return count <= (size_t)fallback;
+	if (count >= sizeof(part)) return FALSE;
+	memcpy(part, text, count);
+	part[count] = 0;
+	mods_wide_text(part, wide, NUMBEROF(wide));
+	bounds.x0 = bounds.y0 = 0;
+	bounds.x1 = 0x3FFF;
+	bounds.y1 = 480;
+	draw_string_set_draw_mode(font, NONE, 0, 0, &white);
+	draw_unicode_string_compute_bounds(&bounds, wide, &measured, &cursor);
+	return MAX(measured.x1, cursor.x0) <= width - MOD_TEXT_MARGIN;
+}
+
 static void theater_append_wrapped(char *text, size_t size, char const *more)
 {
 	size_t length = strlen(text);
@@ -4057,14 +4083,22 @@ static void theater_append_wrapped(char *text, size_t size, char const *more)
 		size_t count = strlen(more);
 		size_t cut = count;
 
-		if (count > THEATER_LINE_CHARACTERS)
+		while (cut && !menu_text_fits(theater.details_font, theater.details_width, more, cut, THEATER_LINE_CHARACTERS))
+			cut = mods_character_before(more, cut);
+		if (cut < count)
 		{
-			for (cut = THEATER_LINE_CHARACTERS; cut > 0 && more[cut] != ' ' && more[cut - 1] != '/'; cut--)
-			{
+			size_t word = cut;
+			while (word && more[word] != ' ' && more[word - 1] != '/') word = mods_character_before(more, word);
+			if (word) cut = word;
+			if (!cut) {
+				cut = 1;
+				while (((unsigned char)more[cut] & 0xC0) == 0x80) cut++;
 			}
-			if (!cut)
-				cut = THEATER_LINE_CHARACTERS;
 		}
+		/* A full panel must not leave half an accented character at its end. */
+		while (cut && cut + (length && text[length - 1] != '\n' ? 1 : 0) >= size - length)
+			cut = mods_character_before(more, cut);
+		if (!cut) break;
 		snprintf(text + length, size - length, "%s%.*s", length && text[length - 1] != '\n' ? "\n" : "", (int)cut, more);
 		length = strlen(text);
 		more += cut;
@@ -4165,11 +4199,11 @@ static void theater_update(struct widget_instance *list)
 		return;
 	if (count)
 	{
-		snprintf(line, sizeof(line), "%ld replay%s, %llu.%llu MB", count, count == 1 ? "" : "s",
+		snprintf(line, sizeof(line), PORT_TEXT("%ld replay%s, %llu.%llu MB", "%ld enregistrement%s, %llu,%llu Mo"), count, count == 1 ? "" : "s",
 			bytes / (1024 * 1024), bytes % (1024 * 1024) * 10 / (1024 * 1024));
 	}
 	else
-		snprintf(line, sizeof(line), "No replays yet");
+		snprintf(line, sizeof(line), PORT_TEXT("No replays yet", "Aucun enregistrement"));
 	theater_append_wrapped(text, sizeof(text), line);
 	theater_append_wrapped(text, sizeof(text), " ");
 	if (theater.count)
@@ -4194,23 +4228,23 @@ static void theater_update(struct widget_instance *list)
 		theater_append_wrapped(text, sizeof(text), " ");
 	}
 	theater_append_wrapped(text, sizeof(text), recording ?
-		"The network games you play are recorded, from the next one on." :
-		"RECORD: OFF. Turn it on to record the network games you play, from the next one on.");
+		PORT_TEXT("The network games you play are recorded, from the next one on.", "Les prochaines parties réseau seront enregistrées.") :
+		PORT_TEXT("RECORD: OFF. Turn it on to record the network games you play, from the next one on.", "Enregistrement désactivé. Activez-le pour enregistrer les prochaines parties réseau."));
 	theater_append_wrapped(text, sizeof(text), " ");
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
-	theater_append_wrapped(text, sizeof(text), "IMPORT adds replays you choose. EXPORT copies them all to a folder you choose.");
+	theater_append_wrapped(text, sizeof(text), PORT_TEXT("IMPORT adds replays you choose. EXPORT copies them all to a folder you choose.", "IMPORTER ajoute des enregistrements. EXPORTER les copie dans le dossier choisi."));
 #else
 #ifdef LINK_PAGE
 	if (network_replay_page_address()[0])
 	{
-		theater_append_wrapped(text, sizeof(text), "To download them or put others here, open on this network:");
+		theater_append_wrapped(text, sizeof(text), PORT_TEXT("To download them or put others here, open on this network:", "Pour les transférer, ouvrez cette adresse sur le même réseau :"));
 		theater_append_wrapped(text, sizeof(text), network_replay_page_address());
 	}
 	else
 #endif
 	{
 		/* (where they are, when there is no page to say: room in the panel) */
-		theater_append_wrapped(text, sizeof(text), "They are in:");
+		theater_append_wrapped(text, sizeof(text), PORT_TEXT("They are in:", "Dossier :"));
 		network_replay_folder(line, sizeof(line));
 		theater_append_wrapped(text, sizeof(text), line);
 	}
@@ -4235,18 +4269,18 @@ static boolean theater_delete(void)
 		strcpy(theater.deleting, name);
 		/* (the consoles have no DELETE: their west button's name) */
 #if defined(HALO_SWITCH)
-		snprintf(theater.why, sizeof(theater.why), "Press Y again to delete it.");
+		snprintf(theater.why, sizeof(theater.why), PORT_TEXT("Press Y again to delete it.", "Appuyez encore sur Y pour supprimer."));
 #elif defined(HALO_PS5)
-		snprintf(theater.why, sizeof(theater.why), "Press SQUARE again to delete it.");
+		snprintf(theater.why, sizeof(theater.why), PORT_TEXT("Press SQUARE again to delete it.", "Appuyez encore sur CARRÉ pour supprimer."));
 #else
-		snprintf(theater.why, sizeof(theater.why), "Press DELETE (or X) again to delete it.");
+		snprintf(theater.why, sizeof(theater.why), PORT_TEXT("Press DELETE (or X) again to delete it.", "Appuyez encore sur SUPPRIMER ou X pour supprimer."));
 #endif
 		return TRUE;
 	}
 	theater.deleting[0] = 0;
 	if (network_replay_delete(name))
 	{
-		snprintf(theater.why, sizeof(theater.why), "Deleted.");
+		snprintf(theater.why, sizeof(theater.why), PORT_TEXT("Deleted.", "Supprimé."));
 		platform_log("theater: %s deleted", name);
 		/* (the list again at once: the next one is chosen) */
 		theater.listed = FALSE;
@@ -4254,7 +4288,7 @@ static boolean theater_delete(void)
 		theater_refresh();
 	}
 	else
-		snprintf(theater.why, sizeof(theater.why), "It could not be deleted.");
+		snprintf(theater.why, sizeof(theater.why), PORT_TEXT("It could not be deleted.", "Suppression impossible."));
 	return TRUE;
 }
 
@@ -8528,6 +8562,18 @@ void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d c
 		credits_screen.width = (short)(bounds->x1 - bounds->x0);
 		return;
 	}
+	if (widget->name && !strcmp(widget->name, "renderer"))
+	{
+		renderer_caption_font = draw_string_get_font();
+		renderer_caption_width = (short)(bounds->x1 - bounds->x0);
+		return;
+	}
+	if (widget->name && !strcmp(widget->name, "theater_details_text"))
+	{
+		theater.details_font = draw_string_get_font();
+		theater.details_width = (short)(bounds->x1 - bounds->x0);
+		return;
+	}
 	/* (the Mods screen's texts: the fonts and widths their lines are
 	measured in, mods_text_fits) */
 	for (row = 0; widget->name && row < NUMBER_OF_MOD_TEXT_BOXES; row++)
@@ -10188,9 +10234,26 @@ static void renderer_text_update(struct widget_instance *text_box)
 {
 	char const *description = d3d8_renderer_description();
 	wchar_t text[ROW_TEXT_LENGTH];
+	char fitted[256] = "";
 
-	if (!description || !ascii_to_wide(description, text, sizeof(text)))
-		return;
+	if (!description) return;
+	while (*description && strlen(fitted) + 4 < sizeof(fitted))
+	{
+		char part[128];
+		size_t length = strcspn(description, "\r\n");
+		size_t kept = MIN(length, sizeof(part) - 1);
+		memcpy(part, description, kept);
+		part[kept] = 0;
+		while (kept && !menu_text_fits(renderer_caption_font, renderer_caption_width, part, strlen(part), 24))
+		{
+			kept = mods_character_before(description, kept);
+			snprintf(part, sizeof(part), "%.*s...", (int)kept, description);
+		}
+		snprintf(fitted + strlen(fitted), sizeof(fitted) - strlen(fitted), "%s%s", fitted[0] ? "\r" : "", part);
+		description += length;
+		while (*description == '\r' || *description == '\n') description++;
+	}
+	mods_wide_text(fitted, text, NUMBEROF(text));
 	text_set(text_box, text);
 }
 

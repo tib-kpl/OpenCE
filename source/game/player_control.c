@@ -181,6 +181,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "stick_look.h" /* port: port/linux/game/stick_look.c */
 #define limit2d limit2d_inline
 #include "game/game.h"
 #undef limit2d
@@ -1113,11 +1114,16 @@ static void get_local_player_input_blob(
 			{
 				struct unit_datum *unit = unit_get(player->unit_index);
 
+				/* port: per-axis stick sensitivity, read live for this local profile. */
+				real yaw_degrees = player_look_yaw_rate[local_player_index];
+				real pitch_degrees = player_look_pitch_rate[local_player_index];
+
+				port_stick_look_rates(local_player_index, &yaw_degrees, &pitch_degrees);
 				look_yaw_rate = DEGREES_TO_RADIANS(
-					player_look_yaw_rate[local_player_index]) *
+					yaw_degrees) *
 					(1.f / TICKS_PER_SECOND);
 				look_pitch_rate = DEGREES_TO_RADIANS(
-					player_look_pitch_rate[local_player_index]) *
+					pitch_degrees) *
 					(1.f / TICKS_PER_SECOND);
 				if (unit->object.parent_object_index != NONE &&
 					unit->unit.parent_seat_index != NONE)

@@ -55,3 +55,28 @@ configuration ; l'application habituelle et ses sauvegardes restent intactes.
 
 Le retrait physique d'une manette n'est pas vérifié sur ces consoles à manette
 intégrée. Les captures et logs de test restent locaux dans `dist/integration/`.
+
+## Visée et textes français
+
+Dans les options du jeu, **Manettes > Visée au stick** propose maintenant une
+sensibilité horizontale et verticale indépendantes (1–10, ou PROFIL pour
+hériter de la sensibilité commune). Halo applique d'origine une vitesse
+verticale deux fois plus faible. **Vitesse verticale : Équilibrée** donne la
+même vitesse aux deux axes à niveau égal ; le mode Halo CE reste le défaut.
+Les choix sont enregistrés par profil et s'appliquent immédiatement, sans
+modifier le tactile, la souris, le gyroscope ni les limites des tourelles.
+
+La passe française couvre les textes des nouveaux menus, de l'overlay,
+du cinéma et des commandes tactiles. Les titres Cinéma et Jouabilité ont
+leurs images françaises. Les listes vidéo et l'aide des dispositions ont
+des espacements corrigés ; le panneau cinéma mesure la largeur réelle des
+lettres, conserve les accents et coupe les lignes aux mots. Le nom du pilote
+au menu principal est abrégé quand sa largeur dépasse l'espace disponible.
+
+Validation : 69 tests ciblés réussis (visée des quatre profils, Unicode,
+retours à la ligne, replays, menus, images et réaffectations manette), tests Java des contrôles réussis,
+42 XML traduits sans texte manquant. Sur l'AYN Thor, l'APK isolée démarre en
+Vulkan ; le menu X/Y et ses aides sont lisibles, et l'activation du mode
+équilibré est confirmée dans le fichier du profil. Le panneau cinéma vide et
+le nom du pilote ont également été contrôlés. Le ressenti de visée avec le
+stick physique et une lecture de replay complète restent à vérifier.

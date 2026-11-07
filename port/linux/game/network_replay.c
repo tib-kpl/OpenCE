@@ -35,6 +35,7 @@ as a recording starts).
 */
 
 #include "cseries.h"
+#include "halo_port_french.h"
 #include "cseries/errors.h"
 #include "game/game.h"
 #include "networking/network_game_globals.h"
@@ -623,7 +624,7 @@ boolean network_replay_info(
 		fclose(file);
 	if (read < 216 || memcmp(header, REPLAY_MAGIC, 8))
 	{
-		snprintf(info->why, sizeof(info->why), "Not a replay.");
+		snprintf(info->why, sizeof(info->why), PORT_TEXT("Not a replay.", "Ce fichier n’est pas un enregistrement."));
 		return FALSE;
 	}
 	info->valid = TRUE;
@@ -669,12 +670,12 @@ boolean network_replay_info(
 	}
 	if (format < 2 || header_size < 216)
 	{
-		snprintf(info->why, sizeof(info->why), "Recorded before replays could be played back: it cannot be watched.");
+		snprintf(info->why, sizeof(info->why), PORT_TEXT("Recorded before replays could be played back: it cannot be watched.", "Cet ancien format ne permet pas la lecture."));
 		return FALSE;
 	}
 	if (!network_replay_network_version_playable(network_version))
 	{
-		snprintf(info->why, sizeof(info->why), "Recorded by a build of network version %lu: this one plays %d.",
+		snprintf(info->why, sizeof(info->why), PORT_TEXT("Recorded by a build of network version %lu: this one plays %d.", "Version réseau %lu ; cette version du jeu lit la %d."),
 			network_version, HALO_PORT_NETWORK_VERSION);
 		return FALSE;
 	}
@@ -697,17 +698,17 @@ void network_replay_info_text(
 	{
 		if (info->seconds)
 		{
-			snprintf(text + strlen(text), (size_t)size - strlen(text), "\n%ld:%02ld long", info->seconds / 60,
+			snprintf(text + strlen(text), (size_t)size - strlen(text), PORT_TEXT("\n%ld:%02ld long", "\nDurée : %ld:%02ld"), info->seconds / 60,
 				info->seconds % 60);
 		}
 		if (info->server[0])
-			snprintf(text + strlen(text), (size_t)size - strlen(text), "\nServer: %s", info->server);
+			snprintf(text + strlen(text), (size_t)size - strlen(text), PORT_TEXT("\nServer: %s", "\nServeur : %s"), info->server);
 		if (info->player[0])
-			snprintf(text + strlen(text), (size_t)size - strlen(text), "\n%s by %s", info->client ? "Played" : "Hosted", info->player);
+			snprintf(text + strlen(text), (size_t)size - strlen(text), PORT_TEXT("\n%s by %s", "\n%s par %s"), info->client ? PORT_TEXT("Played", "Joué") : PORT_TEXT("Hosted", "Hébergé"), info->player);
 		else
-			snprintf(text + strlen(text), (size_t)size - strlen(text), "\nRecorded by the server");
+			snprintf(text + strlen(text), (size_t)size - strlen(text), PORT_TEXT("\nRecorded by the server", "\nEnregistré par le serveur"));
 	}
-	snprintf(text + strlen(text), (size_t)size - strlen(text), "\n%llu KB", info->bytes / 1024);
+	snprintf(text + strlen(text), (size_t)size - strlen(text), PORT_TEXT("\n%llu KB", "\n%llu Ko"), info->bytes / 1024);
 	if (info->why[0])
 		snprintf(text + strlen(text), (size_t)size - strlen(text), "\n%s", info->why);
 }

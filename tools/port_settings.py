@@ -867,6 +867,29 @@ for _category in [("BUTTON REMAPPING", "controller_remapping",
     if not any(row[1] == _category[1] for row in SCREENS["gamepad_setup"]["categories"]):
         SCREENS["gamepad_setup"]["categories"].append(_category)
 
+# Keep the parent screen's row count stable: the old shared sensitivity
+# opens a dedicated stick screen, distinct from mouse and gyroscope input.
+_sensitivity = next(row for row in _gamepads["rows"] if row[1] == "profile.look_sensitivity")
+_gamepads["rows"].remove(_sensitivity)
+_gamepads["categories"].insert(1, ("STICK AIM", "gamepad_setup/stick_aim",
+    "Set each stick look axis separately.\nChoose Halo's original or equal axis speeds."))
+_stick_levels = [("PROFILE", "0")] + [(str(step), str(step)) for step in range(1, 11)]
+SCREENS["gamepad_setup/stick_aim"] = {
+    "screen": "stick_aim_screen", "header": _gamepads["header"], "spacing": 30, "save_on_leave": True,
+    "rows": [
+        ("PROFILE SENSITIVITY:", "profile.look_sensitivity", _sensitivity[2],
+         "The saved profile's shared sensitivity.\nPROFILE on either axis inherits this value.", None),
+        ("HORIZONTAL SENSITIVITY:", "input.stick_sensitivity_horizontal", _stick_levels,
+         "Right stick: speed when looking left and right.\nPROFILE uses the saved sensitivity above.", None),
+        ("VERTICAL SENSITIVITY:", "input.stick_sensitivity_vertical", _stick_levels,
+         "Right stick: speed when looking up and down.\nPROFILE uses the saved sensitivity above.", None),
+        ("STICK SPEED MODEL:", "input.stick_equal_axes", [("HALO CE", "false"), ("EQUAL AXES", "true")],
+         "Halo CE: vertical is half as fast. Equal axes:\nthe same level gives both axes the same speed.", None),
+    ],
+}
+SCREENS["video_settings"]["spacing"] = 28
+SCREENS["gamepad_setup/layout"].update({"help_height": 34, "help_font": "ui\\small_ui"})
+
 def attributes(pairs: list) -> str:
     return "".join(f" {key}={quoteattr(str(value))}" for key, value in pairs if value is not None)
 
@@ -917,7 +940,7 @@ def _screen(folder: str, spec: dict, rows: list, list_inputs: list, list_handler
     lines += _widget(f"{base}/help", [("type", "text"), ("controller", 1), ("left", 68),
                                       ("top", spec.get("help_top", 350)), ("width", 482),
                                       ("height", spec.get("help_height", 60)), ("string_list", None if spec.get("dynamic_help") else f"{base}/help_strings"),
-                                      ("font", "ui\\large_ui"), ("color", "#FFFFFFFF")], [])
+                                      ("font", spec.get("help_font", "ui\\large_ui")), ("color", "#FFFFFFFF")], [])
     children = [f'<data input="{name}"/>' for name in list_inputs] + list_handlers
     # (each row: its widget, platform, and the place it is in, else the next)
     for index, (row, platform, *place) in enumerate(rows):

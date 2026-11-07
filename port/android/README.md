@@ -257,6 +257,16 @@ launcher entry also opens this panel before starting the game.
 The graphics choices are saved for the next game launch. The data page opens
 the existing Xbox disc importer, including European discs and French maps.
 
+In the game's Settings > Gamepads > Stick Aim (French: Paramètres > Manettes >
+Visée au stick), horizontal and vertical sensitivities can be set independently
+on Halo's 1–10 scale. PROFILE inherits the profile's shared sensitivity. The
+speed model HALO CE retains the original vertical rate, half the horizontal
+rate; EQUAL AXES makes matching X/Y values equally fast. These choices apply
+immediately and are saved for each local profile. They do not change touch,
+mouse, gyroscope or vehicle turret sensitivity. Their configuration keys are
+`input.stick_sensitivity_horizontal`, `input.stick_sensitivity_vertical` and
+`input.stick_equal_axes`; see the Linux settings table for defaults.
+
 The settings are in `config.toml` in the data folder of the app. To change
 them:
 

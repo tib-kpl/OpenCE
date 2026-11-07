@@ -323,6 +323,12 @@ def main():
         if name not in table or (args.only and args.only not in name):
             continue
         svg = path.read_text(encoding="utf-8")
+        # Port title sources hold the backdrop alone; ce_menus adds their
+        # letters during rendering. Use an existing header's letter layout
+        # here so these titles also get a translated picture.
+        if not TEXT_GROUP.search(svg) and name.startswith("header_"):
+            svg = (MENUS / "svg/shell/main_menu/settings_select/player_setup/"
+                   "player_profile_edit/controller_edit/header_profile_controller_setting.svg").read_text(encoding="utf-8")
         if not TEXT_GROUP.search(svg):
             continue
         french, scale = render_svg(typeface, svg, table[name], path.name)

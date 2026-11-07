@@ -6,7 +6,7 @@
 		<on event="back" back="true"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/options_menu"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/note_0" x="54" y="373" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/note_0" x="54" y="353" platform="android"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings" controller="1" left="35" top="11" width="605" height="59" bitmap="main_menu/settings_select/player_setup/player_profile_edit/video_settings/header_profile_video_settings">
 	</widget>
@@ -18,37 +18,37 @@
 		<data input="port settings help"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_mode" x="54" y="73" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_renderer" x="54" y="73" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution" x="54" y="103" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_window_size" x="54" y="103" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vk_driver" x="54" y="103" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_scaling" x="54" y="133" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution" x="54" y="101" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_window_size" x="54" y="101" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vk_driver" x="54" y="101" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_scaling" x="54" y="129" platform="desktop android"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_scaling" x="54" y="73" platform="switch ps5 web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_limit_android" x="54" y="163" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="163" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="193" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="103" platform="switch ps5 web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps" x="54" y="193" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps" x="54" y="133" platform="web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps_android" x="54" y="223" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="223" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="253" platform="android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="133" platform="switch ps5"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="163" platform="web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_direct_camera" x="54" y="253" platform="desktop"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_direct_camera" x="54" y="193" platform="web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_limit" x="54" y="163" platform="switch"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_dynamic_resolution" x="54" y="193" platform="switch"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="283" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="223" platform="switch web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="163" platform="ps5"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="313" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="253" platform="switch web"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="193" platform="ps5"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_performance" x="54" y="283" platform="switch"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="343" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="313" platform="switch"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="223" platform="ps5"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="283" platform="web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_limit_android" x="54" y="157" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="157" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="185" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_vsync" x="54" y="101" platform="switch ps5 web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps" x="54" y="185" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps" x="54" y="129" platform="web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_max_fps_android" x="54" y="213" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="213" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="241" platform="android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="129" platform="switch ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_interpolation" x="54" y="157" platform="web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_direct_camera" x="54" y="241" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_direct_camera" x="54" y="185" platform="web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_resolution_limit" x="54" y="157" platform="switch"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_dynamic_resolution" x="54" y="185" platform="switch"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="269" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="213" platform="switch web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_graphics" x="54" y="157" platform="ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="297" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="241" platform="switch web"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_fov_viewmodels" x="54" y="185" platform="ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_performance" x="54" y="269" platform="switch"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="325" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="297" platform="switch"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="213" platform="ps5"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_extra_effects" x="54" y="269" platform="web"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">

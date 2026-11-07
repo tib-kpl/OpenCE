@@ -92,6 +92,7 @@ the way put back (playback_seek_chase); back, once it is let go.
 */
 
 #include "cseries.h"
+#include "halo_port_french.h"
 #include "cseries/errors.h"
 #include "game/game.h"
 #include "game/players.h"
@@ -1038,14 +1039,14 @@ boolean network_replay_watch(
 	file = platform_fopen_host(path, "rb");
 	if (!file)
 	{
-		snprintf(why, (size_t)why_size, "The replay cannot be opened.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("The replay cannot be opened.", "Impossible d’ouvrir l’enregistrement."));
 		return FALSE;
 	}
 	if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) <= 0 || size > REPLAY_MAXIMUM_FILE_SIZE ||
 		fseek(file, 0, SEEK_SET) != 0 || (size >= 32 && fread(start, sizeof(start), 1, file) != 1))
 	{
 		fclose(file);
-		snprintf(why, (size_t)why_size, "The replay cannot be read.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("The replay cannot be read.", "Impossible de lire l’enregistrement."));
 		return FALSE;
 	}
 	format = size >= 32 ? replay_get_long(start + 8) : 0;
@@ -1055,19 +1056,19 @@ boolean network_replay_watch(
 		header_size + REPLAY_RECORD_HEADER_SIZE > (unsigned long)size)
 	{
 		fclose(file);
-		snprintf(why, (size_t)why_size, "This is not a replay.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("This is not a replay.", "Ce fichier n’est pas un enregistrement."));
 		return FALSE;
 	}
 	if (format < REPLAY_PLAYABLE_FORMAT)
 	{
 		fclose(file);
-		snprintf(why, (size_t)why_size, "This replay was recorded by a build that could not play it back.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("This replay was recorded by a build that could not play it back.", "Cet ancien format ne permet pas la lecture."));
 		return FALSE;
 	}
 	if (!network_replay_network_version_playable(network_version))
 	{
 		fclose(file);
-		snprintf(why, (size_t)why_size, "This replay is of network version %lu; this build plays %d.",
+		snprintf(why, (size_t)why_size, PORT_TEXT("This replay is of network version %lu; this build plays %d.", "Version réseau %lu ; cette version du jeu lit la %d."),
 			network_version, HALO_PORT_NETWORK_VERSION);
 		return FALSE;
 	}
@@ -1079,7 +1080,7 @@ boolean network_replay_watch(
 		fclose(file);
 		if (header)
 			free(header);
-		snprintf(why, (size_t)why_size, "There is not memory enough to play this replay.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("There is not memory enough to play this replay.", "Mémoire insuffisante pour cet enregistrement."));
 		return FALSE;
 	}
 	csmemcpy(header, start, sizeof(start));
@@ -1094,10 +1095,10 @@ boolean network_replay_watch(
 	{
 		free(header);
 		if (loaded == REPLAY_LOAD_NO_MEMORY)
-			snprintf(why, (size_t)why_size, "There is not memory enough to play this replay (%lu MB read).",
+			snprintf(why, (size_t)why_size, PORT_TEXT("There is not memory enough to play this replay (%lu MB read).", "Mémoire insuffisante (%lu Mo lus)."),
 				(unsigned long)playback.size >> 20);
 		else
-			snprintf(why, (size_t)why_size, "The replay cannot be read.");
+			snprintf(why, (size_t)why_size, PORT_TEXT("The replay cannot be read.", "Impossible de lire l’enregistrement."));
 		playback_free();
 		return FALSE;
 	}
@@ -1107,7 +1108,7 @@ boolean network_replay_watch(
 	if (!record || record[0] != _network_replay_game || record_size != sizeof(game))
 	{
 		free(header);
-		snprintf(why, (size_t)why_size, "This replay has no game to play.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("This replay has no game to play.", "Cet enregistrement ne contient aucune partie."));
 		playback_free();
 		return FALSE;
 	}
@@ -1124,7 +1125,7 @@ boolean network_replay_watch(
 	dispose_global_network_game_client();
 	if (!create_global_network_game_client() || !network_game_client_port_replay_begin(&game))
 	{
-		snprintf(why, (size_t)why_size, "The replay's game cannot be set up.");
+		snprintf(why, (size_t)why_size, PORT_TEXT("The replay's game cannot be set up.", "Impossible de préparer la partie enregistrée."));
 		dispose_global_network_game_client();
 		playback.setting_up = FALSE;
 		playback_free();
@@ -3461,6 +3462,21 @@ static long playback_font(
 	return font_index != NONE ? font_index : hud_get_font_index();
 }
 
+static wchar_t const *playback_words(wchar_t const *text)
+{
+	static struct { wchar_t const *english; wchar_t const *french; } const words[] = {
+#include "replay_french.inc"
+	};
+	unsigned int index, at;
+	if (!port_french()) return text;
+	for (index = 0; index < NUMBEROF(words); index++)
+	{
+		for (at = 0; text[at] && text[at] == words[index].english[at]; at++) {}
+		if (!text[at] && !words[index].english[at]) return words[index].french;
+	}
+	return text;
+}
+
 /* at the top, who is watched, the view and the speed; along the bottom
 edge, on a dark bar, the buttons, with the controller's pictures of them
 (the game's prompts' %a-button and so on: ui_widget.c's
@@ -3563,6 +3579,7 @@ static short playback_draw_hint_text(
 {
 	real_argb_color color = *global_real_argb_white;
 	rectangle2d bounds = *line;
+	text = playback_words(text);
 
 	color.alpha = visible ? 1.0f : 0.0f;
 	draw_string_set_draw_mode(font_index, NONE, 0, 0, &color);
@@ -3624,7 +3641,7 @@ static short playback_draw_hint_line(
 			x = playback_draw_hint_text(font_index, line, x, L"/", visible);
 			x = playback_draw_hint_button(font_index, line, x, middle, hints[index].buttons[1], visible);
 		}
-		usnprintf(action, NUMBEROF(action) - 1, L": %s", hints[index].action);
+		usnprintf(action, NUMBEROF(action) - 1, L": %s", playback_words(hints[index].action));
 		action[NUMBEROF(action) - 1] = 0;
 		x = playback_draw_hint_text(font_index, line, x, action, visible);
 	}
@@ -3835,7 +3852,7 @@ static void playback_draw_touch_hints(
 		text.y0 = (short)(box.y0 + (REPLAY_TOUCH_HEIGHT - height) / 2);
 		text.y1 = (short)(text.y0 + height + 4);
 		draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
-		rasterizer_draw_unicode_string(&text, NULL, NULL, 0, hints[index].action);
+		rasterizer_draw_unicode_string(&text, NULL, NULL, 0, playback_words(hints[index].action));
 		target[0] = (int)((box.x0 - viewport.x0) * 10000L / screen_width);
 		target[1] = (int)((box.y0 - viewport.y0) * 10000L / screen_height);
 		target[2] = (int)((box.x1 - viewport.x0) * 10000L / screen_width);
@@ -3929,7 +3946,7 @@ static void playback_draw_pause_menu(
 	bounds.y0 = (short)((window.y0 + window.y1 - height) / 2);
 	bounds.y1 = (short)(bounds.y0 + height + 4);
 	draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
-	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, L"PAUSED");
+	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, playback_words(L"PAUSED"));
 	playback_draw_hints(font_index, hints, NUMBEROF(hints), NULL, 0);
 }
 
@@ -4027,7 +4044,7 @@ void network_replay_playback_draw(
 	if (playback.skip_tick != NONE)
 		speed[0] = 0;
 	else if (playback.speed == 0)
-		usnprintf(speed, NUMBEROF(speed) - 1, L"PAUSED");
+		usnprintf(speed, NUMBEROF(speed) - 1, playback_words(L"PAUSED"));
 	else if (playback.speed == REPLAY_NORMAL_SPEED)
 		speed[0] = 0;
 	else if (replay_speeds[playback.speed] < 1.0f)
@@ -4036,7 +4053,7 @@ void network_replay_playback_draw(
 		usnprintf(speed, NUMBEROF(speed) - 1, L"%dx", (int)replay_speeds[playback.speed]);
 	speed[NUMBEROF(speed) - 1] = 0;
 	if (playback.ended)
-		usnprintf(text, NUMBEROF(text) - 1, L"REPLAY OVER");
+		usnprintf(text, NUMBEROF(text) - 1, playback_words(L"REPLAY OVER"));
 	else
 	{
 		/* (a client's recording's other player through their eyes: their
@@ -4049,8 +4066,8 @@ void network_replay_playback_draw(
 		boolean tracking = playback.view == _replay_view_free && playback.free_tracking && !playback.free_placing;
 
 		usnprintf(text, NUMBEROF(text) - 1, L"%.12s   %s   %s",
-			(playback.view == _replay_view_free && !tracking) || !player ? L"REPLAY" : player->name,
-			smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view], speed);
+			(playback.view == _replay_view_free && !tracking) || !player ? playback_words(L"REPLAY") : player->name,
+			playback_words(smoothed ? L"EYES (SMOOTHED)" : tracking ? L"FREE CAMERA (TRACKING)" : view_names[playback.view]), speed);
 	}
 	text[NUMBEROF(text) - 1] = 0;
 	font = font_definition_get(font_index);
