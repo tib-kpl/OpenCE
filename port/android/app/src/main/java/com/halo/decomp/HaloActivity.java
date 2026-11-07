@@ -6,6 +6,7 @@ import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.ContentResolver;
 import android.content.Intent;
+import android.hardware.input.InputManager;
 import android.database.Cursor;
 import android.graphics.Insets;
 import android.net.Uri;
@@ -17,6 +18,8 @@ import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.provider.DocumentsContract;
 import android.view.Display;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.view.Gravity;
@@ -50,7 +53,7 @@ import org.libsdl.app.SDLActivity;
  * The game: SDL3's activity, running libmain.so (port/android/host), which
  * loads the game image from the APK's assets.
  */
-public class HaloActivity extends SDLActivity {
+public class HaloActivity extends SDLActivity implements InputManager.InputDeviceListener {
     private static final int PR_SET_DUMPABLE = 4; // <linux/prctl.h>
 
     /**
@@ -81,6 +84,10 @@ public class HaloActivity extends SDLActivity {
     private volatile int[] gestureInsets = new int[] { 0, 0, 0, 0 };
     /** the on-screen touch controls, over SDL's surface */
     private TouchControls touchControls;
+    private ImageView settingsGear;
+    private InputManager settingsInput;
+    private AndroidSettingsShortcut settingsShortcut;
+    private boolean settingsOpening;
     private static final int EXPORT_LAYOUT = 401, IMPORT_LAYOUT = 402, EXPORT_REPLAYS = 403, IMPORT_REPLAYS = 404,
         IMPORT_MODS = 405, IMPORT_VK_DRIVERS = 406, IMPORT_MAPS = 407;
     private String pendingLayoutExport;
@@ -1072,13 +1079,12 @@ public class HaloActivity extends SDLActivity {
 
     // ---------- the graphics gear
 
-    /**
-     * A small, faint gear at the top right, over the game at any time: it opens GraphicsActivity (OpenGL ES or
-     * Vulkan, the Vulkan driver, a driver to import), whose change applies when the game is started again.
-     * A touch on the gear only; the rest of the screen is the game's.
-     */
+    /** Touch-only access; a connected controller opens the same panel with Start + Select. */
     private void addGraphicsGear() {
         ImageView gear = new ImageView(this);
+        settingsGear = gear;
+        settingsShortcut = new AndroidSettingsShortcut(this::openAndroidSettings, event -> super.dispatchKeyEvent(event));
+        settingsInput = (InputManager)getSystemService(Context.INPUT_SERVICE);
         int size = (int) (44 * getResources().getDisplayMetrics().density);
         int margin = (int) (6 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.END);
@@ -1088,10 +1094,39 @@ public class HaloActivity extends SDLActivity {
         gear.setScaleType(ImageView.ScaleType.FIT_CENTER);
         gear.setPadding(size / 6, size / 6, size / 6, size / 6);
         gear.setAlpha(0.3f);
-        gear.setContentDescription("Graphics");
-        gear.setOnClickListener(v -> startActivity(new Intent(this, GraphicsActivity.class)
-            .putExtra(GraphicsActivity.EXTRA_FROM_GAME, true)));
+        gear.setContentDescription("fr".equals(getResources().getConfiguration().getLocales().get(0).getLanguage())
+            ? "Paramètres Android" : "Android settings");
+        gear.setOnClickListener(v -> openAndroidSettings());
         addContentView(gear, params);
+        if (settingsInput != null) settingsInput.registerInputDeviceListener(this, handler);
+        updateSettingsAccess();
+    }
+
+    private void openAndroidSettings() {
+        if (settingsOpening || isFinishing() || isDestroyed()) return;
+        settingsOpening = true;
+        startActivity(new Intent(this, GraphicsActivity.class).putExtra(GraphicsActivity.EXTRA_FROM_GAME, true));
+    }
+
+    private void updateSettingsAccess() {
+        boolean controller = false;
+        for (int id : InputDevice.getDeviceIds())
+            if (TouchControls.isController(InputDevice.getDevice(id))) { controller = true; break; }
+        if (settingsGear != null) settingsGear.setVisibility(controller ? View.GONE : View.VISIBLE);
+    }
+
+    @Override public void onInputDeviceAdded(int id) { updateSettingsAccess(); }
+    @Override public void onInputDeviceChanged(int id) {
+        if (settingsShortcut != null) settingsShortcut.disconnect(id);
+        updateSettingsAccess();
+    }
+    @Override public void onInputDeviceRemoved(int id) {
+        if (settingsShortcut != null) settingsShortcut.disconnect(id);
+        updateSettingsAccess();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        return (settingsShortcut != null && settingsShortcut.key(event)) || super.dispatchKeyEvent(event);
     }
 
     // ---------- full screen
@@ -1159,6 +1194,8 @@ public class HaloActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        settingsOpening = false;
+        updateSettingsAccess();
         hideSystemUiSoon();
         if (touchControls != null && getWindow().getDecorView().hasWindowFocus())
             touchControls.startDeviceInput();
@@ -1166,6 +1203,7 @@ public class HaloActivity extends SDLActivity {
 
     @Override
     protected void onPause() {
+        if (settingsShortcut != null) settingsShortcut.reset();
         if (touchControls != null)
             touchControls.stopDeviceInput();
         super.onPause();
@@ -1173,6 +1211,7 @@ public class HaloActivity extends SDLActivity {
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
+        if (!hasFocus && settingsShortcut != null) settingsShortcut.reset();
         if (touchControls != null) {
             if (hasFocus)
                 touchControls.startDeviceInput();
@@ -1193,6 +1232,8 @@ public class HaloActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
+        if (settingsShortcut != null) settingsShortcut.reset();
+        if (settingsInput != null) settingsInput.unregisterInputDeviceListener(this);
         handler.removeCallbacks(hideSystemBars);
         if (touchControls != null)
             touchControls.stopDeviceInput();

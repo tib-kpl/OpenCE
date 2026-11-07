@@ -961,6 +961,10 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     # config.toml (port/android/host/host_main.c)
     staged_brokers = assets_dir / "brokers.txt"
     n.build(outputs=staged_brokers, rule="android_copy", inputs=Path("port/assets/network/brokers.txt"))
+    settings_font = assets_dir / "fonts" / "Overpass-750.ttf"
+    settings_font_license = assets_dir / "fonts" / "Overpass-OFL.txt"
+    n.build(outputs=settings_font, rule="android_copy_into", inputs=Path("port/assets/fonts/Overpass-750.ttf"))
+    n.build(outputs=settings_font_license, rule="android_copy_into", inputs=Path("port/assets/fonts/Overpass-OFL.txt"))
     # the Vulkan probe's shader compiler, its shaders and, only when asked
     # for, the validation layer (a debuggable app's loader finds a layer in
     # the app's own native library folder)
@@ -994,10 +998,17 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     if not stamp.exists() or stamp.read_text() != wanted:
         stamp.write_text(wanted)
     staged_all = [libmain, staged_sdl, staged_image, staged_relocations, staged_vk_image, staged_vk_relocations,
-                  staged_brokers, *probe_staged]
+                  staged_brokers, settings_font, settings_font_license, *probe_staged]
     n.build(outputs="android", rule="phony", inputs=staged_all)
 
     apk = PORT_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+    # Switching between an installed release and a side-by-side device test
+    # changes Gradle inputs even when none of the source files changed.
+    variant_stamp = BUILD / "apk_variant.stamp"
+    variant_text = "\n".join(os.environ.get(name, "") for name in
+                             ("HALO_APPLICATION_ID_SUFFIX", "HALO_BUILD_NUMBER", "GITHUB_REPOSITORY")) + "\n"
+    if not variant_stamp.exists() or variant_stamp.read_text() != variant_text:
+        variant_stamp.write_text(variant_text)
     sdl_android_mouse_listener = SDL_DIR / SDL_ANDROID_MOUSE_LISTENER
     n.rule(
         name="android_gradle",
@@ -1016,6 +1027,6 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     gradle_inputs += [PORT_DIR / "build.gradle", PORT_DIR / "app" / "build.gradle",
                       Path("tools/translate_menus.py")]
     n.build(outputs=apk, rule="android_gradle", inputs=staged_all,
-            implicit=[stamp, sdl_android_mouse_listener, *gradle_inputs])
+            implicit=[stamp, variant_stamp, sdl_android_mouse_listener, *gradle_inputs])
     n.build(outputs="android_apk", rule="phony", inputs=apk)
     n.newline()

@@ -245,6 +245,18 @@ Removing the app's data or the app removes the layout.
 
 ## Settings
 
+The Android setup panel uses the same blue/cyan interface for disc import,
+graphics, Vulkan drivers and display options. On a controller, hold **Start +
+Select** together to open it while playing; either order works. **L1/R1**
+switch categories, **A** selects, the directional arrows adjust a value,
+and **B** or **Start + Select** returns to the game. Start and Select used separately retain their
+game bindings. The touch gear is shown only when no controller is connected;
+plugging or unplugging a controller updates it immediately. The Halo Graphics
+launcher entry also opens this panel before starting the game.
+
+The graphics choices are saved for the next game launch. The data page opens
+the existing Xbox disc importer, including European discs and French maps.
+
 The settings are in `config.toml` in the data folder of the app. To change
 them:
 

@@ -80,6 +80,12 @@ validés dans cet environnement.
   Les tests Python du graphe web font partie de la campagne complète.
 - Les logs locaux sont dans `dist/integration/` ; l'APK est
   `dist/android/app-release.apk`.
+- La CI de la branche `5be0c5c9e` a réussi sur Android. Elle a révélé trois
+  problèmes des ports partagés à résoudre avant fusion : symboles de stockage
+  et de sections replay à l'édition de liens Linux, inclusion de `pthread.h`
+  dans les bots Windows, et type de `va_list` dans le terminal web.
+- Les essais matériels et le nouveau panneau Android sont décrits dans
+  [android-settings.md](android-settings.md).
 
 La compilation ne remplace pas un essai sur téléphone : performances GPU,
 compatibilité des pilotes, import réel de données et partie réseau doivent encore

@@ -469,7 +469,7 @@ public final class TouchControls extends View implements SensorEventListener, In
     }
 
     /** a game controller: a stick or a hat, not a phone's few gamepad keys */
-    private static boolean isController(InputDevice device) {
+    static boolean isController(InputDevice device) {
         if (device == null || device.isVirtual())
             return false;
         if ((device.getSources() & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK)
