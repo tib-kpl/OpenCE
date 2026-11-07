@@ -3061,11 +3061,13 @@ static void screenshot_render(
 /* port: debug.show_resolution shows the frame rate with the resolution
 drawn at (halo_screen_width and halo_screen_pixel_scale, every renderer's),
 and the Switch's renderer says whether display.dynamic_resolution has
-dropped a step (weak: NULL elsewhere) */
+dropped a step (optional among the Switch's renderers) */
 int config_boolean(const char *name);
 long halo_screen_width(void);
 float halo_screen_pixel_scale(void);
+#if defined(HALO_SWITCH)
 extern int halo_screen_dynamic_resolution_dropped(void) __attribute__((weak));
+#endif
 
 void main_framerate_render(
 	void)
@@ -3119,6 +3121,12 @@ void main_framerate_render(
 			if (show_resolution)
 			{
 				float pixel_scale = halo_screen_pixel_scale();
+				boolean dynamic_dropped = FALSE;
+
+				/* port: only Switch renderers implement this indicator. */
+#if defined(HALO_SWITCH)
+				dynamic_dropped = halo_screen_dynamic_resolution_dropped && halo_screen_dynamic_resolution_dropped();
+#endif
 
 				_snprintf(
 					frame_rate_string,
@@ -3127,7 +3135,7 @@ void main_framerate_render(
 					(short)frame_rate,
 					(long)(halo_screen_width() * pixel_scale + 0.5f),
 					(long)(480 * pixel_scale + 0.5f),
-					halo_screen_dynamic_resolution_dropped && halo_screen_dynamic_resolution_dropped() ?
+					dynamic_dropped ?
 						" (dynamic)" : "");
 			}
 			else

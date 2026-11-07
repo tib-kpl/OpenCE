@@ -243,6 +243,9 @@ jobs:
       - name: Release
         run: python tools/ci_build.py windows release
 
+      - name: Test Windows threads
+        run: python tools/test_windows_threads.py
+
       - name: Test light storage
         run: python tools/test_light_storage.py
 

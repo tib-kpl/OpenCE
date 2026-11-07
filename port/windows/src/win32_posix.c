@@ -96,42 +96,108 @@ struct thread_start
 	void *argument;
 };
 
+/* A joinable thread's handle stays valid even after the thread has exited.
+The public thread value remains its ID, as pthread_self and equal use it. */
+struct joinable_thread
+{
+	pthread_t identifier;
+	HANDLE handle;
+	struct joinable_thread *next;
+};
+static SRWLOCK joinable_lock = SRWLOCK_INIT;
+static struct joinable_thread *joinable_threads;
+
+static struct joinable_thread *take_joinable_thread(pthread_t identifier)
+{
+	struct joinable_thread **link, *found;
+	AcquireSRWLockExclusive(&joinable_lock);
+	for (link = &joinable_threads; *link && (*link)->identifier != identifier; link = &(*link)->next) {}
+	found = *link;
+	if (found) *link = found->next;
+	ReleaseSRWLockExclusive(&joinable_lock);
+	return found;
+}
+
 static DWORD WINAPI thread_main(LPVOID parameter)
 {
 	struct thread_start start = *(struct thread_start *)parameter;
 
 	free(parameter);
-	start.start(start.argument);
-	return 0;
+	return (DWORD)(ULONG_PTR)start.start(start.argument);
 }
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*start)(void *), void *argument)
 {
 	struct thread_start *parameter = malloc(sizeof(*parameter));
+	struct joinable_thread *record = NULL;
 	DWORD identifier;
 	HANDLE handle;
 
 	if (!parameter)
 		return EAGAIN;
+	if (!attributes || attributes->detached != PTHREAD_CREATE_DETACHED)
+	{
+		record = malloc(sizeof(*record));
+		if (!record) { free(parameter); return EAGAIN; }
+	}
 	parameter->start = start;
 	parameter->argument = argument;
 	handle = CreateThread(NULL, attributes ? attributes->stack_size : 0, thread_main, parameter,
-		STACK_SIZE_PARAM_IS_A_RESERVATION, &identifier);
+		STACK_SIZE_PARAM_IS_A_RESERVATION | CREATE_SUSPENDED, &identifier);
 	if (!handle)
 	{
 		free(parameter);
+		free(record);
 		return EAGAIN;
 	}
-	/* nothing joins threads: the handle is not needed */
-	CloseHandle(handle);
+	if (record)
+	{
+		record->identifier = identifier;
+		record->handle = handle;
+		AcquireSRWLockExclusive(&joinable_lock);
+		record->next = joinable_threads;
+		joinable_threads = record;
+		ReleaseSRWLockExclusive(&joinable_lock);
+	}
 	*thread = identifier;
+	/* Publish the record before the callback can detach itself. */
+	if (ResumeThread(handle) == (DWORD)-1)
+	{
+		if (record) free(take_joinable_thread(identifier));
+		TerminateThread(handle, 0);
+		CloseHandle(handle);
+		free(parameter);
+		return EAGAIN;
+	}
+	if (!record) CloseHandle(handle);
 	return 0;
 }
 
 int pthread_detach(pthread_t thread)
 {
-	(void)thread;
+	struct joinable_thread *record = take_joinable_thread(thread);
+	if (!record) return ESRCH;
+	CloseHandle(record->handle);
+	free(record);
 	return 0;
+}
+
+int pthread_join(pthread_t thread, void **result)
+{
+	struct joinable_thread *record;
+	DWORD value = 0;
+	int status = 0;
+	if (thread == GetCurrentThreadId()) return EDEADLK;
+	record = take_joinable_thread(thread);
+	if (!record) return ESRCH;
+	if (WaitForSingleObject(record->handle, INFINITE) != WAIT_OBJECT_0 ||
+		!GetExitCodeThread(record->handle, &value))
+		status = EINVAL;
+	else if (result)
+		*result = (void *)(ULONG_PTR)value;
+	CloseHandle(record->handle);
+	free(record);
+	return status;
 }
 
 pthread_t pthread_self(void)

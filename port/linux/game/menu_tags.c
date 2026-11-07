@@ -60,9 +60,8 @@ int platform_audio_devices(int recording, char (*names)[128], int maximum);
 void *global_network_game_server_get(void);
 boolean network_game_is_active(void);
 
-/* cache_files.c's (port) */
-void *cache_files_tag_instances(long *count);
-void cache_files_set_tag_instances(void *instances, long count);
+/* cache_files.c's port helpers have a shared prototype. */
+#include "cache/cache_files.h"
 
 /* the game's (port) */
 char *tag_get_name(long tag_index);
