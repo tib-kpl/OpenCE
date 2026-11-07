@@ -43,6 +43,8 @@ final class HaloSettingsUi {
     private final Typeface font;
     private final java.util.ArrayList<Button> tabs = new java.util.ArrayList<>();
     private final java.util.ArrayList<Runnable> tabActions = new java.util.ArrayList<>();
+    private final java.util.ArrayList<Button> controls = new java.util.ArrayList<>();
+    private final java.util.Map<View, java.util.function.IntConsumer> adjustments = new java.util.IdentityHashMap<>();
     private int selectedTab;
     private long lastAxis;
     private final ControllerSettingsChord closeChord;
@@ -106,10 +108,12 @@ final class HaloSettingsUi {
         navigation = column();
         navigation.setPadding(0, 0, dp(18), 0);
         ScrollView rail = new ScrollView(activity);
+        rail.setFocusable(false);
         rail.setVerticalScrollBarEnabled(false);
         rail.addView(navigation);
         body.addView(rail, new LinearLayout.LayoutParams(dp(158), -1));
         ScrollView scroll = new ScrollView(activity);
+        scroll.setFocusable(false);
         scroll.setFillViewport(true);
         scroll.setClipToPadding(false);
         scroll.setPadding(0, 0, dp(6), 0);
@@ -164,6 +168,7 @@ final class HaloSettingsUi {
     }
     Button button(String text, Runnable action) {
         Button button = new Button(activity);
+        button.setFocusable(true);
         button.setText(text);
         button.setTextSize(13);
         button.setTypeface(font);
@@ -211,6 +216,8 @@ final class HaloSettingsUi {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(62));
         params.bottomMargin = dp(7);
         content.addView(row, params);
+        row.setFocusedByDefault(controls.isEmpty());
+        controls.add(row);
         return row;
     }
 
@@ -236,17 +243,77 @@ final class HaloSettingsUi {
         left.setContentDescription(title + " : " + "−");
         right.setContentDescription(title + " : " + "+");
         value.setOnClickListener(v -> adjust.accept(1));
-        value.setOnKeyListener((v, key, event) -> {
-            if (key != KeyEvent.KEYCODE_DPAD_LEFT && key != KeyEvent.KEYCODE_DPAD_RIGHT) return false;
-            if (event.getAction() == KeyEvent.ACTION_DOWN) adjust.accept(key == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1);
-            return true;
-        });
+        value.setFocusedByDefault(controls.isEmpty());
+        controls.add(value);
+        adjustments.put(value, adjust);
         row.addView(left, new LinearLayout.LayoutParams(dp(40), dp(42)));
         row.addView(value, new LinearLayout.LayoutParams(dp(180), dp(42)));
         row.addView(right, new LinearLayout.LayoutParams(dp(40), dp(42)));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(54));
         params.bottomMargin = dp(7);
         content.addView(row, params);
+    }
+
+    private boolean available(View view) {
+        return view.isEnabled() && view.getVisibility() == View.VISIBLE;
+    }
+
+    private boolean focus(View view) {
+        // A previous tap may have left the window in touch mode.
+        return available(view) && view.requestFocusFromTouch();
+    }
+
+    void focusContent() {
+        for (Button control : controls) {
+            if (focus(control)) return;
+        }
+        if (!focus(primary) && !tabs.isEmpty()) focus(tabs.get(selectedTab));
+    }
+
+    private void focusCategory() {
+        if (!tabs.isEmpty()) focus(tabs.get(selectedTab));
+        else focusContent();
+    }
+
+    /** Keep the rail, settings and footer out of Android's geometric focus search.
+     * Choice arrows adjust the value; Up from the first setting returns to the rail. */
+    private void direction(int key) {
+        View focus = host.focus();
+        int tab = tabs.indexOf(focus);
+        int control = controls.indexOf(focus);
+        if (tab >= 0) {
+            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (tab == selectedTab) focusContent();
+                else tabActions.get(tab).run();
+            } else if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                int step = key == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1;
+                for (int next = tab + step; next >= 0 && next < tabs.size(); next += step) {
+                    if (focus(tabs.get(next))) return;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_DOWN) focus(primary);
+            }
+        } else if (control >= 0) {
+            java.util.function.IntConsumer adjust = adjustments.get(focus);
+            if (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (adjust != null) adjust.accept(key == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1);
+                else if (key == KeyEvent.KEYCODE_DPAD_LEFT) focusCategory();
+            } else {
+                int step = key == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1;
+                for (int next = control + step; next >= 0 && next < controls.size(); next += step) {
+                    if (focus(controls.get(next))) return;
+                }
+                if (step < 0) focusCategory();
+                else focus(primary);
+            }
+        } else if (focus == primary) {
+            if (key == KeyEvent.KEYCODE_DPAD_LEFT) focusCategory();
+            else if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                for (int next = controls.size() - 1; next >= 0; next--) {
+                    if (focus(controls.get(next))) return;
+                }
+                focusCategory();
+            } else focusContent();
+        } else focusContent();
     }
 
     boolean key(KeyEvent event) {
@@ -266,6 +333,11 @@ final class HaloSettingsUi {
                 int next = (selectedTab + (key == KeyEvent.KEYCODE_BUTTON_L1 ? -1 : 1) + tabs.size()) % tabs.size();
                 tabActions.get(next).run();
             }
+            return true;
+        }
+        if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
+            || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && !event.isCanceled()) direction(key);
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_A) {

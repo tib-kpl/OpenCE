@@ -441,7 +441,7 @@ public class LauncherActivity extends Activity {
         setupUi.content.addView(progress, new LinearLayout.LayoutParams(-1, setupUi.dp(32)));
         status = setupUi.status;
         status.setText(t("Connexion…", "Connecting…"));
-        setupUi.primary.requestFocus();
+        setupUi.primary.post(setupUi.primary::requestFocusFromTouch);
     }
 
     private int dp(float value) {
@@ -497,7 +497,7 @@ public class LauncherActivity extends Activity {
         setupUi.content.addView(progress, new LinearLayout.LayoutParams(-1, setupUi.dp(16)));
         status = setupUi.status;
         status.setText(t("A  Choisir     L1 / R1  Rubriques     B  Retour", "A  Select     L1 / R1  Categories     B  Back"));
-        pick.requestFocus();
+        setupUi.content.post(setupUi::focusContent);
     }
 
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {

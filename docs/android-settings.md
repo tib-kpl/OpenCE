@@ -19,6 +19,10 @@ déjà fournie dans le projet, avec sa licence.
   modification d'un périphérique actualisent sa visibilité.
 - **L1/R1** change de rubrique ; **A** valide ; **gauche/droite** ajuste un
   choix. Les boutons et les flèches sont aussi utilisables au tactile.
+- **Haut/Bas** parcourt les réglages de droite et le bouton du bas. Depuis
+  le premier réglage, **Haut** revient à la catégorie active ; **Droite**
+  depuis une catégorie ouvre ses réglages. Les choix retrouvent le focus
+  après une interaction tactile et les listes défilent avec la sélection.
 - **B**, ou **Start + Select** depuis le panneau en jeu, revient au jeu.
 - Start et Select seuls conservent leurs actions. Un bref délai de 250 ms
   laisse le temps de former la combinaison. Les appuis d'une autre manette
@@ -59,6 +63,28 @@ configuration ; l'application habituelle et ses sauvegardes restent intactes.
 
 Le retrait physique d'une manette n'est pas vérifié sur ces consoles à manette
 intégrée. Les captures et logs de test restent locaux dans `dist/integration/`.
+
+Le test Android `SettingsNavigationTest` utilise les véritables activités et
+le dialogue du panneau, avec des événements manette et tactiles. Il vérifie
+les valeurs enregistrées, les trois réglages d'affichage, les catégories,
+les boutons désactivés, le retour depuis le tactile, le défilement de vingt
+pilotes et les fermetures par B et Start + Select. Il a réussi sur l'AYN Thor.
+Il refuse de s'exécuter sur l'application principale et remet à zéro le
+`config.toml` de la seule application de test ; aucune carte n'est requise.
+
+Depuis `port/android`, avec le SDK configuré :
+
+```sh
+HALO_APPLICATION_ID_SUFFIX=.test ./gradlew assembleDebug assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w com.halo.decomp.test.test/com.halo.decomp.SettingsNavigationTest
+adb uninstall com.halo.decomp.test.test
+adb uninstall com.halo.decomp.test
+```
+
+Le résultat attendu contient `PASS: settings controller navigation`. Les
+deux applications de test ont été retirées après les essais sur la Thor.
 
 ## Visée et textes français
 

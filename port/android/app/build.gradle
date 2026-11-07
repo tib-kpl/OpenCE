@@ -80,6 +80,7 @@ android {
         applicationId "com.halo.decomp" + (System.getenv("HALO_APPLICATION_ID_SUFFIX") ?: "")
         minSdk 28
         targetSdk 35
+        testInstrumentationRunner "com.halo.decomp.SettingsNavigationTest"
         versionCode Math.max(1, buildNumber)
         versionName buildNumber > 0 ? "build " + buildNumber : "1.0"
         buildConfigField "int", "HALO_BUILD_NUMBER", "${buildNumber}"

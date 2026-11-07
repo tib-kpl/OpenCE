@@ -205,8 +205,7 @@ final class AndroidSettingsPanel extends android.content.ContextWrapper {
                 "A lower resolution may improve frame rate. Settings are saved for the next launch."), 12, HaloSettingsUi.MUTED));
         }
         showCurrent();
-        java.util.ArrayList<android.view.View> focusables = ui.content.getFocusables(android.view.View.FOCUS_FORWARD);
-        if (!focusables.isEmpty()) focusables.get(0).requestFocus();
+        ui.content.post(ui::focusContent);
     }
 
     void saveState(Bundle state) {
