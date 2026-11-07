@@ -3172,8 +3172,9 @@ def _mods() -> list:
                       # focus)
                       '<on event="y" run="port mods toggle"/>', '<on event="white" run="port mods move up"/>',
                       '<on event="black" run="port mods move down"/>', *rows,
-                      f'<child widget="{base}/button_bar_files" y="384" platform="android"/>',
-                      f'<child widget="{base}/button_bar" y="414"/>'])
+                      f'<child widget="{base}/button_bar_files" y="414" platform="android"/>',
+                      f'<child widget="{base}/button_bar" y="444" platform="android"/>',
+                      f'<child widget="{base}/button_bar" y="414" platform="desktop switch ps5 web"/>'])
     for index in range(MOD_ROWS):
         lines += _widget(f"{base}/op_mod_{index + 1}",
                          [("width", 390), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
@@ -3207,7 +3208,7 @@ def _mods() -> list:
                                                     ("height", 16), ("bitmap", "mods/status_small")], [])
     lines += _widget(f"{base}/mod_details_text",
                      [("type", "text"), ("controller", 1), ("left", 412), ("top", 130), ("width", 200),
-                      ("height", 244), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
+                      ("height", 272), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
     lines += _widget(f"{base}/button_bar",
                      [("type", "column_list"), ("width", 640), ("height", 28),
                       ("flags", "pass_unhandled_to_focused_child left_right_tabs_children")],

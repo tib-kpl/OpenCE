@@ -41,8 +41,9 @@
 		<child widget="main_menu/mods/op_mod_9" x="20" y="313"/>
 		<child widget="main_menu/mods/op_mod_10" x="20" y="343"/>
 		<child widget="main_menu/mods/op_mod_11" x="20" y="373" platform="desktop switch ps5 web"/>
-		<child widget="main_menu/mods/button_bar_files" y="384" platform="android"/>
-		<child widget="main_menu/mods/button_bar" y="414"/>
+		<child widget="main_menu/mods/button_bar_files" y="414" platform="android"/>
+		<child widget="main_menu/mods/button_bar" y="444" platform="android"/>
+		<child widget="main_menu/mods/button_bar" y="414" platform="desktop switch ps5 web"/>
 	</widget>
 	<widget name="main_menu/mods/op_mod_1" width="390" height="28" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/sel_list_item_bkd_top" color="#FF2896FF">
 		<on event="a" run="port mods accept"/>
@@ -169,7 +170,7 @@
 	</widget>
 	<widget name="main_menu/mods/mod_details_status" controller="1" left="411" top="132" width="16" height="16" bitmap="mods/status_small">
 	</widget>
-	<widget name="main_menu/mods/mod_details_text" type="text" controller="1" left="412" top="130" width="200" height="244" font="ui\small_ui" color="#FF2896FF">
+	<widget name="main_menu/mods/mod_details_text" type="text" controller="1" left="412" top="130" width="200" height="272" font="ui\small_ui" color="#FF2896FF">
 	</widget>
 	<widget name="main_menu/mods/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_children">
 		<child widget="main_menu/mods/button_up" y="1" platform="desktop web"/>

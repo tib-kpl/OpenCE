@@ -11,6 +11,24 @@ from tools.harness import function
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_android_mod_actions_clear_the_details_panel():
+    widgets = {w.get("name"): w for w in ET.parse(ROOT / "port/assets/menus/ce/main_menu.mods.xml").getroot().findall("widget")}
+    base = "main_menu/mods/"
+    detail = widgets[base + "mod_details_text"]
+    panel_bottom = int(detail.get("top")) + int(detail.get("height")) + 6
+    bars = [c for c in widgets[base + "mods_list"].findall("child")
+            if c.get("widget") in (base + "button_bar_files", base + "button_bar")
+            and "android" in c.get("platform", "android").split()]
+    assert len(bars) == 2
+    previous_bottom = panel_bottom
+    for placed in bars:
+        bar = widgets[placed.get("widget")]
+        top = int(placed.get("y"))
+        assert top >= previous_bottom
+        previous_bottom = top + int(bar.get("height"))
+        assert previous_bottom <= 480
+
+
 @pytest.mark.parametrize("platform,menu,bar", [
     ("android", "mods", "button_bar"),
     ("android", "mods", "button_bar_files"),
@@ -45,6 +63,7 @@ enum { _ui_widget_type_spinner_list=3, _ui_widget_type_column_list=2,
  _widget_dpad_leftright_tabs_thru_children_bit=4 };
 struct ui_widget_definition { long flags; struct { int count; } event_handlers; } defs[2];
 struct widget_instance { int disabled,visible,type,definition_tag_index;
+ struct { int current_frame_index,number_of_sprite_frames; } animation;
  struct widget_instance *child,*focused_child,*parent,*next,*previous; } root,bar,row,row_leaf,buttons[8];
 static struct ui_widget_definition *ui_widget_definition_get(int id) { return &defs[id]; }
 static int pc_menu_tag(int id) { return 1; }
@@ -58,7 +77,7 @@ static struct widget_instance *widget_instance_get_topmost_parent(struct widget_
     source += "\n".join(function(engine, name) for name in (
         "widget_instance_can_handle_events", "widget_instance_port_is_label",
         "widget_instance_refocus_passthrough", "widget_instance_give_focus_directly",
-        "widget_instance_tab_to_next_valid_widget", "widget_instance_tab_to_previous_valid_widget"))
+        "widget_instance_tab_to_next_valid_widget", "widget_instance_tab_to_previous_valid_widget", "column_list_update"))
     source += f"\n#define BUTTONS {len(buttons)}\n#define BAR_KIND {kind}\n#define BAR_FLAGS {mask}\n"
     source += r'''
 int main(void) {
@@ -71,6 +90,7 @@ int main(void) {
  bar.parent=&root; bar.previous=&row; bar.child=&buttons[0]; bar.type=BAR_KIND; bar.visible=1;
  for(i=0;i<BUTTONS;i++) {
   buttons[i].parent=&bar; buttons[i].visible=1; buttons[i].definition_tag_index=1;
+  buttons[i].animation.number_of_sprite_frames=2;
   buttons[i].next=i+1<BUTTONS ? &buttons[i+1] : NULL;
   buttons[i].previous=i ? &buttons[i-1] : NULL;
  }
@@ -84,10 +104,19 @@ int main(void) {
  }
  widget_instance_tab_to_next_valid_widget(&bar); assert(bar.focused_child==&buttons[0]);
  widget_instance_tab_to_previous_valid_widget(&bar); assert(bar.focused_child==&buttons[BUTTONS-1]);
+ column_list_update(&bar,&defs[0]);
+ assert(buttons[BUTTONS-1].animation.current_frame_index==1);
+ /* Child-tab navigation preserves the old bar's pointer. It must not glow. */
+ root.focused_child=&row;
+ column_list_update(&bar,&defs[0]);
+ assert(!buttons[BUTTONS-1].animation.current_frame_index);
+ root.focused_child=&bar;
  /* A mouse/other-row focus clears the old path; return and repeat. */
  for(i=0;i<3;i++) {
   widget_instance_give_focus_directly(&root,&row_leaf);
   assert(!bar.focused_child);
+  column_list_update(&bar,&defs[0]);
+  { int j; for(j=0;j<BUTTONS;j++) assert(!buttons[j].animation.current_frame_index); }
   widget_instance_give_focus_directly(&root,&bar);
   assert(bar.focused_child==&buttons[0]);
   widget_instance_tab_to_next_valid_widget(&bar); assert(bar.focused_child==&buttons[1]);

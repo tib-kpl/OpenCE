@@ -89,6 +89,8 @@ stick physique et une lecture de replay complète restent à vérifier.
 
 Sur Android, **Importer, Supprimer, Monter, Descendre** sont sur une seule
 ligne dans cet ordre. **OK et Annuler** sont sur la ligne inférieure.
+Les deux lignes se trouvent entièrement sous le cadre de description :
+414 et 444 unités sur les 480 de l'écran, sans recouvrir le panneau de droite.
 Haut/Bas passe entre la liste et les lignes ; Gauche/Droite parcourt leurs
 boutons. Les barres restaurent leur bouton sélectionné après un changement
 de focus, avec sa surbrillance. Les actions de classement gardent le focus
@@ -97,7 +99,18 @@ raccourci X reste disponible.
 
 Les tests compilent les fonctions réelles de focus et de navigation avec
 les barres XML générées : entrée, aller-retour, chaque bouton et bouclage,
-sur Android et sur desktop. Cette passe vérifie 35 tests ciblés et les
+sur Android et sur desktop. Cette passe vérifie 36 tests ciblés et les
 contrôles Java. L'APK de test et l'APK normale compilent ; le dialogue a été
 contrôlé sur la Thor, avec changement de catégorie et fermeture par
 Start + Select. Les captures restent locales.
+
+La reprise des essais sur la Thor a confirmé le classement dans les deux sens,
+l'accès directionnel aux quatre actions et à OK/Annuler, l'écriture du
+`load_order.toml` par OK et le retour à l'ordre enregistré après Annuler.
+Une sélection restait dessinée sur l'ancienne barre : ses images sont maintenant
+actualisées aussi pendant le rendu, car une barre inactive ne reçoit plus de
+mise à jour d'entrée. La sélection unique et l'absence de chevauchement ont
+été contrôlées dans l'APK finale, ainsi que le libellé Supprimer du Cinéma.
+Un test de géométrie vérifie aussi les marges sous le panneau et la limite
+de l'écran. Deux mods factices ont servi aux essais,
+dans l'application isolée uniquement ; ils sont retirés ensuite.

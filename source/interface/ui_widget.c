@@ -7848,6 +7848,10 @@ static void widget_instance_render_column_list(
 	point2d offset,
 	boolean focus)
 {
+	/* port: inactive button bars get no input update; refresh their frames
+	when drawn too, so leaving one removes its old selection outline. */
+	if (TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit))
+		column_list_update(widget, definition);
 	if (widget->parameters.list.extended_description)
 	{
 		widget->parameters.list.extended_description->alpha_modifier =
@@ -7913,17 +7917,33 @@ static __inline void spinner_list_update(
 
 /* the definition is passed by January's only call site but is not read; the
 spinner list and the column list keep separate updaters rather than sharing one
-parameterised helper */
+parameterised helper. port: the horizontal bars below read its flags. */
 
 static void column_list_update(
 	struct widget_instance *widget,
 	struct ui_widget_definition *definition)
 {
 	struct widget_instance *child;
+	boolean focused = TRUE;
+
+	/* port: horizontal button bars remember their last button, but only
+	the bar on the active focus path draws its selection frame. */
+	if (TEST_FLAG(definition->flags, _widget_dpad_leftright_tabs_thru_children_bit))
+	{
+		struct widget_instance *ancestor;
+		for (ancestor = widget; ancestor->parent; ancestor = ancestor->parent)
+		{
+			if (ancestor->parent->focused_child != ancestor)
+			{
+				focused = FALSE;
+				break;
+			}
+		}
+	}
 
 	for (child = widget->child; child; child = child->next)
 	{
-		if (child == widget->focused_child)
+		if (focused && child == widget->focused_child)
 		{
 			if (child->animation.number_of_sprite_frames == 2)
 				child->animation.current_frame_index = 1;
