@@ -35,6 +35,12 @@ FILE *platform_fopen_host(const char *path, const char *mode)
 	return fopen(path, mode);
 }
 
+/* Replay files already have host paths, like platform_fopen_host's. */
+int platform_remove_host(const char *path)
+{
+	return remove(path);
+}
+
 FILE *halo_windows_freopen(const char *path, const char *mode, FILE *stream)
 {
 	char host_path[1024];

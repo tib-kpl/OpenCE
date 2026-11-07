@@ -4241,8 +4241,10 @@ int main(void)
 			return config_fail("no folder for the profile test");
 		setenv("HALO_DATA_ROOT", root, 1);
 		unsetenv("HALO_GYRO_SENSITIVITY_HORIZONTAL");
-		snprintf(profile, sizeof(profile), "%s/profile/", root);
-		mkdir(profile, 0700);
+		snprintf(profile, sizeof(profile), "%s/profileXXXXXX", root);
+		if (!mkdtemp(profile))
+			return config_fail("no folder for the saved profile");
+		strcat(profile, "/");
 		if (!config_setting_per_profile("controls.jump") || config_setting_per_profile("display.fov") ||
 			config_setting_per_profile("controls.nintendo_menu_buttons"))
 			return config_fail("the wrong settings are a profile's");

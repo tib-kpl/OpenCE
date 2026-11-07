@@ -329,6 +329,12 @@ game's flags also tell its clients whether the host is a dedicated server
 (`_network_game_cooperative_dedicated_bit`: its loading zones then ask for
 most of the living players).
 
+Then version 42 isolates the integrated Slipstream gameplay, bot and ragdoll
+changes from version 41. This is a conservative compatibility boundary for
+simulation behaviour: the wire fields and message fingerprints recorded by
+`network_format.py` remain identical to version 41. Older builds cannot join
+these sessions, even where their message layout alone would match.
+
 `port/linux/network_format.txt` records the wire format of the current
 version (`tools/network_format.py`): `test_linux_port.py` fails when the
 sources' messages, kinds, bits, structs sent whole or the sizes of their

@@ -317,8 +317,12 @@ def test_menu_settings_exist():
     for path in (MENUS / "ce").glob("*.xml"):
         for setting in re.findall(r'setting="([^"]+)"', path.read_text()):
             assert setting in known | profile | actions, f"{path.name}: {setting}"
-    controls = set(re.findall(r'"(controls\.[a-z_]+)"', (root / "port/linux/src/xinput_sdl.c").read_text()))
-    assert controls == {name for name in known if name.startswith("controls.")}
+    input_code = (root / "port/linux/src/xinput_sdl.c").read_text()
+    binding_table = re.search(r'\bbinding_settings\[[^]]+\]\s*=\s*\{([^}]+)\}', input_code).group(1)
+    controls = set(re.findall(r'"(controls\.[a-z_]+)"', binding_table))
+    # Menu face-button appearance is a boolean, rather than a key binding.
+    assert {name for name in known if name.startswith("controls.")} - controls == {"controls.nintendo_menu_buttons"}
+    assert controls <= known
     assert controls == set(re.findall(r'\{ "(controls\.[a-z_]+)", L"', functions))
 
 
@@ -355,9 +359,10 @@ def test_config_sections_join(tmp_path):
         pytest.skip("needs clang, ninja and a configured build")
     flags = _platform_compile_flags("build/linux/obj/port/linux/src/port_config.o")
     program = tmp_path / "config_sections_check"
-    built = subprocess.run(["clang", *flags, "-O1", "-no-pie", "-Wl,--unresolved-symbols=ignore-all",
+    built = subprocess.run(["clang", *flags, "-O1", "-no-pie", "-ffunction-sections", "-fdata-sections",
+                            "-Wl,--gc-sections",
                             "-DHALO_ANDROID", "-DHALO_SWITCH", "-DHALO_GUEST", "-DHALO_CONFIG_SECTIONS_TEST",
-                            "-o", str(program), "port/linux/src/port_config.c",
+                            "-o", str(program), "port/linux/src/port_config.c", "port/linux/src/msvc_crt.c",
                             "port/third_party/tomlc17/tomlc17.c"],
                            capture_output=True, text=True)
     assert built.returncode == 0, built.stderr[-4000:]

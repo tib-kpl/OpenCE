@@ -11,3 +11,7 @@ declared here under its own name.
 #undef strnlen
 #include_next <string.h>
 #pragma pop_macro("strnlen")
+
+/* POSIX spellings used by the shared game-side benchmark. */
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
