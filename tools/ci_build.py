@@ -16,8 +16,9 @@ which only make the build slower; release builds use both, as a local
 release build does (profile-guided optimisation needs clang 22 or later,
 and is skipped with an older one). A profile build is a debug build with
 configure.py --profile, so that the profiling build is built too. CI_COMPILER_LAUNCHER (ccache, say) is
-passed on as --compiler-launcher. A build of a release tag, v<number>, gets
-that number (HALO_BUILD_NUMBER), which its release is named after
+passed on as --compiler-launcher. A build of main gets its workflow run
+number; a release tag, v<number>, gets the tag's number
+(HALO_BUILD_NUMBER), which its release is named after
 (build-<number>) and the self-updater compares (and the web site's
 version.json names).
 
@@ -81,6 +82,20 @@ def run(command, cwd=ROOT):
     subprocess.run([str(part) for part in command], cwd=cwd, check=True)
 
 
+def build_number(environment):
+    """Match the published release number, preserving local build overrides."""
+    ref = environment.get("GITHUB_REF", "")
+    if ref.startswith("refs/tags/v") and ref[len("refs/tags/v"):].isdigit():
+        number = ref[len("refs/tags/v"):]
+    elif ref == "refs/heads/main":
+        number = environment.get("GITHUB_RUN_NUMBER", "")
+        if not number.isdigit() or int(number) <= 0:
+            raise ValueError("a published main build needs a positive GITHUB_RUN_NUMBER")
+    else:
+        number = environment.get("HALO_BUILD_NUMBER", "0")
+    return int(number)
+
+
 def write_sums(folder: Path) -> int:
     """folder/SHA256SUMS: each file's SHA-256 and name, in name order (the
     sums file itself and its signature left out)"""
@@ -127,14 +142,10 @@ def main() -> int:
     launcher = os.environ.get("CI_COMPILER_LAUNCHER")
     if launcher:
         configure += ["--compiler-launcher", launcher]
-    # a build of a release tag (v<n>) knows its number, which names its
-    # release (build-<n>), for the self-updaters (port/linux/src/updater.c,
-    # port/switch/host/host_update.c, the Android app); other builds have
-    # none, and never look for updates
-    ref = os.environ.get("GITHUB_REF", "")
-    if ref.startswith("refs/tags/v") and ref[len("refs/tags/v"):].isdigit():
-        os.environ["HALO_BUILD_NUMBER"] = str(int(ref[len("refs/tags/v"):]))
-        print(f"build number {os.environ['HALO_BUILD_NUMBER']}", flush=True)
+    # The published build-<n> release and every platform's self-updater
+    # must use the same number. Android also uses it as its versionCode.
+    os.environ["HALO_BUILD_NUMBER"] = str(build_number(os.environ))
+    print(f"build number {os.environ['HALO_BUILD_NUMBER']}", flush=True)
     run(configure)
 
     if args.platform == "web":
