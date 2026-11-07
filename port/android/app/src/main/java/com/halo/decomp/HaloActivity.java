@@ -961,6 +961,10 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
 
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
+        if (request == AndroidSettingsPanel.PICK_DRIVER && androidSettings != null) {
+            androidSettings.activityResult(request, result, data);
+            return;
+        }
         if (request == IMPORT_REPLAYS) {
             String folder = pendingImportFolder;
             pendingImportFolder = null;
@@ -1106,10 +1110,17 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
         updateSettingsAccess();
     }
 
+    private AndroidSettingsPanel androidSettings;
+
     private void openAndroidSettings() {
         if (settingsOpening || isFinishing() || isDestroyed()) return;
         settingsOpening = true;
-        startActivity(new Intent(this, GraphicsActivity.class).putExtra(GraphicsActivity.EXTRA_FROM_GAME, true));
+        androidSettings = new AndroidSettingsPanel(this, null, true, () -> {
+            androidSettings = null;
+            settingsOpening = false;
+            if (settingsShortcut != null) settingsShortcut.reset();
+            hideSystemUiSoon();
+        });
     }
 
     private void updateSettingsAccess() {
@@ -1198,7 +1209,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
     @Override
     protected void onResume() {
         super.onResume();
-        settingsOpening = false;
+        settingsOpening = androidSettings != null;
         updateSettingsAccess();
         hideSystemUiSoon();
         if (touchControls != null && getWindow().getDecorView().hasWindowFocus())
@@ -1236,6 +1247,7 @@ public class HaloActivity extends SDLActivity implements InputManager.InputDevic
 
     @Override
     protected void onDestroy() {
+        if (androidSettings != null) androidSettings.dispose();
         if (settingsShortcut != null) settingsShortcut.reset();
         if (settingsInput != null) settingsInput.unregisterInputDeviceListener(this);
         handler.removeCallbacks(hideSystemBars);

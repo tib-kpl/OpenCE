@@ -169,17 +169,19 @@
 	</widget>
 	<widget name="main_menu/mods/mod_details_status" controller="1" left="411" top="132" width="16" height="16" bitmap="mods/status_small">
 	</widget>
-	<widget name="main_menu/mods/mod_details_text" type="text" controller="1" left="412" top="130" width="200" height="272" font="ui\small_ui" color="#FF2896FF">
+	<widget name="main_menu/mods/mod_details_text" type="text" controller="1" left="412" top="130" width="200" height="244" font="ui\small_ui" color="#FF2896FF">
 	</widget>
-	<widget name="main_menu/mods/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<child widget="main_menu/mods/button_up" y="1" platform="desktop android web"/>
-		<child widget="main_menu/mods/button_down" x="130" y="1" platform="desktop android web"/>
+	<widget name="main_menu/mods/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_children">
+		<child widget="main_menu/mods/button_up" y="1" platform="desktop web"/>
+		<child widget="main_menu/mods/button_down" x="130" y="1" platform="desktop web"/>
 		<child widget="main_menu/mods/button_ok" x="380" y="1" platform="desktop android web"/>
 		<child widget="common_button_cancel" x="510" y="1" platform="desktop android web"/>
 	</widget>
-	<widget name="main_menu/mods/button_bar_files" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+	<widget name="main_menu/mods/button_bar_files" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_children">
 		<child widget="main_menu/mods/button_import" y="1"/>
 		<child widget="main_menu/mods/button_delete" x="130" y="1"/>
+		<child widget="main_menu/mods/button_up" x="260" y="1" platform="android"/>
+		<child widget="main_menu/mods/button_down" x="390" y="1" platform="android"/>
 	</widget>
 	<widget name="main_menu/mods/button_import" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="IMPORT" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port mods import"/>

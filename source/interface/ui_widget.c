@@ -2599,9 +2599,17 @@ static void widget_instance_refocus_passthrough(
 	struct widget_instance *child;
 	long flags;
 
-	if (!widget || widget->focused_child || widget_instance_can_handle_events(widget))
+	if (!widget || widget->focused_child)
 		return;
 	flags = ui_widget_definition_get(widget->definition_tag_index)->flags;
+	/* port: horizontal child lists (Mods/Cinema button bars) need their
+	button focus restored too; their list type keeps the selection artwork. */
+	if (widget_instance_can_handle_events(widget) &&
+		!(widget->type == _ui_widget_type_column_list &&
+			TEST_FLAG(flags, _widget_dpad_leftright_tabs_thru_children_bit)))
+	{
+		return;
+	}
 	if (!TEST_FLAG(flags, _widget_pass_unhandled_events_to_children_bit) ||
 		TEST_FLAG(flags, _widget_dont_focus_a_specific_child_bit))
 	{

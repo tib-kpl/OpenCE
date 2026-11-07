@@ -21,12 +21,22 @@ import android.widget.TextView;
 
 /** Shared Android setup screen: disc import and the in-game gear use the same shell. */
 final class HaloSettingsUi {
+    interface Host {
+        Activity activity();
+        boolean overlay();
+        boolean fromGame();
+        void show(View view);
+        void close();
+        View focus();
+        void dispatch(KeyEvent event);
+    }
     static final int INK = Color.rgb(6, 13, 23);
     static final int PANEL = Color.rgb(13, 28, 43);
     static final int CYAN = Color.rgb(114, 218, 247);
     static final int WHITE = Color.rgb(233, 242, 250);
     static final int MUTED = Color.rgb(147, 171, 192);
     final Activity activity;
+    private final Host host;
     final LinearLayout navigation, content;
     final TextView current, status;
     final Button primary;
@@ -38,10 +48,23 @@ final class HaloSettingsUi {
     private final ControllerSettingsChord closeChord;
 
     HaloSettingsUi(Activity activity, String title, String subtitle, String action, Runnable run) {
-        this.activity = activity;
+        this(new Host() {
+            @Override public Activity activity() { return activity; }
+            @Override public boolean overlay() { return false; }
+            @Override public boolean fromGame() { return activity.getIntent().getBooleanExtra(GraphicsActivity.EXTRA_FROM_GAME, false); }
+            @Override public void show(View view) { activity.setContentView(view); }
+            @Override public void close() { activity.finish(); }
+            @Override public View focus() { return activity.getCurrentFocus(); }
+            @Override public void dispatch(KeyEvent event) { activity.dispatchKeyEvent(event); }
+        }, title, subtitle, action, run);
+    }
+
+    HaloSettingsUi(Host host, String title, String subtitle, String action, Runnable run) {
+        this.host = host;
+        activity = host.activity();
         closeChord = new ControllerSettingsChord(new ControllerSettingsChord.Output() {
             @Override public void key(int device, int button, boolean down) {}
-            @Override public void open() { activity.finish(); }
+            @Override public void open() { host.close(); }
         });
         Typeface loaded;
         try { loaded = Typeface.createFromAsset(activity.getAssets(), "fonts/Overpass-750.ttf"); }
@@ -104,7 +127,13 @@ final class HaloSettingsUi {
         primary = button(action, run);
         footer.addView(primary, new LinearLayout.LayoutParams(dp(190), dp(42)));
         root.addView(footer);
-        activity.setContentView(backdrop);
+        if (host.overlay()) {
+            FrameLayout frame = new FrameLayout(activity);
+            FrameLayout.LayoutParams card = new FrameLayout.LayoutParams(-1, -1);
+            card.setMargins(dp(24), dp(16), dp(24), dp(16));
+            frame.addView(backdrop, card);
+            host.show(frame);
+        } else host.show(backdrop);
     }
 
     int dp(float size) { return Math.round(size * activity.getResources().getDisplayMetrics().density); }
@@ -225,7 +254,7 @@ final class HaloSettingsUi {
         boolean controller = event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD)
             || event.isFromSource(android.view.InputDevice.SOURCE_JOYSTICK)
             || TouchControls.isController(event.getDevice());
-        if (controller && activity.getIntent().getBooleanExtra(GraphicsActivity.EXTRA_FROM_GAME, false)
+        if (controller && host.fromGame()
             && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_BUTTON_SELECT || key == KeyEvent.KEYCODE_BACK)) {
             if (event.isCanceled()) closeChord.cancel();
             else closeChord.key(event.getDeviceId(), key == KeyEvent.KEYCODE_BUTTON_START ? 0 : 1,
@@ -241,13 +270,13 @@ final class HaloSettingsUi {
         }
         if (key == KeyEvent.KEYCODE_BUTTON_A) {
             if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
-                View focus = activity.getCurrentFocus();
+                View focus = host.focus();
                 if (focus != null && focus.isEnabled()) focus.performClick();
             }
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B) {
-            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) activity.finish();
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) host.close();
             return true;
         }
         return false;
@@ -264,8 +293,8 @@ final class HaloSettingsUi {
         lastAxis = now;
         int key = Math.abs(y) >= Math.abs(x) ? (y < 0 ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN)
             : (x < 0 ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT);
-        activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, key));
-        activity.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, key));
+        host.dispatch(new KeyEvent(KeyEvent.ACTION_DOWN, key));
+        host.dispatch(new KeyEvent(KeyEvent.ACTION_UP, key));
         return true;
     }
 

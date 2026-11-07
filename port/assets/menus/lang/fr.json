@@ -1478,7 +1478,7 @@
   "Let explosions, plasma and the sun shine brighter\\nthan white, then fit them to the screen.": "Étendre la luminosité des explosions, du plasma\\net du soleil avant de l'adapter à l'écran.",
   "BUTTON APPEARANCE": "ASPECT DES BOUTONS",
   "How far the right stick moves before the view\\nturns. Default: the game's own, 27%.": "Course du stick droit avant la rotation.\\nPar défaut : celle du jeu, 27%.",
-  "%x-button DELETE": "%x-button EFF.",
+  "%x-button DELETE": "%x-button SUPPRIMER",
   "VOTE FOR THE NEXT GAME": "VOTER POUR LA PARTIE SUIVANTE",
   "The menus' blue arrow for the mouse, and its size;\\nOff shows the system's pointer.": "Flèche bleue des menus et sa taille.\\nNon utilise le curseur du système.",
   "Draw the frame rate at the bottom right of a game,\\ncounted over half a second.": "Afficher les images par seconde en bas à droite,\\nmesurées sur une demi-seconde.",

@@ -4,6 +4,10 @@ L'installation du disque et les réglages ouverts depuis le jeu partagent une
 interface bleu nuit/cyan. Son organisation reprend la référence demandée,
 le panneau Android du projet voisin `Unreal-Android` : rubriques latérales,
 choix réglables avec les flèches, navigation aux gâchettes et retour au jeu.
+Depuis le jeu, c'est un dialogue dans `HaloActivity`, avec le jeu visible
+dans les marges autour du panneau. Il n'ouvre plus `GraphicsActivity` dans
+une autre activité. L'accès depuis le lanceur garde son écran autonome ;
+les deux utilisent le même contrôleur `AndroidSettingsPanel`.
 Le dessin est réalisé par les vues Android et utilise la police Overpass
 déjà fournie dans le projet, avec sa licence.
 
@@ -80,3 +84,20 @@ Vulkan ; le menu X/Y et ses aides sont lisibles, et l'activation du mode
 équilibré est confirmée dans le fichier du profil. Le panneau cinéma vide et
 le nom du pilote ont également été contrôlés. Le ressenti de visée avec le
 stick physique et une lecture de replay complète restent à vérifier.
+
+## Navigation Mods et Cinéma
+
+Sur Android, **Importer, Supprimer, Monter, Descendre** sont sur une seule
+ligne dans cet ordre. **OK et Annuler** sont sur la ligne inférieure.
+Haut/Bas passe entre la liste et les lignes ; Gauche/Droite parcourt leurs
+boutons. Les barres restaurent leur bouton sélectionné après un changement
+de focus, avec sa surbrillance. Les actions de classement gardent le focus
+dans la barre. Le bouton Cinéma affiche **Supprimer** en entier ; le
+raccourci X reste disponible.
+
+Les tests compilent les fonctions réelles de focus et de navigation avec
+les barres XML générées : entrée, aller-retour, chaque bouton et bouclage,
+sur Android et sur desktop. Cette passe vérifie 35 tests ciblés et les
+contrôles Java. L'APK de test et l'APK normale compilent ; le dialogue a été
+contrôlé sur la Thor, avec changement de catégorie et fermeture par
+Start + Select. Les captures restent locales.

@@ -246,7 +246,9 @@ Removing the app's data or the app removes the layout.
 ## Settings
 
 The Android setup panel uses the same blue/cyan interface for disc import,
-graphics, Vulkan drivers and display options. On a controller, hold **Start +
+graphics, Vulkan drivers and display options. In the game it is a dialog over
+the SDL activity, with the game visible around it; launcher access uses an
+independent setup screen backed by the same controller. On a controller, hold **Start +
 Select** together to open it while playing; either order works. **L1/R1**
 switch categories, **A** selects, the directional arrows adjust a value,
 and **B** or **Start + Select** returns to the game. Start and Select used separately retain their

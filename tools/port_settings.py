@@ -3207,20 +3207,22 @@ def _mods() -> list:
                                                     ("height", 16), ("bitmap", "mods/status_small")], [])
     lines += _widget(f"{base}/mod_details_text",
                      [("type", "text"), ("controller", 1), ("left", 412), ("top", 130), ("width", 200),
-                      ("height", 272), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
+                      ("height", 244), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
     lines += _widget(f"{base}/button_bar",
                      [("type", "column_list"), ("width", 640), ("height", 28),
-                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
-                     [f'<child widget="{base}/button_up" y="1" platform="desktop android web"/>',
-                      f'<child widget="{base}/button_down" x="130" y="1" platform="desktop android web"/>',
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_children")],
+                     [f'<child widget="{base}/button_up" y="1" platform="desktop web"/>',
+                      f'<child widget="{base}/button_down" x="130" y="1" platform="desktop web"/>',
                       f'<child widget="{base}/button_ok" x="380" y="1" platform="desktop android web"/>',
                       '<child widget="common_button_cancel" x="510" y="1" platform="desktop android web"/>'])
-    # (Android's, under MOVE UP and MOVE DOWN)
+    # Android's actions share one horizontal row; confirmation stays below.
     lines += _widget(f"{base}/button_bar_files",
                      [("type", "column_list"), ("width", 640), ("height", 28),
-                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_children")],
                      [f'<child widget="{base}/button_import" y="1"/>',
-                      f'<child widget="{base}/button_delete" x="130" y="1"/>'])
+                      f'<child widget="{base}/button_delete" x="130" y="1"/>',
+                      f'<child widget="{base}/button_up" x="260" y="1" platform="android"/>',
+                      f'<child widget="{base}/button_down" x="390" y="1" platform="android"/>'])
     lines += _text_button(f"{base}/button_import", "IMPORT", ['<on event="a" run="port mods import"/>',
                                                              '<on event="start" run="port mods import"/>'])
     lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port mods delete"/>',
@@ -3318,7 +3320,7 @@ def _theater() -> list:
                       ("height", 318), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
     lines += _widget(f"{base}/button_bar",
                      [("type", "column_list"), ("width", 640), ("height", 28),
-                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_children")],
                      # (five buttons of 128 across the 640: Android's IMPORT
                      # and EXPORT between DELETE and BACK)
                      [f'<child widget="{base}/button_record" y="1" platform="desktop android web"/>',
@@ -3336,7 +3338,7 @@ def _theater() -> list:
                      ['<on event="a" run="port theater record"/>', '<on event="start" run="port theater record"/>',
                       '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _strings(f"{base}/record_strings", ["RECORD: OFF", "RECORD: ON"])
-    lines += _text_button(f"{base}/button_delete", "%x-button DELETE", ['<on event="a" run="port theater delete"/>',
+    lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port theater delete"/>',
                                                                       '<on event="start" run="port theater delete"/>'])
     # (its words a string list's, as button_record's: "port theater update"
     # chooses OFF or ON)
