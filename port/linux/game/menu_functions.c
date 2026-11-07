@@ -3674,7 +3674,7 @@ static void mods_details_show(struct widget_instance *details, short place, shor
 		if (!count)
 		{
 			line = mods_wrap(PORT_TEXT("Each mod is a folder of its own in the mods folder, beside the maps folder.",
-				"Chaque mod est un dossier ? part dans le dossier mods, ? c?t? du dossier maps."), text,
+				"Chaque mod est un dossier à part dans le dossier mods, à côté du dossier maps."), text,
 				sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 			line = mods_wrap(" ", text, sizeof(text), _mod_details_text, MOD_DETAILS_LINES, line);
