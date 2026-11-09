@@ -228,7 +228,9 @@ has not set them). The gyroscope aims while the touch controls show.
     where your thumb lands in the lower left of the screen), the opacity of
     the controls, how many fingers tap together to open the cheat menu
     (three, the default, or four), "Held buttons don't aim" (off by
-    default: a finger that swipes from a button only holds it),
+    default: a finger that swipes from a button only holds it), "Show
+    during cutscenes" (off by default: the controls stay on screen while a
+    cutscene plays, where they otherwise hide and a tap skips it),
     "Hide or add buttons" (hide a button, add a copy of a
     button) and "Edit buttons size".
   - "Edit buttons layout": drag the controls, and the "Options" button
@@ -549,6 +551,15 @@ again.
   and closes. Send that file, then set `vk_probe = ""` again. The last
   step shows a colour that changes and waits for a controller: push A if
   the picture is right, Y if it is upside down, B to end.
+
+### Dynamic light occlusion
+
+In Video Setup > Dynamic Lighting, Light Occlusion stops added lights at
+walls and vehicles. With Vulkan, `display.occlusion_lights` (environment
+variable `HALO_OCCLUSION_LIGHTS`) controls how many lights trace rays per
+frame: 8, 6 (the default), or 4. A lower count helps slower phones; lights
+beyond the budget keep their last occlusion field until their turn. The
+change applies immediately. Added lights and Light Occlusion default to off.
 
 ## Internet play
 

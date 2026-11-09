@@ -5,9 +5,33 @@ import subprocess
 
 import pytest
 
-from tools.harness import function
+from tools.harness import constant, function
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_legacy_french_replay_after_protocol_correction(tmp_path):
+    cc = shutil.which("clang")
+    if not cc:
+        pytest.skip("clang required")
+    source = (ROOT / "port/linux/game/network_replay_playback.c").read_text(encoding="utf-8")
+    limits = (ROOT / "port/linux/include/halo_port_limits.h").read_text(encoding="utf-8")
+    path = tmp_path / "replay_version.c"
+    prefix = '#include <assert.h>\ntypedef int boolean;\n#define TRUE 1\n'
+    prefix += f'#define HALO_PORT_NETWORK_VERSION {constant(limits, "HALO_PORT_NETWORK_VERSION")}\n'
+    prefix += f'#define REPLAY_OLDEST_NETWORK_VERSION {constant(source, "REPLAY_OLDEST_NETWORK_VERSION")}\n'
+    path.write_text(prefix + function(source, "network_replay_network_version_playable") + r'''
+int main(void) {
+    assert(network_replay_network_version_playable(41));
+    assert(network_replay_network_version_playable(42));
+    assert(!network_replay_network_version_playable(43));
+    assert(!network_replay_network_version_playable(0));
+    return 0;
+}
+''', encoding="utf-8")
+    binary = tmp_path / "replay_version"
+    subprocess.run([cc, "-m32", "-std=gnu89", str(path), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
 
 
 def test_native_replay_store(tmp_path):

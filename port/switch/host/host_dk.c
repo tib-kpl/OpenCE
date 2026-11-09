@@ -1999,6 +1999,9 @@ static struct
 	uint32_t block_count;
 	struct texture table[DK_TEXTURE_LIMIT];
 	struct texture dummy;
+	/* what a vertex shader's sampler3D reads if a field's image could not be
+	made: white, so fully visible (made once there are fields) */
+	struct texture plasma_dummy;
 
 	struct release releases[RELEASE_LIMIT];
 	uint32_t release_count;
@@ -2025,6 +2028,10 @@ static struct
 	int targets_copied;
 	uint32_t stage_id[4];
 	uint32_t stage_sampler[4];
+	/* the dynamic lighting's visibility fields, and their sampler, once there
+	are any (DK_COMMAND_PLASMA_OCCLUSION) */
+	uint32_t plasma_image[2];
+	uint32_t plasma_sampler;
 	int stages_dirty;
 	int descriptors_bound;
 	/* texels were written since the last barrier, or draws were recorded
@@ -2593,6 +2600,93 @@ static void texture_verify(struct texture *texture, const struct dk_command_text
 	}
 }
 
+/* texture_write's for a texture whose texels are more than a staging slice
+holds, which staging_copy refuses whole: a decoded 2048x1024 one with its
+levels (11 MB: the_Cage's zoom drew whatever the image had held before), the
+dynamic lights' 256x256x32 3D one (9 MB). Each level is staged on its own, as
+many of its 3D slices at a time as fit, and a slice larger than the slice of
+staging memory a run of its rows (of blocks, compressed) at a time.
+staging_copy waits for the copies recorded before it when the slice fills. */
+static void texture_write_pieces(struct texture *texture, const struct dk_command_texture *command,
+	const unsigned char *texels)
+{
+	uint32_t faces = command->kind == DK_TEXTURE_CUBE ? 6 : 1;
+	uint32_t block = command->format == DK_TEXTURE_BGRA ? 1 : 4;
+	uint32_t face, level;
+
+	textures_fence(1);
+	for (face = 0; face < faces; face++)
+	{
+		uint32_t offset = face * command->face_bytes;
+
+		for (level = 0; level < command->levels; level++)
+		{
+			uint32_t width = level_size(command->width, level), height = level_size(command->height, level);
+			uint32_t depth = command->kind == DK_TEXTURE_3D ? level_size(command->depth, level) : 1;
+			uint32_t units = (height + block - 1) / block;
+			uint32_t row_bytes = command->format == DK_TEXTURE_BGRA ? width * 4 :
+				((width + 3) / 4) * (command->format == DK_TEXTURE_BC1 ? 8 : 16);
+			uint32_t plane_bytes = row_bytes * units;
+			uint32_t z = 0;
+
+			while (z < depth)
+			{
+				/* (whole slices if one fits, else rows of one) */
+				uint32_t planes = plane_bytes <= STAGING_SLICE_SIZE ? STAGING_SLICE_SIZE / plane_bytes : 1;
+				uint32_t unit = 0;
+
+				if (planes > depth - z)
+					planes = depth - z;
+				while (unit < units)
+				{
+					uint32_t count = planes > 1 || plane_bytes <= STAGING_SLICE_SIZE ? units :
+						STAGING_SLICE_SIZE / row_bytes;
+					DkImageView view;
+					DkImageRect rectangle;
+					DkCopyBuf copy;
+					DkGpuAddr source;
+
+					if (count > units - unit)
+						count = units - unit;
+					source = staging_copy(texels + offset + z * plane_bytes + unit * row_bytes,
+						planes > 1 ? planes * plane_bytes : count * row_bytes);
+					if (!source)
+					{
+						texture_problem("texture %u: level %u (%ux%ux%u) could not be staged", (unsigned)command->id,
+							(unsigned)level, (unsigned)width, (unsigned)height, (unsigned)depth);
+						return;
+					}
+					dkImageViewDefaults(&view, &texture->image);
+					view.mipLevelOffset = (uint8_t)level;
+					view.mipLevelCount = 1;
+					if (command->kind == DK_TEXTURE_CUBE)
+					{
+						view.layerOffset = (uint16_t)face;
+						view.layerCount = 1;
+					}
+					rectangle.x = 0;
+					rectangle.y = unit * block;
+					rectangle.z = z;
+					rectangle.width = width;
+					rectangle.height = (unit + count) * block < height ? count * block : height - unit * block;
+					rectangle.depth = planes;
+					copy.addr = source;
+					copy.rowLength = 0;
+					copy.imageHeight = 0;
+					dkCmdBufCopyBufferToImage(dk.commands, &copy, &view, &rectangle, 0);
+					tex.written_unfenced = 1;
+					dk.recorded = 1;
+					unit += count;
+				}
+				z += planes;
+			}
+			offset += level_bytes(command, level);
+		}
+	}
+	profile.frame.texture_writes++;
+	profile.frame.texture_bytes += command->source_bytes;
+}
+
 /* copies the command's texels into the image: every face, every level */
 /* host_texels: the texels in the host's own memory (the dummy's), or NULL
 for the command's source, which is a guest address. They must not cross in
@@ -2622,6 +2716,12 @@ static void texture_write(struct texture *texture, const struct dk_command_textu
 		source = window_read(command->source, command->source_bytes);
 		if (!source)
 			source = staging_copy((const void *)(uintptr_t)command->source, command->source_bytes);
+	}
+	if (!source && command->source_bytes > STAGING_SLICE_SIZE)
+	{
+		texture_write_pieces(texture, command, host_texels ? (const unsigned char *)host_texels :
+			(const unsigned char *)(uintptr_t)command->source);
+		return;
 	}
 	if (!source)
 	{
@@ -3002,10 +3102,26 @@ static void dummy_make(void)
 		texture_write(&tex.dummy, &command, black);
 }
 
+static void plasma_dummy_make(void)
+{
+	static const unsigned char white[4] = { 255, 255, 255, 255 };
+	struct dk_command_texture command;
+
+	if (tex.plasma_dummy.present)
+		return;
+	memset(&command, 0, sizeof(command));
+	command.kind = DK_TEXTURE_3D;
+	command.format = DK_TEXTURE_BGRA;
+	command.width = command.height = command.depth = command.levels = 1;
+	command.face_bytes = command.source_bytes = 4;
+	if (texture_make(&tex.plasma_dummy, &command))
+		texture_write(&tex.plasma_dummy, &command, white);
+}
+
 /* who a texture's slot is for: its id, or the dummy */
 static uint32_t texture_owner(const struct texture *texture)
 {
-	return texture == &tex.dummy ? SLOT_OWNER_DUMMY : (uint32_t)(texture - tex.table);
+	return texture == &tex.dummy || texture == &tex.plasma_dummy ? SLOT_OWNER_DUMMY : (uint32_t)(texture - tex.table);
 }
 
 /* ---------- samplers */
@@ -3474,6 +3590,8 @@ static int textures_apply(void)
 		tex.stages_dirty = 1;
 	}
 	dummy_make();
+	if (tex.plasma_image[0])
+		plasma_dummy_make();
 	/* what was written since the last barrier is made visible to this draw */
 	textures_fence(0);
 	if (!tex.stages_dirty)
@@ -3514,6 +3632,19 @@ static int textures_apply(void)
 	for (stage = 0; stage < 4; stage++)
 		trace.handles[stage] = handles[stage];
 	dkCmdBufBindTextures(dk.commands, DkStage_Fragment, DK_BINDING_TEXTURE0, handles, 4);
+	if (tex.plasma_image[0])
+	{
+		DkResHandle fields[2];
+
+		for (stage = 0; stage < 2; stage++)
+		{
+			uint32_t id = tex.plasma_image[stage];
+			const struct texture *texture = id < DK_TEXTURE_LIMIT && tex.table[id].present ? &tex.table[id] : &tex.plasma_dummy;
+
+			fields[stage] = dkMakeTextureHandle(texture->slot, tex.plasma_sampler);
+		}
+		dkCmdBufBindTextures(dk.commands, DkStage_Vertex, DK_BINDING_PLASMA_TEXTURE0, fields, 2);
+	}
 	tex.stages_dirty = 0;
 	return 1;
 }
@@ -4217,6 +4348,17 @@ static void submit_run(const unsigned char *at, uint32_t size)
 		case DK_COMMAND_TEXTURES:
 			textures_receive((const struct dk_command_textures *)header);
 			break;
+		case DK_COMMAND_PLASMA_OCCLUSION:
+			if (header->size >= sizeof(struct dk_command_plasma_occlusion) && tex.sampler_descriptors)
+			{
+				const struct dk_command_plasma_occlusion *fields = (const struct dk_command_plasma_occlusion *)header;
+
+				tex.plasma_image[0] = fields->images[0];
+				tex.plasma_image[1] = fields->images[1];
+				tex.plasma_sampler = sampler_slot(&fields->sampler);
+				tex.stages_dirty = 1;
+			}
+			break;
 		case DK_COMMAND_TEXTURE_ROWS:
 			texture_rows_receive((const struct dk_command_texture_rows *)header);
 			break;
@@ -4296,7 +4438,13 @@ each begun a refresh after the last. 100 ms at most, should a present
 never come (a faulted queue presents nothing). */
 int host_dk_frame_pacing = 1;
 
-#define PACE_AHEAD 1
+/* debug.frame_pace_ahead: 0 waits instead for the present of the frame just
+handed over, so the next frame's input is read a refresh later and shown on
+the same refresh: 84 to 67 ms from the stick to the view on the Switch Lite,
+and the same frame rate on Blood Gulch with 47 bots, its game thread over a
+refresh by itself (55.9 fps against 56.2). The game no longer runs alongside
+the frame before's commands. true (1) is as above. */
+int host_dk_pace_ahead = 0;
 #define PACE_LIMIT_NS 100000000ULL
 
 static Mutex pace_lock;
@@ -4323,7 +4471,7 @@ void host_dk_pace(void)
 	mutexLock(&pace_lock);
 	pace_handed++;
 	start = slow_now_ns();
-	while ((int32_t)(pace_handed - pace_run) > PACE_AHEAD)
+	while ((int32_t)(pace_handed - pace_run) > host_dk_pace_ahead)
 	{
 		uint64_t waited = slow_now_ns() - start;
 
@@ -4336,7 +4484,7 @@ void host_dk_pace(void)
 					"presented); it goes on", (unsigned)pace_handed, (unsigned)pace_run);
 			}
 			/* (caught up, so as not to wait so again for the same) */
-			pace_run = pace_handed - PACE_AHEAD;
+			pace_run = pace_handed - (uint32_t)host_dk_pace_ahead;
 			break;
 		}
 		condvarWaitTimeout(&pace_presented, &pace_lock, PACE_LIMIT_NS - waited);

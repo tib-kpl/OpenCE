@@ -520,8 +520,9 @@ _graphics = {"display.show_fps", "display.high_res_hud",
              "display.anisotropic_filtering", "display.shadow_resolution", "display.per_pixel_lighting",
              "display.model_detail"}
 # (the visual modifiers: a screen of their own, Extra Effects)
-_extra_effects = {"display.shield_glow", "display.shield_glow_intensity",
-                  "display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping",
+_shield_lighting = {"display.shield_glow", "display.shield_glow_intensity"}
+_shield_rows = [row for row in _video["rows"] if row[1] in _shield_lighting]
+_extra_effects = {"display.overshield_effect", "display.hdr", "display.hdr_output", "display.hdr_tone_mapping",
                   "display.hdr_paper_white", "display.hdr_peak_brightness"}
 # (each platform's rows packed: the Switch has none of the renderer's rows
 # between the text and the model detail, which left it gaps; the two
@@ -557,16 +558,49 @@ SCREENS["video_settings/hdr_calibration"] = {
          "How bright white is (the menus, the HUD, the\ngrey bars), in nits. Choose what looks right.", None),
     ],
 }
-_video["rows"] = [row for row in _video["rows"] if row[1] not in _graphics | _extra_effects]
+_video["rows"] = [row for row in _video["rows"] if row[1] not in _graphics | _extra_effects | _shield_lighting]
 _video["categories"] = [
     ("GRAPHICS:", "video_settings/graphics", "The HUD, text, anti-aliasing, shadows,\nlighting and HDR."),
     ("FOV AND VIEWMODELS:", "video_settings/fov_viewmodels",
      "The field of view and the first-person\nweapon. Their defaults keep the stock view."),
     ("PERFORMANCE:", "video_settings/performance",
      "How fast the console runs the game: a steadier\nframe rate, or a cooler console.", "switch"),
+    # (hidden in an image without the feature, the GL ones:
+    # menu_functions.c's dynamic_lighting_row_show)
+    ("DYNAMIC LIGHTING:", "video_settings/dynamic_lighting",
+     "Added light from projectiles, weapons and\nenergy shields. Added lights default to off."),
+    # (with the shield glow's rows moved, the Switch and the PS5 have none of
+    # its rows left: the overshield and HDR are the OpenGL renderer's)
     ("EXTRA EFFECTS:", "video_settings/extra_effects",
-     "Visual modifiers the stock game does not\nhave, such as the shield glow."),
+     "Visual modifiers the stock game does not\nhave, such as HDR and overshields.", "desktop android web"),
 ]
+SCREENS["video_settings/dynamic_lighting"] = {
+    "screen": "dynamic_lighting_settings_screen", "header": _video["header"], "spacing": 26,
+    "help_top": 370, "help_height": 40,
+    "rows": [
+        ("PROJECTILE LIGHTS:", "display.plasma_lighting", ON_OFF,
+         "Plasma, grenades, rockets and flame streams cast\nsoft light on nearby surfaces and models.", None),
+        ("MUZZLE FLASH LIGHTS:", "display.muzzle_lighting", ON_OFF,
+         "Weapon flashes light nearby surfaces, including\nWarthog and Scorpion guns. Stock effects remain.", None),
+        ("WEAPON GLOW:", "lighting.weapon_glow", ON_OFF,
+         "Swords, plasma charge, fuel rods, Needler and AR\nscreens cast light on nearby surfaces.", None),
+        ("PLASMA PRONG LIGHTING:", "display.plasma_prong_lighting", ON_OFF,
+         "Short, soft spill from plasma-weapon prongs.", None),
+        ("SHIELD EMITTERS:", "lighting.shield_emitters", ON_OFF,
+         "Jackal and stationary shields cast light\non nearby surfaces.", None),
+        ("VEHICLE LIGHTS:", "display.vehicle_lighting", ON_OFF,
+         "Engine glow and directional headlights illuminate\nvehicles and nearby surfaces.", None),
+        ("WORLD EMITTERS:", "display.world_lighting", ON_OFF,
+         "Visible powerups and teleporters cast soft light.\nStock effects and gameplay remain unchanged.", None),
+        ("LIGHT OCCLUSION:", "display.plasma_occlusion", ON_OFF,
+         "Block added light behind walls and vehicles.\nOff traces no rays, so light can pass through them.", None),
+    ] + _shield_rows + [
+        # (the phone's: lighting_config.c's lighting_budget. Last, so that
+        # the other platforms' rows are where they were)
+        ("OCCLUDED LIGHTS:", "display.occlusion_lights", [("8", "8"), ("6", "6"), ("4", "4")],
+         "How many lights trace occlusion a frame. Fewer\nare faster on a slower phone.", "android"),
+    ],
+}
 # the Switch's clocks (port/switch/host/host_sdl2.c)
 SCREENS["video_settings/performance"] = {
     "screen": "performance_settings_screen", "header": _video["header"], "spacing": 30,
@@ -694,7 +728,7 @@ SCREENS["network_setup/server_browser"] = {
         # menu_functions.c's setting_value_index, and writes it again only if another is chosen)
         ("SORT BY:", "network.browser_sort",
          [("DEDICATED FIRST", "servers"), ("PLAYERS", "players"), ("NAME", "name"), ("MAP", "map"),
-          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked")],
+          ("GAME TYPE", "type"), ("LOCKED FIRST", "locked"), ("PING", "ping")],
          "The list's order. Its column titles sort it too;\nchoosing one again reverses it.", None),
         ("MASTER SERVERS:", "network.masters_file", None,
          "The master servers (masters.txt) that answered\nwhen the Server Browser last asked.", None,
@@ -1526,24 +1560,6 @@ STRING_OVERRIDES.update({
         "SHORT RANGE", "HUMAN", "COVENANT", "CLASSIC", "HEAVY WEAPONS", "NO GRENADES"],
 })
 
-# which of STRING_OVERRIDES' strings say what one of the PC version's own
-# says: its index in the PC version's list, or None (the port's own). A map
-# in another language than English has those in its language (map=,
-# menu_tags.c's map_strings); the inserted strings (STRING_INSERTS) are the
-# port's own, the rest of their lists the PC version's
-OVERRIDE_ORIGINALS = {
-    f"{PE}/profile_edit_descriptions": [0, None, None, None, None, None, None, 7, None, None, None],
-    f"{MT}/multiplayer_options": [0, 1, 2, 3, None, 5, None, None],
-    f"{MT}/multiplayer_option_descriptions": [0, 1, None, None, 4, None, 5],
-    "main_menu/gametype_select/var_gametype_banks": [0, None, 2],
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/item_options_labels": [0, 1, 2, 3, 4] + [None] * 4,
-    # (the first's note that infinite grenades work only with 4 players or
-    # fewer is left out: not so here)
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/cap_item_options":
-        [None] + list(range(1, 15)) + [None, 15, 16] + [None] * 24,
-    "main_menu/settings_select/multiplayer_setup/item_options_edit/var_weapon_set": list(range(13)) + [None],
-}
-
 # the map lists' first row: SINGLEPLAYER, MULTIPLAYER, CUSTOM SINGLEPLAYER or
 # CUSTOM MULTIPLAYER maps (_map_kind)
 MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
@@ -1552,6 +1568,13 @@ MAP_KIND_CHOOSER = "main_menu/new_select/list_item_0_map_kind"
 # maps in .zip files, into custom_maps (menu_functions.c's map_import_start,
 # HaloActivity.importMaps)
 MAP_IMPORT = "main_menu/new_select/button_map_import"
+# the map lists' DELETE (Android's, left of IMPORT; the west face button on the
+# list too, which the other platforms pass over): the custom map or the folder
+# of maps chosen, at a second press (menu_functions.c's map_delete_press),
+# which MAP_DELETE_STATUS asks for in the place of the map's words, and says
+# what was deleted
+MAP_DELETE = "main_menu/new_select/button_map_delete"
+MAP_DELETE_STATUS = "main_menu/new_select/map_delete_status"
 
 # the main menu's news: the latest release's notes (tools/embed_assets.py's
 # news_text) in a window the main menu's X opens (WIDGET_PATCHES), its lines
@@ -1579,23 +1602,18 @@ CREDITS_LOGO = 160
 # Link's join and go back alone)
 BROWSER_HINTS = [("browser_hint_join", "%a-button JOIN GAME"), ("browser_hint_refresh", "%y-button REFRESH"),
                  ("browser_hint_filters", "%x-button FILTERS"), ("browser_hint_mode", "MODE"),
-                 ("browser_hint_sort", "SORT"), ("browser_hint_back", "%b-button BACK")]
+                 ("browser_hint_sort", "R STICK: SORT"), ("browser_hint_back", "%b-button BACK")]
 # (the shoulders' pictures before MODE, Kenney's: the menus' text has the
 # Xbox's black and white alone; port/assets/menus/ce/port/hints)
 BROWSER_HINT_PICTURES = [("browser_hint_l_switch", "hints/switch_l"), ("browser_hint_r_switch", "hints/switch_r"),
-                         ("browser_hint_l_ps5", "hints/ps5_l1"), ("browser_hint_r_ps5", "hints/ps5_r1"),
-                         # (the d-pad: left and right the column, up and
-                         # down its order)
-                         ("browser_hint_dpad_switch", "hints/switch_dpad"),
-                         ("browser_hint_dpad_ps5", "hints/ps5_dpad")]
+                         ("browser_hint_l_ps5", "hints/ps5_l1"), ("browser_hint_r_ps5", "hints/ps5_r1")]
 # (the first four together at the left, BACK at the right, as the buttons were)
 BROWSER_HINT_PLACES = [("browser_hint_join", 24, 452, "switch ps5"), ("browser_hint_refresh", 135, 452, "switch ps5"),
                        ("browser_hint_filters", 229, 452, "switch ps5"),
                        ("browser_hint_l_switch", 327, 455, "switch"), ("browser_hint_r_switch", 343, 455, "switch"),
                        ("browser_hint_l_ps5", 327, 455, "ps5"), ("browser_hint_r_ps5", 343, 455, "ps5"),
                        ("browser_hint_mode", 361, 452, "switch ps5"),
-                       ("browser_hint_dpad_switch", 417, 455, "switch"), ("browser_hint_dpad_ps5", 417, 455, "ps5"),
-                       ("browser_hint_sort", 435, 452, "switch ps5"), ("browser_hint_back", 540, 452, "switch ps5")]
+                       ("browser_hint_sort", 417, 452, "switch ps5"), ("browser_hint_back", 540, 452, "switch ps5")]
 
 # the Switch's and the PS5's Mods buttons as hints (_mods): A saves, the
 # north turns the mod on or off, the shoulders move it, B cancels
@@ -1707,13 +1725,24 @@ WIDGET_PATCHES = {
         f'<on event="custom_activation" run="mp level select" open="{MT}/connected/gametype_select_screen_wrapper"/>',
         '<on event="b" run="port map list back"/>',
         '<on event="back" run="port map list back"/>',
+        # (the west face button: DELETE's, MAP_DELETE)
+        '<on event="x" run="port map delete"/>',
     ]},
-    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER}},
-    # (their IMPORT, Android's: MAP_IMPORT)
+    "main_menu/solo_level_select/solo_level_select_list": {"swap": {"main_menu/new_select/list_item_0": MAP_KIND_CHOOSER},
+                                                           "handlers": [
+        '<on event="created" run="initialize sp level list solo"/>',
+        '<on event="deleted" run="dispose sp level list"/>',
+        '<on event="custom_activation" run="solo level set map" open="main_menu/difficulty_select/difficulty_select_list_screen"/>',
+        '<on event="x" run="port map delete"/>',
+    ]},
+    # (their DELETE and IMPORT, Android's: MAP_DELETE, MAP_IMPORT)
     f"{MT}/mp_map_select/mp_map_select_button_bar": {"insert_before": {
-        f"{MT}/mp_map_select/mp_map_select_button_ok": [f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
+        f"{MT}/mp_map_select/mp_map_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
+            f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     "main_menu/solo_level_select/solo_level_select_button_bar": {"insert_before": {
         "main_menu/solo_level_select/solo_level_select_button_ok": [
+            f'<child widget="{MAP_DELETE}" x="120" y="1" platform="android"/>',
             f'<child widget="{MAP_IMPORT}" x="250" y="1" platform="android"/>']}},
     # (each description shows the other kind's maps too: a campaign level's
     # picture, name and words on the Map screen, a multiplayer map's on New
@@ -1722,11 +1751,14 @@ WIDGET_PATCHES = {
         '<child widget="main_menu/solo_level_select/replay_level_right_name"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_pic"/>',
         '<child widget="main_menu/solo_level_select/replay_level_right_data"/>',
+        # (DELETE's question and what it did, in the words' place: MAP_DELETE_STATUS)
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     "main_menu/solo_level_select/replay_level_right_item": {"children": [
         f'<child widget="{MT}/mp_map_select/mp_map_right_name"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_pic"/>',
         f'<child widget="{MT}/mp_map_select/mp_map_right_data"/>',
+        f'<child widget="{MAP_DELETE_STATUS}"/>',
     ]},
     f"{MT}/join_game/header_join_game": {"children": [
         f'<child widget="{MT}/join_game/header_server_browser"/>',
@@ -1798,7 +1830,10 @@ WIDGET_PATCHES = {
     # Refresh, and Refresh in Get List's: the Server Browser's only, which
     # asks the public games' hosts again; "swap" puts another widget in a
     # child's place)
-    f"{MT}/join_game/join_game_button_bar": {"swap": {
+    f"{MT}/join_game/join_game_button_bar": {
+        # Restore button focus on return, as the Mods and Theater bars do.
+        "set": {"flags": "pass_unhandled_to_focused_child left_right_tabs_children"},
+        "swap": {
         f"{MT}/join_game/join_game_button_refresh": f"{MT}/join_game/button_clipboard",
         f"{MT}/join_game/join_game_button_update": f"{MT}/join_game/join_game_button_refresh",
     },
@@ -1814,12 +1849,10 @@ WIDGET_PATCHES = {
     f"{MT}/join_game/join_game_items_list": {"handlers": [
         '<on event="y" run="port browser refresh"/>', '<on event="x" run="port browser filters"/>',
         '<on event="white" run="port browser mode previous"/>', '<on event="black" run="port browser mode next"/>',
-        # (the d-pad: left and right highlight a column, up sorts by it the
-        # fewest or A first, down the most or Z first, as the column's arrow
-        # points; the stick goes through the rows: ui_widget.c's
-        # ui_widget_port_dpad_updown_taken)
-        '<on event="left" run="port browser column previous"/>', '<on event="right" run="port browser column next"/>',
-        '<on event="up" run="port browser sort increasing"/>', '<on event="down" run="port browser sort decreasing"/>']},
+        # The right stick sorts; the d-pad and left stick keep the normal
+        # row/button navigation, including LAN and Direct Link.
+        '<on event="right_stick_left" run="port browser column previous"/>', '<on event="right_stick_right" run="port browser column next"/>',
+        '<on event="right_stick_up" run="port browser sort increasing"/>', '<on event="right_stick_down" run="port browser sort decreasing"/>']},
     # (Select Profile's buttons as hints on the Switch and the PS5,
     # PROFILE_HINTS; a touchscreen keeps them)
     f"{PROFILE}/profile_manager_button_bar": {"child_platforms": {
@@ -1829,7 +1862,9 @@ WIDGET_PATCHES = {
     f"{PROFILE}/player_profile_manager_screen": {"children": [
         f'<child widget="{PROFILE}/{key}" x="{x}" y="{y}" platform="{platform}"/>'
         for key, x, y, platform in PROFILE_HINT_PLACES]},
-    f"{MT}/join_game/join_game_screen": {"children": [
+    f"{MT}/join_game/join_game_screen": {
+        "remove_children": [f"{MT}/join_game/browser_hint_dpad_switch", f"{MT}/join_game/browser_hint_dpad_ps5"],
+        "children": [
         f'<child widget="{MT}/join_game/{key}" x="{x}" y="{y}" platform="{platform}"/>'
         for key, x, y, platform in BROWSER_HINT_PLACES]},
 }
@@ -2871,6 +2906,16 @@ def _map_kind() -> list:
     lines += _strings("main_menu/new_select/var_map_kinds",
                       ["SINGLEPLAYER", "MULTIPLAYER", "CUSTOM SINGLEPLAYER", "CUSTOM MULTIPLAYER"])
     lines += _text_button(MAP_IMPORT, "IMPORT", ['<on event="a" run="port map import"/>'])
+    # (DELETE alone: the west button's picture beside it does not fit the
+    # button; the button is the list's X anyway)
+    lines += _text_button(MAP_DELETE, "DELETE", ['<on event="a" run="port map delete"/>',
+                                               '<on event="start" run="port map delete"/>'])
+    # (where the map's words are, mp_map_right_data's place and font: hidden
+    # but while DELETE asks or has just deleted)
+    lines += _widget(MAP_DELETE_STATUS,
+                     [("type", "text"), ("controller", 1), ("left", 417), ("top", 258), ("width", 146),
+                      ("height", 136), ("font", "ui\\small_ui"), ("color", "#FF2896FF"),
+                      ("text_flags", "no_focus_test")], [])
     return lines
 
 
@@ -3339,8 +3384,10 @@ def _theater() -> list:
                      ['<on event="a" run="port theater record"/>', '<on event="start" run="port theater record"/>',
                       '<on event="left_mouse" run="mouse emit accept event"/>'])
     lines += _strings(f"{base}/record_strings", ["RECORD: OFF", "RECORD: ON"])
+    # (DELETE alone, as the map lists': the west button's picture beside it
+    # does not fit the button; theater_delete_hint, the consoles', has room)
     lines += _text_button(f"{base}/button_delete", "DELETE", ['<on event="a" run="port theater delete"/>',
-                                                                      '<on event="start" run="port theater delete"/>'])
+                                                             '<on event="start" run="port theater delete"/>'])
     # (its words a string list's, as button_record's: "port theater update"
     # chooses OFF or ON)
     lines += _widget(f"{base}/theater_record_hint", [("type", "text"), ("controller", 1), ("width", 150),

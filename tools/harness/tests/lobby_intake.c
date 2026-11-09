@@ -83,13 +83,15 @@ int main(int argc, char **argv)
 		unsigned char key_hash[P2P_KEY_HASH_SIZE] = { 0 };
 
 		CHECK(wanted(current, _listing_open, 0, 0), "a live game of this version");
+		CHECK(wanted(42, _listing_open, 0, 0), "the French fork's historical alias is visible");
+		CHECK(!wanted(42, _listing_open, LIVE_WINDOW + 60, 0), "the alias still obeys listing time checks");
 		CHECK(wanted(current, _listing_open, 120, 1), "a kept slot of two minutes ago");
 		CHECK(wanted(current, _listing_closed, 60, 1), "a host's recent tombstone (it ends a game)");
 		CHECK(!wanted(current, _listing_open, RETAINED_WINDOW + 60, 1), "a kept slot of a game long gone");
 		CHECK(!wanted(current, _listing_open, LIVE_WINDOW + 60, 0), "a live listing long gone, sent again");
 		CHECK(!wanted(current - 1, _listing_open, 0, 0) && newer_count == 0, "an older version's: not counted");
-		CHECK(!wanted(current + 1, _listing_open, 0, 0) && newer_count == 1, "a newer version's: counted");
-		CHECK(!wanted(current + 1, _listing_closed, 0, 0) && newer_count == 1, "a newer version's tombstone");
+		CHECK(!wanted(current + 2, _listing_open, 0, 0) && newer_count == 1, "a newer version's: counted");
+		CHECK(!wanted(current + 2, _listing_closed, 0, 0) && newer_count == 1, "a newer version's tombstone");
 		CHECK(!listing_wanted((const unsigned char *)"HL", 2, 0, key_hash), "a short message");
 	}
 	else CASE("burst")
@@ -112,7 +114,7 @@ int main(int argc, char **argv)
 			else if (heard % 3 == 1)
 				is_wanted = wanted(current - 1 - heard % 20, _listing_open, heard % 2 ? 30 : 86400, 1);
 			else
-				is_wanted = wanted(heard % 50 ? current - 3 : current + 1, _listing_open, 5, 1);
+				is_wanted = wanted(heard % 50 ? current - 3 : current + 2, _listing_open, 5, 1);
 			if (is_wanted && queued < MAXIMUM_QUEUED)
 			{
 				queued++;

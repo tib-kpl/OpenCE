@@ -72,6 +72,7 @@ their handlers open opens.
 */
 
 #include "cseries.h"
+#include "lighting_menu.h"
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/event_manager.h"
@@ -388,6 +389,10 @@ static char const *settings_profile_folder(void)
 static boolean setting_text(char const *name, char *text, unsigned int size, boolean default_value)
 {
 	short index;
+	int grouped = lighting_menu_text(name, text, size, default_value);
+
+	if (grouped >= 0)
+		return grouped;
 
 	/* (DISCORD ACCOUNT's LINK: no change, until one is chosen; the master a
 	server that refused this machine for its VPN is listed by, chosen
@@ -460,6 +465,10 @@ static boolean setting_text(char const *name, char *text, unsigned int size, boo
 static boolean setting_write(char const *name, char const *value)
 {
 	short index;
+	int grouped = lighting_menu_write(name, value);
+
+	if (grouped >= 0)
+		return grouped;
 
 	/* (DISCORD ACCOUNT's LINK: done, not written: the master's page opened
 	in the browser, or the account forgotten, player_link.c) */
@@ -518,6 +527,7 @@ static boolean setting_load(struct widget_instance *widget)
 static boolean setting_save(struct widget_instance *widget)
 {
 	struct pc_menu_setting *setting = pc_menu_setting_get(widget->definition_tag_index);
+	int written;
 
 	if (spinner_item(widget))
 		return TRUE;
@@ -526,8 +536,11 @@ static boolean setting_save(struct widget_instance *widget)
 		return FALSE;
 	if (widget->parameters.list.selected_index == setting->loaded_index)
 		return TRUE;
-	if (!config_profile_write(settings_profile_folder(), setting->setting,
-		setting->values[widget->parameters.list.selected_index]))
+	written = lighting_menu_write(setting->setting, setting->values[widget->parameters.list.selected_index]);
+	if (written < 0)
+		written = config_profile_write(settings_profile_folder(), setting->setting,
+			setting->values[widget->parameters.list.selected_index]);
+	if (!written)
 	{
 		platform_log("menus: could not write %s", setting->setting);
 		return FALSE;
@@ -1565,6 +1578,187 @@ static void map_import_clamp(short *first, short *chosen, short count)
 	*first = (short)PIN(*first, 0, MAX(count - MAP_KIND_ROWS, 0));
 }
 
+/* ---- the map lists' DELETE (tools/port_settings.py's MAP_DELETE, and the
+west face button on a list): the first press asks, in the place of the map's
+words (MAP_DELETE_STATUS), and the second deletes what it asked about, if it
+is still the row chosen: a custom map (its .map, and its description and
+picture beside it) or a folder of maps (a set's, all of it:
+custom_edition_maps_delete). The maps are then found again, and the words say
+what was done until another row is chosen. Only CUSTOM SINGLEPLAYER's and
+CUSTOM MULTIPLAYER's rows: the game's own maps are no files of custom_maps. */
+
+#define MAP_DELETE_TEXT_LENGTH 256
+/* (the words' box is 146 units wide, in the small font) */
+#define MAP_DELETE_LINE_CHARACTERS 22
+
+/* (the Mods screen's: UTF-8 words as the menus' text) */
+static void mods_wide_text(char const *text, wchar_t *wide, short length);
+
+static struct
+{
+	/* the row the words are about: the list's kind, the folder open, the row
+	and its text (a custom kind's: the same place may come to hold another
+	map) */
+	short kind;
+	char category[CUSTOM_EDITION_MAP_CATEGORY_LENGTH];
+	short entry;
+	wchar_t row[ROW_TEXT_LENGTH];
+	/* whether the next press on that row deletes it (else the words say what
+	the last one did) */
+	boolean asking;
+	char words[MAP_DELETE_TEXT_LENGTH];
+} map_delete;
+
+static boolean map_delete_custom(short kind)
+{
+	return kind == MAP_KIND_CUSTOM_SINGLEPLAYER || kind == MAP_KIND_CUSTOM_MULTIPLAYER;
+}
+
+/* the row's text, a custom kind's (empty for the game's own maps) */
+static void map_delete_row(short kind, char const *category, short entry, wchar_t *row)
+{
+	row[0] = 0;
+	if (map_delete_custom(kind))
+		map_browse_text(kind == MAP_KIND_CUSTOM_SINGLEPLAYER, category, entry, row);
+}
+
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* the words, wrapped to the box, about this row */
+static void map_delete_say(short kind, char const *category, short entry, char const *words)
+{
+	size_t length = 0;
+
+	map_delete.kind = kind;
+	csstrncpy(map_delete.category, category, sizeof(map_delete.category) - 1);
+	map_delete.category[sizeof(map_delete.category) - 1] = 0;
+	map_delete.entry = entry;
+	map_delete_row(kind, category, entry, map_delete.row);
+	map_delete.words[0] = 0;
+	while (*words && length + 2 < sizeof(map_delete.words))
+	{
+		size_t count = strlen(words), cut = count;
+
+		if (count > MAP_DELETE_LINE_CHARACTERS)
+		{
+			for (cut = MAP_DELETE_LINE_CHARACTERS; cut > 0 && words[cut] != ' '; cut--)
+			{
+			}
+			if (!cut)
+				cut = MAP_DELETE_LINE_CHARACTERS;
+		}
+		snprintf(map_delete.words + length, sizeof(map_delete.words) - length, "%s%.*s", length ? "\n" : "", (int)cut,
+			words);
+		length = strlen(map_delete.words);
+		words += cut;
+		while (*words == ' ')
+			words++;
+	}
+}
+#endif
+
+/* whether the words are about the row chosen */
+static boolean map_delete_about(short kind, char const *category, short entry)
+{
+	wchar_t row[ROW_TEXT_LENGTH];
+
+	if (!map_delete.words[0] || map_delete.kind != kind || map_delete.entry != entry ||
+		csstrcasecmp(map_delete.category, category))
+	{
+		return FALSE;
+	}
+	map_delete_row(kind, category, entry, row);
+	return !wcscmp(row, map_delete.row);
+}
+
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+/* a list's DELETE press on its row chosen (the list's own: its kind, the
+folder open, the rows shown and chosen, its folder's row, its multiplayer
+maps' count). TRUE when the maps changed, and the list's rows with them. */
+static boolean map_delete_press(struct widget_instance *list, short kind, char *category, short *first,
+	short *chosen, short *category_entry, short *map_count)
+{
+	boolean campaign = kind == MAP_KIND_CUSTOM_SINGLEPLAYER;
+	char words[MAP_DELETE_TEXT_LENGTH];
+	char name[ROW_TEXT_LENGTH];
+	wchar_t row[ROW_TEXT_LENGTH];
+	char const *const *names;
+	short count, index, display, last_used;
+	boolean folder, gone;
+
+	if (!map_delete_custom(kind))
+	{
+		map_delete_say(kind, category, *chosen, "Only custom maps can be deleted: choose CUSTOM SINGLEPLAYER or "
+			"CUSTOM MULTIPLAYER above.");
+		map_delete.asking = FALSE;
+		return FALSE;
+	}
+	count = map_browse_count(campaign, category);
+	if (*chosen < 0 || *chosen >= count)
+		return FALSE;
+	/* (a folder's row: one of its maps, by which its folder is found) */
+	folder = map_browse_folder(campaign, category, *chosen);
+	display = custom_edition_maps_display_index_of(campaign, map_browse_entries[*chosen].flat);
+	map_browse_text(campaign, category, *chosen, row);
+	for (index = 0; row[index] && index < ROW_TEXT_LENGTH - 1; index++)
+		name[index] = row[index] < 0x80 ? (char)row[index] : '?';
+	name[index] = 0;
+	if (!map_delete.asking || !map_delete_about(kind, category, *chosen))
+	{
+		snprintf(words, sizeof(words), folder ? "Press DELETE again to delete the folder %s and all the maps in it." :
+			"Press DELETE again to delete %s.", name);
+		map_delete_say(kind, category, *chosen, words);
+		map_delete.asking = TRUE;
+		return FALSE;
+	}
+	map_delete.asking = FALSE;
+	gone = display != NONE && custom_edition_maps_delete(display, folder);
+	platform_log("maps: %s %s %s", folder ? "the folder" : "the map", name, gone ? "deleted" : "not deleted whole");
+	/* (the maps found again, and the list kept on its place; a folder emptied
+	shows the folders again, on its row) */
+	custom_edition_maps_look_again();
+	map_browse_forget();
+	*map_count = ui_widget_port_multiplayer_maps(&names, &last_used);
+	count = map_browse_count(campaign, category);
+	if (category[0] && !count)
+	{
+		category[0] = 0;
+		map_browse_forget();
+		count = map_browse_count(campaign, category);
+		*chosen = *category_entry;
+	}
+	map_import_clamp(first, chosen, count);
+	map_kind_focus(list, *first, *chosen);
+	snprintf(words, sizeof(words), gone ? "%s deleted." : "%s could not be deleted whole.", name);
+	map_delete_say(kind, category, *chosen, words);
+	return TRUE;
+}
+#endif
+
+/* in a list's description, the words (in its words' place) while they are
+about the row chosen; item is its map's frame, shown for them (a folder's
+row has none) */
+static void map_delete_status_show(struct widget_instance *description, char const *item, short kind,
+	char const *category, short chosen)
+{
+	struct widget_instance *status = named(description, "map_delete_status", 0);
+	wchar_t wide[MAP_DELETE_TEXT_LENGTH];
+
+	if (!map_delete_about(kind, category, chosen))
+	{
+		/* (another row chosen: the question, or what was done, is over) */
+		map_delete.words[0] = 0;
+		map_delete.asking = FALSE;
+		visible_set(status, FALSE);
+		return;
+	}
+	mods_wide_text(map_delete.words, wide, NUMBEROF(wide));
+	text_set_length(status, wide, MAP_DELETE_TEXT_LENGTH);
+	visible_set(named(description, item, 0), TRUE);
+	visible_set(named(description, "mp_map_right_data", 0), FALSE);
+	visible_set(named(description, "replay_level_right_data", 0), FALSE);
+	visible_set(status, TRUE);
+}
+
 /* New Game's list: SINGLEPLAYER's levels, the profile's reached, or
 MULTIPLAYER's maps, played alone to walk around (no game engine: a campaign
 game on the map); CUSTOM SINGLEPLAYER's maps played as the campaign's levels
@@ -1742,6 +1936,7 @@ static void level_list_update(struct widget_instance *list)
 		}
 		visible_set(named(description, "replay_level_right_item", 0), display != NONE);
 		map_description_show(description, NONE, display);
+		map_delete_status_show(description, "replay_level_right_item", kind, level_list.category, level_list.chosen);
 		profile_name_show(description);
 		return;
 	}
@@ -1753,6 +1948,7 @@ static void level_list_update(struct widget_instance *list)
 		level = LEVEL_UNAVAILABLE;
 	level_description(description, "replay_level", level, level == campaign.saved_level,
 		level == LEVEL_UNAVAILABLE ? NULL : campaign.levels[level].finished, NONE);
+	map_delete_status_show(description, "replay_level_right_item", kind, level_list.category, level_list.chosen);
 	profile_name_show(description);
 }
 
@@ -2442,6 +2638,25 @@ static void hdr_calibration_row_show(struct widget_instance *list)
 		return;
 	row->visible = halo_hdr_calibration_available() != 0;
 	/* (the focus on it, if the display's HDR went off, to the row before) */
+	if (!row->visible && list->focused_child == row && row->previous)
+	{
+		for (index = 0, child = list->child; child && child != row->previous; child = child->next)
+			index++;
+		list->focused_child = row->previous;
+		list->parameters.list.selected_index = index;
+	}
+}
+
+/* "op_dynamic_lighting": not in an image without the feature (the GL ones) */
+static void dynamic_lighting_row_show(struct widget_instance *list)
+{
+	struct widget_instance *row = named(list, "op_dynamic_lighting", 0);
+	struct widget_instance *child;
+	short index;
+
+	if (!row)
+		return;
+	row->visible = lighting_menu_available() != 0;
 	if (!row->visible && list->focused_child == row && row->previous)
 	{
 		for (index = 0, child = list->child; child && child != row->previous; child = child->next)
@@ -4906,6 +5121,9 @@ static void map_list_update(struct widget_instance *list)
 		visible_set(named(description, "mp_map_right_item", 0), display != NONE);
 		map_description_show(description, NONE, display);
 	}
+	/* (DELETE's words: not about a difficulty's row) */
+	map_delete_status_show(description, "mp_map_right_item", map_list.step == MAP_STEP_DIFFICULTIES ? NONE : kind,
+		map_list.category, map_list.chosen);
 	profile_name_show(description);
 }
 
@@ -4964,6 +5182,38 @@ static boolean map_list_back(struct widget_instance *list, boolean *widget_delet
 		return TRUE;
 	ui_widget_port_go_back(list);
 	*widget_deleted = TRUE;
+	return TRUE;
+}
+
+/* "port map delete" (A on DELETE, or the west face button on a map list):
+the press on New Game's list or the Map screen's, whichever the screen has
+(map_delete_press), its row chosen read first as OK reads it; not while the
+Map screen lists a campaign map's difficulties. Android's alone, as IMPORT
+is: the Switch and the PS5 have no DELETE, and their west button does
+nothing here */
+static boolean map_delete_from(struct widget_instance *widget)
+{
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	struct widget_instance *screen = screen_of(widget);
+	struct widget_instance *list;
+
+	if ((list = named(screen, "mp_map_select_list_2", 0)) != NULL)
+	{
+		if (map_list.step != MAP_STEP_MAPS)
+			return TRUE;
+		map_list_update(list);
+		map_delete_press(list, map_list.kind, map_list.category, &map_list.first, &map_list.chosen,
+			&map_list.category_entry, &map_list.map_count);
+	}
+	else if ((list = named(screen, "solo_level_select_list", 0)) != NULL)
+	{
+		level_list_update(list);
+		map_delete_press(list, level_list.kind, level_list.category, &level_list.first, &level_list.chosen,
+			&level_list.category_entry, &level_list.map_count);
+	}
+#else
+	(void)widget;
+#endif
 	return TRUE;
 }
 
@@ -6085,12 +6335,21 @@ static struct
 	{ "op_sort_header_locked", P2P_LOBBY_SORT_LOCKED },
 	{ "op_sort_header_dedicated", P2P_LOBBY_SORT_SERVERS },
 	{ "op_sort_header_classic", NONE },
-	{ "op_sort_header_ping", NONE },
+	{ "op_sort_header_ping", P2P_LOBBY_SORT_PING },
 };
 
 /* the columns the d-pad's left and right go through, as they are on the
 screen, left to right (sort_headers' indices: those that sort) */
-static short const sort_columns[] = { 4, 5, 0, 1, 2, 3 };
+static short const sort_columns[] = { 4, 5, 0, 1, 2, 3, 7 };
+
+/* whether an order goes up first: A to Z (names, maps, types) and the lowest
+ping; the others the most first (players, the dedicated servers, a
+password's) */
+static boolean lobby_browser_order_up(short order)
+{
+	return order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE ||
+		order == P2P_LOBBY_SORT_PING;
+}
 
 static struct
 {
@@ -6451,7 +6710,7 @@ static void lobby_browser_focus_row(struct widget_instance *list, short row)
 }
 
 /* the column titles' arrows: the one the list is sorted by shows the way
-(up: A to Z, or the fewest first), in white (its bitmaps' second frame: the
+(up: A to Z, or the fewest or lowest first), in white (its bitmaps' second frame: the
 first, blue, is lost on the title's blue) */
 /* the column highlighted: the d-pad's, else the order's */
 static short lobby_browser_column(void)
@@ -6479,10 +6738,7 @@ static void lobby_browser_sort_arrows(struct widget_instance *list)
 		struct widget_instance *arrows = named(header, "header_sort_arrows", 0);
 		short order = sort_headers[index].order;
 		boolean sorted = order != NONE && order == lobby_browser.order;
-		/* (names, maps and types first go A to Z; players and the others
-		the most first) */
-		boolean up = (order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE) !=
-			lobby_browser.reverse;
+		boolean up = lobby_browser_order_up(order) != lobby_browser.reverse;
 		struct widget_instance *up_arrow = named(arrows, "header_sort_up_arrow", 0);
 		struct widget_instance *down_arrow = named(arrows, "header_sort_down_arrow", 0);
 
@@ -6614,17 +6870,6 @@ static boolean list_focused_tab(struct widget_instance *screen)
 		(long)strlen(list->focused_child->name) - 15), "op_browser_mode");
 }
 
-/* halo_linux_source_fixups.h: the server browser's list sorts with the
-d-pad's up and down (its stick goes through the rows) */
-unsigned char ui_widget_port_dpad_updown_taken(void *instance)
-{
-	struct widget_instance *widget = instance;
-	size_t length = widget && widget->name ? strlen(widget->name) : 0;
-
-	return multiplayer.mode == _multiplayer_mode_server_browser && length >= 20 &&
-		!strcmp(widget->name + length - 20, "join_game_items_list");
-}
-
 /* the server browser's buttons by the controller's, whatever row has the
 focus (tools/port_settings.py: the north refreshes, the west opens the
 filters, the shoulders change the source tab); nothing while a panel is up
@@ -6659,9 +6904,8 @@ static boolean browser_shortcut(struct widget_instance *widget, char const *name
 	if (!strcmp(name, "port browser sort decreasing") || !strcmp(name, "port browser sort increasing"))
 	{
 		short order = sort_headers[sort_columns[lobby_browser_column()]].order;
-		/* (names, maps and types first go A to Z, increasing; players and
-		the others the most first, decreasing: lobby_browser_sort_arrows) */
-		boolean text = order == P2P_LOBBY_SORT_NAME || order == P2P_LOBBY_SORT_MAP || order == P2P_LOBBY_SORT_TYPE;
+		/* (an order that goes up first is increasing first: lobby_browser_order_up) */
+		boolean text = lobby_browser_order_up(order);
 		boolean decreasing = !strcmp(name, "port browser sort decreasing");
 		char text_order[32];
 
@@ -6787,7 +7031,7 @@ static void lobby_browser_game_lines(struct p2p_listing const *game, wchar_t *pl
 		text_append_word(players, size, !game->open ? _browser_word_full : _browser_word_under_way);
 	}
 	rules[0] = 0;
-	if (game->network_version != HALO_PORT_NETWORK_VERSION)
+	if (!halo_port_network_version_compatible(game->network_version))
 	{
 		text_append_word(rules, size, game->network_version > HALO_PORT_NETWORK_VERSION ?
 			_browser_word_newer_build : _browser_word_older_build);
@@ -6930,7 +7174,7 @@ static void lobby_browser_update(struct widget_instance *list)
 		if (index >= lobby_browser.count)
 			continue;
 		game = &lobby_browser.games[index];
-		other_version = game->network_version != HALO_PORT_NETWORK_VERSION;
+		other_version = !halo_port_network_version_compatible(game->network_version);
 		text_to_wide(game->name, text, ROW_TEXT_LENGTH);
 		text_set(named(row, "server_item_server_name", 0), text);
 		map_display_name(game->map, text);
@@ -7269,7 +7513,7 @@ static boolean lobby_browser_select(struct widget_instance *widget, short contro
 	if (index >= lobby_browser.count)
 		return campaign_fail();
 	game = &lobby_browser.games[index];
-	if (game->network_version != HALO_PORT_NETWORK_VERSION)
+	if (!halo_port_network_version_compatible(game->network_version))
 	{
 		network_game_client_tell_version(game->network_version, TRUE);
 		return campaign_fail();
@@ -10611,6 +10855,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			return map_import_start();
 		}
+		else if (!strcmp(name, "port map delete"))
+		{
+			return map_delete_from(widget);
+		}
 #if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
 		else if (!strcmp(name, "port vk driver import"))
 		{
@@ -10867,6 +11115,7 @@ void pc_menu_game_data_function_invoke(
 		master_servers_show(widget);
 		discord_account_show(widget);
 		hdr_calibration_row_show(widget);
+		dynamic_lighting_row_show(widget);
 		settings_help(widget);
 	}
 	else if (!strcmp(name, "port hdr calibration"))

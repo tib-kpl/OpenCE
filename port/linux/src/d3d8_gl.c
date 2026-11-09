@@ -5813,6 +5813,21 @@ void xgpu_static_range_remove(const void *start, int indices)
 
 /* (the OpenGL renderer keeps its ranges until the game lets each go, as it
 always has) */
+/* The local visibility fields are implemented by Vulkan and deko3d.
+   OpenGL keeps the stock lighting when a field is requested. */
+int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
+{
+	(void)texture;
+	(void)pixels;
+	(void)reach;
+	return 0;
+}
+
+void halo_field_texture_forget(const void *texture)
+{
+	(void)texture;
+}
+
 void xgpu_static_forget_all(void)
 {
 }
@@ -7123,6 +7138,32 @@ void WINAPI D3DDevice_SetVertexData4f(INT reg, FLOAT a, FLOAT b, FLOAT c, FLOAT 
 	set_attribute(reg, a, b, c, d);
 }
 
+void WINAPI D3DDevice_DrawVerticesImmediate(D3DPRIMITIVETYPE type, DWORD mask, CONST FLOAT *data, UINT count)
+{
+	unsigned long registers = (unsigned long)__builtin_popcountl(mask);
+	UINT vertex;
+	int reg, index;
+
+	if (!count || !(mask & 1))
+		return;
+	D3DDevice_Begin(type);
+	for (vertex = 0; vertex < count; vertex++)
+	{
+		const float *in = data + vertex * registers * 4;
+
+		/* (register 0, which completes the vertex, last) */
+		for (reg = 31, index = (int)registers; reg >= 0; reg--)
+		{
+			if (mask & (1UL << reg))
+			{
+				index--;
+				D3DDevice_SetVertexData4f(reg, in[index * 4], in[index * 4 + 1], in[index * 4 + 2], in[index * 4 + 3]);
+			}
+		}
+	}
+	D3DDevice_End();
+}
+
 void WINAPI D3DDevice_SetVertexData2s(INT reg, SHORT a, SHORT b)
 {
 	set_attribute(reg, (float)a, (float)b, 0.0f, 1.0f);
@@ -7796,8 +7837,8 @@ static void frame_end_buffers(void)
 		{
 			device.visibility_latest[device.ring_tests[ring][test][0]] =
 				device.counter_values[device.ring_tests[ring][test][1]];
-				device.visibility_counted[device.ring_tests[ring][test][0]] =
-					device.ring_test_numbers[ring][test];
+			device.visibility_counted[device.ring_tests[ring][test][0]] =
+				device.ring_test_numbers[ring][test];
 		}
 		device.ring_test_count[ring] = 0;
 	}

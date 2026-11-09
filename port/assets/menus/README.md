@@ -32,6 +32,14 @@ one screen (by its name, `main_menu/settings_select/...`), for looking at it.
 
 ## Writing them again
 
+For an existing PC widget whose port-owned attributes, handlers or added
+children changed, `tools/ce_menus.py --widget-overrides <widget-name> ...`
+refreshes those overrides from `tools/port_settings.py` without the original
+PC tags. For example, the browser uses these widget names:
+`main_menu/multiplayer_type_select/join_game/join_game_items_list`,
+`main_menu/multiplayer_type_select/join_game/join_game_button_bar` and
+`main_menu/multiplayer_type_select/join_game/join_game_screen`.
+
 `tools/ce_menus.py` writes every file in `ce/` and `menus.json` again,
 the settings screens too (it runs `tools/port_settings.py`'s):
 
@@ -99,14 +107,8 @@ the bitmap has exactly two frames; the game's functions choose others.
 ```
 
 A list of texts, which widgets show by number. `\n` starts a new line.
-
-A list may name the PC version's list of the same texts with `map=` (its tag,
-`ui\shell\main_menu\main_menu_options`), and each of its texts that is one
-of that list's its number there (`<string text="NEW CAMPAIGN" map="0"/>`).
-Each Custom Edition has that list in its language in its `loc.map`: with
-`display.menu_language = "maps"`, a text with a number is the list's from
-the `loc.map` in `custom_maps`, when it has the list and the number. A text
-without one (the port's own) is always the file's.
+The text is always the file's: never a Custom Edition `loc.map`'s, whose
+language is whichever edition it came from.
 
 ### `<widget>`
 

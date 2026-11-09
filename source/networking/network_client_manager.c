@@ -3341,8 +3341,8 @@ the system link list does (network_game_join_game_from_server_list) */
 /* the platform layer's (sdl_platform.c) */
 void platform_show_message(char const *title, char const *message);
 
-/* whether this client can join the advertised game: its host's network
-version is this machine's (HALO_PORT_NETWORK_VERSION), and it plays the
+/* port: whether this client can join the advertised game: its host uses
+this machine's wire format (including the old French version-42 alias), and it plays the
 distributed netcode (a host of this version built before the lockstep
 netcode was removed may play that). If not the player is told why (when
 tell), and nothing is joined. */
@@ -3352,7 +3352,6 @@ boolean network_game_client_advertised_game_compatible(
 	boolean tell)
 {
 	long game_index = client ? game - client->available_games : NONE;
-	unsigned int ours = HALO_PORT_NETWORK_VERSION;
 	unsigned int theirs;
 	boolean distributed;
 
@@ -3361,7 +3360,8 @@ boolean network_game_client_advertised_game_compatible(
 	theirs = network_game_client_advertised_versions[game_index].version;
 	distributed = (network_game_client_advertised_versions[game_index].flags &
 		HALO_PORT_ADVERTISED_DISTRIBUTED_FLAG) != 0;
-	if (theirs == ours && distributed)
+	/* port: the French fork's old 42 is the version-41 wire format. */
+	if (halo_port_network_version_compatible(theirs) && distributed)
 	{
 		network_event("joining a host of network version %u", theirs);
 		return TRUE;
@@ -3380,7 +3380,7 @@ void network_game_client_tell_version(
 	unsigned int ours = HALO_PORT_NETWORK_VERSION;
 	char message[400];
 
-	if (theirs == ours)
+	if (halo_port_network_version_compatible(theirs))
 	{
 		csprintf(message,
 			"The host is using the lockstep network code, which this version no longer has.\n\n"

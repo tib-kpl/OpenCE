@@ -306,10 +306,6 @@ static const struct config_setting config_settings[] =
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
-	{ "display.menu_language", _config_string, "\"maps\"", "HALO_MENU_LANGUAGE", _environment_value, _platform_all,
-		"The PC menus' language: \"maps\" for the language of the Custom Edition\n"
-		"whose loc.map is in custom_maps (as that edition shows them; English\n"
-		"without one), \"english\" for English. The port's own lines are English." },
 	{ "display.player_names", _config_string, "\"all\"", "HALO_PLAYER_NAMES", _environment_value, _platform_all,
 		"In multiplayer, whose names are drawn above their heads: \"all\",\n"
 		"\"allies\", \"enemies\" or \"none\". An enemy's shows only within the\n"
@@ -518,8 +514,8 @@ static const struct config_setting config_settings[] =
 	{ "input.left_stick_dead_zone", _config_integer, "-1", "HALO_LEFT_STICK_DEAD_ZONE", _environment_value, _platform_all,
 		"How far the controller's left stick moves before it moves the player,\n"
 		"in percent of its travel (0 to 50): lower for finer control, higher for\n"
-		"a worn stick that drifts; -1 for the game's own (27%). On Android, the\n"
-		"touch controls' stick too." },
+		"a worn stick that drifts; -1 for the game's own (27%). Not the touch\n"
+		"controls' sticks, which have their own." },
 	{ "input.right_stick_dead_zone", _config_integer, "-1", "HALO_RIGHT_STICK_DEAD_ZONE", _environment_value, _platform_all,
 		"How far the controller's right stick moves before it turns the view, in\n"
 		"percent of its travel (0 to 50); -1 for the game's own (27%)." },
@@ -710,6 +706,51 @@ static const struct config_setting config_settings[] =
 		"plays on an Elite's shield. Only what is drawn and heard changes.\n"
 		"In a network game, the host's network.shield_effects decides, unless\n"
 		"it is \"players\" (each player's own) or the game is co-op." },
+	{ "display.plasma_occlusion", _config_boolean, "false", "HALO_PLASMA_OCCLUSION", _environment_value, _platform_all,
+		"Light Occlusion: dynamic lights stop at walls and vehicles, from rays\n"
+		"traced on the CPU. Projectile, muzzle, Covenant, vehicle and Shield Glow\n"
+		"lights all follow it; off, no rays are traced. At most eight occluded\n"
+		"lights. Vulkan and deko3d only." },
+#if defined(HALO_ANDROID) && !defined(HALO_SWITCH)
+	/* (the phone's: lighting_config.c's lighting_budget. The Switch traces a
+	fixed count of rays, the PS5 eight lights) */
+	{ "display.occlusion_lights", _config_integer, "6", "HALO_OCCLUSION_LIGHTS", _environment_value, _platform_android,
+		"How many lights Light Occlusion traces rays for in a frame: 8, 6 or 4.\n"
+		"Fewer are faster on a slower phone; a light past them keeps its last\n"
+		"occlusion, or has none, until its turn. Changes at once. Vulkan only." },
+#endif
+	{ "display.plasma_lighting", _config_boolean, "false", "HALO_PLASMA_LIGHTING", _environment_value, _platform_all,
+		"Supported plasma, Covenant and rocket flight lights follow rendered poses\n"
+		"with soft world and model falloff and omni highlights. Off keeps stock\n"
+		"lighting. Vulkan and deko3d only." },
+	{ "display.muzzle_lighting", _config_boolean, "false", "HALO_MUZZLE_LIGHTING", _environment_value, _platform_all,
+		"Soft muzzle illumination with a smooth render-time fade. Stock flash\n"
+		"effects remain intact. Off keeps stock lighting. Vulkan and deko3d only." },
+	{ "display.weapon_glow", _config_boolean, "false", "HALO_WEAPON_GLOW", _environment_value, _platform_all,
+		"Held energy weapons cast soft light. Vulkan and deko3d only." },
+	{ "display.fuel_rod_lighting", _config_boolean, "false", "HALO_FUEL_ROD_LIGHTING", _environment_value, _platform_all,
+		"Soft green illumination from exposed Grunt and Hunter fuel rods. Stock\n"
+		"weapon effects remain intact. Vulkan and deko3d only." },
+	{ "display.ammo_counter_lighting", _config_boolean, "false", "HALO_AMMO_COUNTER_LIGHTING", _environment_value, _platform_all,
+		"Blue spill and screen emission from held Assault Rifle ammo counters.\n"
+		"Vulkan and deko3d only." },
+	{ "display.needler_lighting", _config_boolean, "false", "HALO_NEEDLER_LIGHTING", _environment_value, _platform_all,
+		"Soft pink-purple spill and luminous crystals on held Needlers. Vulkan\n"
+		"and deko3d only." },
+	{ "display.plasma_prong_lighting", _config_boolean, "false", "HALO_PLASMA_PRONG_LIGHTING", _environment_value, _platform_all,
+		"Short, soft forward spill from plasma-weapon prongs, apart from Weapon\n"
+		"Glow. Vulkan and deko3d only." },
+	{ "display.jackal_shield_lighting", _config_boolean, "false", "HALO_JACKAL_SHIELD_LIGHTING", _environment_value, _platform_all,
+		"Soft illumination from visible Jackal shields, following their colour and\n"
+		"pose. Stock shield effects remain intact. Vulkan and deko3d only." },
+	{ "display.covenant_shield_lighting", _config_boolean, "false", "HALO_COVENANT_SHIELD_LIGHTING", _environment_value, _platform_all,
+		"Soft illumination from active stationary Covenant shield emitters. Stock\n"
+		"shield effects remain intact. Vulkan and deko3d only." },
+	{ "display.vehicle_lighting", _config_boolean, "false", "HALO_VEHICLE_LIGHTING", _environment_value, _platform_all,
+		"Vehicle engines and headlights illuminate nearby surfaces. Vulkan and\n"
+		"deko3d only." },
+	{ "display.world_lighting", _config_boolean, "false", "HALO_WORLD_LIGHTING", _environment_value, _platform_all,
+		"Visible powerups and teleporters cast soft light. Vulkan and deko3d only." },
 	{ "display.shield_glow", _config_boolean, "false", "HALO_SHIELD_GLOW", _environment_value, _platform_all,
 		"Energy shields light what is around them as they flare, as plasma\n"
 		"does, in the shield's own color. In a network game, the host's\n"
@@ -1022,7 +1063,8 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The server browser's order: \"players\" (the most players first),\n"
 		"\"servers\" (dedicated servers first, then by players), \"name\", \"map\",\n"
-		"\"type\" or \"locked\" (a password's first); \"-\" before one reverses it\n"
+		"\"type\", \"locked\" (a password's first) or \"ping\" (the lowest first,\n"
+		"those not timed yet last); \"-\" before one reverses it\n"
 		"(\"-players\"). A column title sorts by it, and again the other way." },
 	{ "network.stun_servers", _config_string, "\"stun.l.google.com:19302,stun.cloudflare.com:3478\"",
 		"HALO_NET_STUN", _environment_value, _platform_all,
@@ -1326,6 +1368,11 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"The benchmark leaves the player's view to the player rather than turning\n"
 		"it, to measure the game as it is played (the player still cannot be hurt)." },
+	{ "debug.benchmark_weapon", _config_string, "\"\"", "HALO_BENCHMARK_WEAPON", _environment_value, _platform_all,
+		"Everyone in the benchmark's multiplayer games starts with this weapon, with\n"
+		"no others on the map, playing to 1000 kills: \"assault_rifle\", \"pistol\",\n"
+		"\"shotgun\", \"sniper_rifle\", \"rocket_launcher\", \"plasma_pistol\",\n"
+		"\"plasma_rifle\" or \"needler\". Empty: the map's weapons, as usual." },
 	{ "debug.benchmark_quit", _config_boolean, "true", "HALO_BENCHMARK_QUIT", _environment_value, _platform_all,
 		"Quit the game once the benchmark is done; false goes back to the main\n"
 		"menu." },
@@ -1460,7 +1507,7 @@ static const struct config_setting config_settings[] =
 		"graphics with Mesa's driver (which can hang without), 0 never." },
 	{ "debug.gpu_stats", _config_boolean, "false", "HALO_GPU_STATS", _environment_set_is_true, _platform_all,
 		"Log the renderer's draw counts once a second (otherwise, on Android's Vulkan,\n"
-		"only a second whose draws were skipped)." },
+		"only a second whose draws were skipped), and what dynamic lighting's fields did." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,
@@ -1700,6 +1747,12 @@ static const struct config_setting config_settings[] =
 		"Turn the game's drawing commands into the GPU's on a thread of their own,\n"
 		"on another core, while the game goes on with its next frame; false runs\n"
 		"them on the game's thread, as before. Takes effect the next start." },
+#ifdef HALO_SWITCH
+	{ "debug.frame_pace_ahead", _config_boolean, "false", "HALO_FRAME_PACE_AHEAD", _environment_value, _platform_android,
+		"With the render thread, let the game begin a frame while the one before\n"
+		"waits to be presented, a refresh more lag; false waits for that present.\n"
+		"Takes effect the next start." },
+#endif
 	{ "debug.gpu_draw_scissor", _config_boolean, "true", "HALO_GPU_DRAW_SCISSOR", _environment_value,
 		_platform_android,
 		"Rasterize an object's shadow and a dynamic light's pass only inside the\n"

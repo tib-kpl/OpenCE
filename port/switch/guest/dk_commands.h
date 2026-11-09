@@ -46,6 +46,7 @@ enum
 	DK_COMMAND_HUD_IMAGE,
 	DK_COMMAND_HUD_FORGET,
 	DK_COMMAND_BLIT,
+	DK_COMMAND_PLASMA_OCCLUSION,
 };
 
 /* a surface's kind, as the host makes its image */
@@ -449,9 +450,10 @@ struct dk_command_composite
 
 The pixels the draws between a begin and an end pass go to result slot
 index (1 to DK_VISIBILITY_SLOTS - 1), which the GPU writes when it gets
-there; host_dk_visibility reads a slot's latest count. */
+there; host_dk_visibility reads a slot's latest count. Slot 0 is none, and
+the game's 4096 slots (d3d8_gl.c's VISIBILITY_TEST_SLOTS) are 1 to 4096. */
 
-#define DK_VISIBILITY_SLOTS 4096
+#define DK_VISIBILITY_SLOTS 4097
 
 struct dk_command_visibility_end
 {
@@ -475,6 +477,16 @@ struct dk_command_textures
 {
 	struct dk_command_header header;
 	struct dk_stage_texture stages[4];
+};
+
+/* the images the dynamic lighting's model variants with occlusion read in the
+vertex stage (DK_BINDING_PLASMA_TEXTURE0), until they change: sent only for
+such a draw, so that nothing else's stream or binding changes */
+struct dk_command_plasma_occlusion
+{
+	struct dk_command_header header;
+	uint32_t images[2];
+	struct dk_sampler sampler;
 };
 
 /* how an input register of the vertex shader is fed */

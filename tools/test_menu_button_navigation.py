@@ -1,4 +1,4 @@
-"""Run real engine focus/tab code against the generated Mods/Cinema bars."""
+"""Run real engine focus/tab code against generated menu button bars."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -29,20 +29,28 @@ def test_android_mod_actions_clear_the_details_panel():
         assert previous_bottom <= 480
 
 
-@pytest.mark.parametrize("platform,menu,bar", [
-    ("android", "mods", "button_bar"),
-    ("android", "mods", "button_bar_files"),
-    ("desktop", "mods", "button_bar"),
-    ("android", "theater", "button_bar"),
-    ("desktop", "theater", "button_bar"),
+@pytest.mark.parametrize("platform,menu,bar,mode", [
+    ("android", "mods", "button_bar", None),
+    ("android", "mods", "button_bar_files", None),
+    ("desktop", "mods", "button_bar", None),
+    ("android", "theater", "button_bar", None),
+    ("desktop", "theater", "button_bar", None),
+    ("android", "multiplayer_type_select.join_game", "join_game_button_bar", "internet"),
+    ("android", "multiplayer_type_select.join_game", "join_game_button_bar", "lan"),
+    ("android", "multiplayer_type_select.join_game", "join_game_button_bar", "direct"),
 ])
-def test_return_to_bar_and_reach_every_button(tmp_path, platform, menu, bar):
+def test_return_to_bar_and_reach_every_button(tmp_path, platform, menu, bar, mode):
     cc = shutil.which("clang")
     if not cc:
         pytest.skip("clang required")
     xml = ET.parse(ROOT / f"port/assets/menus/ce/main_menu.{menu}.xml")
-    definition = next(w for w in xml.getroot().findall("widget") if w.get("name") == f"main_menu/{menu}/{bar}")
+    definition = next(w for w in xml.getroot().findall("widget") if w.get("name") == f"main_menu/{menu.replace('.', '/')}/{bar}")
     buttons = [c for c in definition.findall("child") if platform in c.get("platform", platform).split()]
+    if mode:
+        hidden = {"join_game_button_update"}
+        hidden |= {"button_clipboard"} if mode != "direct" else set()
+        hidden |= {"join_game_button_refresh", "join_game_button_filters"} if mode != "internet" else set()
+        buttons = [c for c in buttons if c.get("widget").rsplit("/", 1)[-1] not in hidden]
     assert len(buttons) >= 2
     if platform == "android" and menu == "mods":
         expected = ["button_import", "button_delete", "button_up", "button_down"] if bar == "button_bar_files" else ["button_ok", "common_button_cancel"]
@@ -110,6 +118,14 @@ int main(void) {
  root.focused_child=&row;
  column_list_update(&bar,&defs[0]);
  assert(!buttons[BUTTONS-1].animation.current_frame_index);
+ /* The parent's up/down tabs enter the bar and return to the game row. */
+ bar.focused_child=NULL;
+ widget_instance_tab_to_next_valid_widget(&root);
+ assert(root.focused_child==&bar && bar.focused_child==&buttons[0]);
+ widget_instance_tab_to_previous_valid_widget(&root);
+ assert(root.focused_child==&row);
+ widget_instance_tab_to_next_valid_widget(&root);
+ assert(root.focused_child==&bar);
  root.focused_child=&bar;
  /* A mouse/other-row focus clears the old path; return and repeat. */
  for(i=0;i<3;i++) {
@@ -129,3 +145,38 @@ int main(void) {
     binary = tmp_path / "navigation"
     subprocess.run([cc, "-m32", "-std=gnu89", str(path), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+
+def test_browser_directional_events_reach_rows_and_buttons():
+    xml = ET.parse(ROOT / "port/assets/menus/ce/main_menu.multiplayer_type_select.join_game.xml")
+    widgets = {w.get("name").rsplit("/", 1)[-1]: w for w in xml.getroot().findall("widget")}
+    handlers = {h.get("event"): h.get("run") for h in widgets["join_game_items_list"].findall("on")}
+    assert not {"up", "down", "left", "right"} & handlers.keys()
+    assert handlers["right_stick_up"] == "port browser sort increasing"
+    assert handlers["right_stick_right"] == "port browser column next"
+    assert "up_down_tabs_children" in widgets["join_game_items_list"].get("flags").split()
+
+
+def test_browser_overrides_regenerate_without_other_menu_changes(tmp_path):
+    import ast
+    from xml.sax.saxutils import quoteattr
+    from tools import port_settings
+
+    # Exercise the generator's real text-only path without its art dependencies.
+    tree = ast.parse((ROOT / "tools/ce_menus.py").read_text(encoding="utf-8"))
+    selected = ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and
+                               node.name in ("attributes", "regenerate_widget_overrides")], type_ignores=[])
+    generator = {"CE": tmp_path, "port_settings": port_settings, "quoteattr": quoteattr}
+    exec(compile(selected, "ce_menus.py", "exec"), generator)
+
+    name = "main_menu.multiplayer_type_select.join_game.xml"
+    original = (ROOT / "port/assets/menus/ce" / name).read_text(encoding="utf-8")
+    path = tmp_path / name
+    path.write_text(original, encoding="utf-8")
+    base = "main_menu/multiplayer_type_select/join_game/"
+    names = [base + suffix for suffix in ("join_game_button_bar", "join_game_items_list", "join_game_screen")]
+    generator["regenerate_widget_overrides"](names)
+    assert path.read_text(encoding="utf-8") == original
+    path.write_text(original.replace("right_stick_up", "up").replace("left_right_tabs_children", "left_right_tabs_items"), encoding="utf-8")
+    generator["regenerate_widget_overrides"](names)
+    assert path.read_text(encoding="utf-8") == original

@@ -1502,6 +1502,7 @@
   "The host refused: your Discord account is in the game": "Ce compte Discord est déjà présent dans la partie.",
   "Press a key, a mouse button or turn the wheel...\\nEscape or a controller's B cancels, Delete clears it.": "Appuyez sur une touche ou un bouton...\\nÉchap ou B annule, Suppr efface.",
   "SORT": "TRIER",
+  "R STICK: SORT": "STICK D : TRI",
   "LINK:": "ASSOCIER :",
   "Preferred Xbox artwork for automatic detection.\\nRequires High-Res HUD in Graphics.": "Style Xbox en détection automatique.\\nNécessite le HUD haute définition.",
   "Scan it with your phone for the invite link. B: back": "Scannez pour obtenir le lien. B : retour",
@@ -1570,7 +1571,28 @@
   "The saved profile's shared sensitivity.\\nPROFILE on either axis inherits this value.": "Sensibilité commune du profil. Le choix PROFIL\\napplique cette valeur à l’axe concerné.",
   "Right stick: speed when looking left and right.\\nPROFILE uses the saved sensitivity above.": "Vitesse du stick pour regarder à gauche/droite.\\nPROFIL reprend la sensibilité ci-dessus.",
   "Right stick: speed when looking up and down.\\nPROFILE uses the saved sensitivity above.": "Vitesse du stick pour regarder en haut/bas.\\nPROFIL reprend la sensibilité ci-dessus.",
-  "Halo CE: vertical is half as fast. Equal axes:\\nthe same level gives both axes the same speed.": "Halo CE : axe vertical deux fois plus lent.\\nÉquilibrée : même niveau, même vitesse X/Y."
+  "Halo CE: vertical is half as fast. Equal axes:\\nthe same level gives both axes the same speed.": "Halo CE : axe vertical deux fois plus lent.\\nÉquilibrée : même niveau, même vitesse X/Y.",
+  "Added light from projectiles, weapons and\\nenergy shields. Added lights default to off.": "Lumières des projectiles, armes et boucliers.\\nDésactivées par défaut.",
+  "Block added light behind walls and vehicles.\\nOff traces no rays, so light can pass through them.": "Les murs et véhicules arrêtent ces lumières.\\nSans ce réglage, elles les traversent.",
+  "DYNAMIC LIGHTING:": "ÉCLAIRAGE DYNAMIQUE :",
+  "Engine glow and directional headlights illuminate\\nvehicles and nearby surfaces.": "Les moteurs et phares éclairent les véhicules\\net les surfaces proches.",
+  "How many lights trace occlusion a frame. Fewer\\nare faster on a slower phone.": "Nombre de lumières occultées par image.\\nLe réduire améliore les performances.",
+  "Jackal and stationary shields cast light\\non nearby surfaces.": "Les boucliers rapaces et fixes éclairent\\nles surfaces proches.",
+  "LIGHT OCCLUSION:": "OCCULTATION :",
+  "MUZZLE FLASH LIGHTS:": "LUEURS DES TIRS :",
+  "OCCLUDED LIGHTS:": "LUMIÈRES OCCULTÉES :",
+  "PLASMA PRONG LIGHTING:": "POINTES PLASMA :",
+  "PROJECTILE LIGHTS:": "PROJECTILES :",
+  "Plasma, grenades, rockets and flame streams cast\\nsoft light on nearby surfaces and models.": "Plasma, grenades, roquettes et flammes éclairent\\nles surfaces et modèles proches.",
+  "SHIELD EMITTERS:": "BOUCLIERS FIXES :",
+  "Short, soft spill from plasma-weapon prongs.": "Lueur douce autour des pointes des armes plasma.",
+  "Swords, plasma charge, fuel rods, Needler and AR\\nscreens cast light on nearby surfaces.": "Épées, charges plasma, canon à combustible,\\nNeedler et écrans du fusil éclairent autour.",
+  "VEHICLE LIGHTS:": "VÉHICULES :",
+  "Visible powerups and teleporters cast soft light.\\nStock effects and gameplay remain unchanged.": "Les bonus et téléporteurs visibles éclairent\\nautour. Les effets et le jeu restent identiques.",
+  "Visual modifiers the stock game does not\\nhave, such as HDR and overshields.": "Effets visuels ajoutés au jeu d'origine,\\ncomme le HDR et les surboucliers.",
+  "WEAPON GLOW:": "LUEURS DES ARMES :",
+  "WORLD EMITTERS:": "BONUS ET TÉLÉPORTEURS :",
+  "Weapon flashes light nearby surfaces, including\\nWarthog and Scorpion guns. Stock effects remain.": "Les tirs éclairent les surfaces proches, y compris\\nceux des véhicules. Effets d’origine conservés."
  },
  "strings": {
   "PUBLIC|PRIVATE": "PUBLIC|PRIVÉ",
@@ -1632,7 +1654,8 @@
   "DEFAULT|SWAP TRIGGERS|SWAP A, L TRIGGER|SWAP B, L TRIGGER|SWAP B, R STICK|BOXER|GREEN THUMB|BUMPER JUMPER|RECLAIMER|FISHSTICKS|RECON": "PAR DÉFAUT|ÉCH. GÂCHETTES|ÉCH. A / GÂCH. G.|ÉCH. B / GÂCH. G.|ÉCH. B / CLIC D.|BOXER|GREEN THUMB|BUMPER JUMPER|RECLAIMER|FISHSTICKS|RECON",
   "OFF|SMALL|MEDIUM|LARGE|EXTRA LARGE": "NON|PETIT|MOYEN|GRAND|TRÈS GRAND",
   "PROFILE|1|2|3|4|5|6|7|8|9|10": "PROFIL|1|2|3|4|5|6|7|8|9|10",
-  "HALO CE|EQUAL AXES": "HALO CE|ÉQUILIBRÉE"
+  "HALO CE|EQUAL AXES": "HALO CE|ÉQUILIBRÉE",
+  "DEDICATED FIRST|PLAYERS|NAME|MAP|GAME TYPE|LOCKED FIRST|PING": "DÉDIÉS EN PREMIER|JOUEURS|NOM|CARTE|TYPE DE PARTIE|VERROUILLÉS EN PREMIER|PING"
  },
  "art": {
   "header_load_game": "CHARGER PARTIE",

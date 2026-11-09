@@ -329,11 +329,17 @@ game's flags also tell its clients whether the host is a dedicated server
 (`_network_game_cooperative_dedicated_bit`: its loading zones then ask for
 most of the living players).
 
-Then version 42 isolates the integrated Slipstream gameplay, bot and ragdoll
-changes from version 41. This is a conservative compatibility boundary for
-simulation behaviour: the wire fields and message fingerprints recorded by
-`network_format.py` remain identical to version 41. Older builds cannot join
-these sessions, even where their message layout alone would match.
+The French fork briefly advertised version 42 after integrating Slipstream's
+replays and visual changes. Its wire fields and message fingerprints remained
+those of version 41, which both OpenCE and SlipstreamCE use. That unnecessary
+boundary is removed: this fork advertises version 41 again. Replay recording
+observes the existing messages, and ragdolls are drawn locally; neither needs
+a new multiplayer protocol. New builds advertise 41 and accept hosts using
+41 or this fork's historical 42 alias, in LAN and internet lists alike. This
+exception is tied to protocol 41; it does not carry into a later protocol.
+Other versions and the old lockstep netcode are still refused. An old,
+unmodified version-42 client keeps its own check and needs updating before
+it can join a version-41 host.
 
 `port/linux/network_format.txt` records the wire format of the current
 version (`tools/network_format.py`): `test_linux_port.py` fails when the

@@ -109,6 +109,8 @@ public final class TouchControls extends View implements SensorEventListener, In
     private static final int SCENE_OFF = 8;
     /** a replay plays: its own buttons (the game's targets) and the stick, the view swipe its camera's */
     private static final int SCENE_REPLAY = 16;
+    /** beside SCENE_MENUS: a cinematic is all that hides the controls, which the layout's cinematics shows anyway */
+    private static final int SCENE_CINEMATIC = 32;
 
     /**
      * a replay's buttons, which the game draws and says where they are
@@ -446,11 +448,14 @@ public final class TouchControls extends View implements SensorEventListener, In
 
     /**
      * whether the controls belong on screen: in a game (no menu or
-     * cinematic), never without a touchscreen, and with
-     * input.touch_controls = "auto" only while no controller is connected
+     * cinematic, unless the layout shows them during cinematics), never
+     * without a touchscreen, and with input.touch_controls = "auto" only
+     * while no controller is connected
      */
     private boolean shown() {
-        if ((scene & SCENE_KNOWN) == 0 || (scene & (SCENE_MENUS | SCENE_OFF)) != 0 || !touchscreen)
+        boolean menus = (scene & SCENE_MENUS) != 0 && !((scene & SCENE_CINEMATIC) != 0 && layout.cinematics);
+
+        if ((scene & SCENE_KNOWN) == 0 || menus || (scene & SCENE_OFF) != 0 || !touchscreen)
             return false;
         return (scene & SCENE_ON) != 0 || !controllerConnected;
     }
@@ -1125,6 +1130,16 @@ public final class TouchControls extends View implements SensorEventListener, In
             saveLayout();
         });
         panel.addView(buttonsStill);
+
+        Switch cinematics = new Switch(getContext());
+        cinematics.setText(tr("Show during cutscenes: the controls stay on screen while a cutscene plays",
+            "Afficher les commandes pendant les cinématiques"));
+        cinematics.setChecked(layout.cinematics);
+        cinematics.setOnCheckedChangeListener((view, enabled) -> {
+            layout.cinematics = enabled;
+            saveLayout();
+        });
+        panel.addView(cinematics);
 
         panel.addView(text(tr("Fingers that tap together to open the cheat menu:", "Doigts simultanés pour ouvrir le panneau en jeu :")));
         RadioGroup fingers = new RadioGroup(getContext());
