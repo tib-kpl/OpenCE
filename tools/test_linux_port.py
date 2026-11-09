@@ -314,9 +314,17 @@ def test_menu_settings_exist():
     profile = set(re.findall(r'\{ "(profile\.[a-z_]+)", \d', functions))
     # (and the actions a row does on OK rather than a setting: DISCORD ACCOUNT's LINK, setting_write's)
     actions = set(re.findall(r'!strcmp\(name, "([a-z_]+\.action)"\)', functions))
+    # Grouped lighting rows write several real settings through lighting_menu.c.
+    lighting = (root / "port/linux/game/lighting_menu.c").read_text()
+    groups = {}
+    for name, body in re.findall(r'\{\s*"(lighting\.[a-z_]+)",\s*\{([^{}]+)\}', lighting):
+        members = set(re.findall(r'"([a-z_]+\.[a-z_]+)"', body))
+        assert members and members <= known, f"{name}: unknown grouped settings {members - known}"
+        groups[name] = members
+    assert groups, "lighting menu groups not found"
     for path in (MENUS / "ce").glob("*.xml"):
         for setting in re.findall(r'setting="([^"]+)"', path.read_text()):
-            assert setting in known | profile | actions, f"{path.name}: {setting}"
+            assert setting in known | profile | actions | groups.keys(), f"{path.name}: {setting}"
     input_code = (root / "port/linux/src/xinput_sdl.c").read_text()
     binding_table = re.search(r'\bbinding_settings\[[^]]+\]\s*=\s*\{([^}]+)\}', input_code).group(1)
     controls = set(re.findall(r'"(controls\.[a-z_]+)"', binding_table))

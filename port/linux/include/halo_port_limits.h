@@ -72,7 +72,7 @@ new multiplayer protocol. Keep the shared OpenCE/SlipstreamCE version. */
 /* The French fork briefly advertised the same wire format as version 42.
 Accept that historical alias only while this build uses version 41. A real
 protocol upgrade must not inherit the alias. */
-static __inline int halo_port_network_version_compatible(unsigned int version)
+static __inline__ int halo_port_network_version_compatible(unsigned int version)
 {
 	return version == HALO_PORT_NETWORK_VERSION ||
 		(HALO_PORT_NETWORK_VERSION == 41 && version == 42);
