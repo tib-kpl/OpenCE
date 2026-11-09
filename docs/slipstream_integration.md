@@ -22,8 +22,17 @@ hands off to it, so an existing game is reused. The handoff has no activity
 animation or second starting preview. Import, driver preparation and
 failed-start reporting still run before entering the game.
 
-Network version remains 42: the updates do not change the multiplayer wire
-format or simulation rules.
+Network version is corrected to 41, shared by OpenCE and SlipstreamCE. The
+earlier integration had unnecessarily isolated this fork as version 42:
+its recorded wire format is the same. Hosts of a different protocol and
+hosts using the old lockstep netcode are still refused.
+Existing replay files marked 42 remain readable; that exception applies to
+recordings only, not to live multiplayer joins.
+
+The server browser now uses the d-pad and left stick for normal row/button
+navigation, with the right stick for sorting. Its bottom button bar restores
+focus on return, as the Mods and Theater bars do, in Internet, LAN and
+Direct Link modes.
 
 ## Verification
 
@@ -39,5 +48,8 @@ format or simulation rules.
 - The 67 build-graph, layout, touch-menu and repository-identity tests pass.
 - Java touch-layout, gyroscope, controller-chord and shortcut checks pass.
 - French menu generation reports no untranslated text.
+- The multiplayer correction passes 57 targeted checks: controller focus in
+  Internet/LAN/Direct Link, version-41 joins and incompatible-host refusals,
+  the recorded wire format, tactile menus and replay compatibility.
 - Linux game units compile; the full Linux build stops at the local missing
   SDL3 headers. No Android device was connected for visual startup testing.

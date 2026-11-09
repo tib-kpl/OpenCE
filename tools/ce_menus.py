@@ -628,7 +628,7 @@ def widget_xml(tag: str, widget: dict, tags: Tags, functions: list, inputs: list
         lines.append(f"{inner}<conditional{attributes([('widget', our_name(conditional['widget tag'])), ('if_failed', 'true' if conditional['flags'] & 1 else None)])}/>")
     for child in widget["child widgets"]:
         child_tag = child["widget tag"]
-        if child_tag in LEFT_OUT:
+        if child_tag in LEFT_OUT or our_name(child_tag) in patch.get("remove_children", []):
             continue
         x, y = CHILD_OFFSETS.get((tag, child_tag), (child["horizontal offset"], child["vertical offset"]))
         name = patch.get("swap", {}).get(our_name(child_tag), our_name(child_tag))
@@ -677,16 +677,62 @@ def regenerate_settings():
     manifest.write_text(json.dumps(data, indent=1) + "\n")
 
 
+def regenerate_widget_overrides(names):
+    """Refresh port-owned attributes/handlers without the original PC tags."""
+    import re
+    from xml.etree import ElementTree as ET
+
+    wanted = set(names)
+    found = set()
+    pattern = re.compile(r'^\t<widget([^\n>]*)>\n(.*?)^\t</widget>', re.M | re.S)
+    for path in sorted(CE.glob("*.xml")):
+        text = path.read_text(encoding="utf-8")
+
+        def replace(match):
+            widget = ET.fromstring("<widget" + match[1] + "/>")
+            name = widget.get("name")
+            if name not in wanted:
+                return match[0]
+            patch = port_settings.WIDGET_PATCHES[name]
+            found.add(name)
+            pairs = list(widget.attrib.items())
+            for key, value in patch.get("set", {}).items():
+                pairs = [(k, v) for k, v in pairs if k != key] + [(key, value)]
+            body = match[2].splitlines(keepends=True)
+            if "handlers" in patch:
+                body = [line for line in body if not line.lstrip().startswith("<on ")]
+                after_data = max((i + 1 for i, line in enumerate(body) if line.lstrip().startswith("<data ")), default=0)
+                body[after_data:after_data] = ["\t\t" + line + "\n" for line in patch["handlers"]]
+            if "children" in patch or "remove_children" in patch:
+                children = patch.get("children", [])
+                replaced = set(patch.get("remove_children", [])) | {ET.fromstring(line).get("widget") for line in children}
+                body = [line for line in body if not (line.lstrip().startswith("<child ") and
+                        ET.fromstring(line.strip()).get("widget") in replaced)]
+                body += ["\t\t" + line + "\n" for line in children]
+            return "\t<widget" + attributes(pairs) + ">\n" + "".join(body) + "\t</widget>"
+
+        generated = pattern.sub(replace, text)
+        if generated != text:
+            path.write_text(generated, encoding="utf-8")
+    if wanted != found:
+        raise ValueError("generated widgets not found: " + ", ".join(sorted(wanted - found)))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--settings-only", action="store_true", help="regenerate port-owned settings screens and their manifest")
-    parser.add_argument("--tags", type=Path, required="--settings-only" not in sys.argv)
-    parser.add_argument("--definitions", type=Path, required="--settings-only" not in sys.argv)
-    parser.add_argument("--redraws", type=Path, required="--settings-only" not in sys.argv)
-    parser.add_argument("--placeholder", type=Path, required="--settings-only" not in sys.argv, help="the picture for frames with no redraw")
+    parser.add_argument("--widget-overrides", nargs="+", help="refresh named widgets' port-owned attributes and handlers")
+    needs_tags = "--settings-only" not in sys.argv and "--widget-overrides" not in sys.argv
+    parser.add_argument("--tags", type=Path, required=needs_tags)
+    parser.add_argument("--definitions", type=Path, required=needs_tags)
+    parser.add_argument("--redraws", type=Path, required=needs_tags)
+    parser.add_argument("--placeholder", type=Path, required=needs_tags, help="the picture for frames with no redraw")
     parser.add_argument("--pictures", type=Path,
                         help="the PC version's pictures, as PNGs by tag path: only where each is, to place its placeholder")
     arguments = parser.parse_args()
+    if arguments.widget_overrides:
+        regenerate_widget_overrides(arguments.widget_overrides)
+        return
     if arguments.settings_only:
         regenerate_settings()
         return

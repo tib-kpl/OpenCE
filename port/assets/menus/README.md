@@ -32,6 +32,14 @@ one screen (by its name, `main_menu/settings_select/...`), for looking at it.
 
 ## Writing them again
 
+For an existing PC widget whose port-owned attributes, handlers or added
+children changed, `tools/ce_menus.py --widget-overrides <widget-name> ...`
+refreshes those overrides from `tools/port_settings.py` without the original
+PC tags. For example, the browser uses these widget names:
+`main_menu/multiplayer_type_select/join_game/join_game_items_list`,
+`main_menu/multiplayer_type_select/join_game/join_game_button_bar` and
+`main_menu/multiplayer_type_select/join_game/join_game_screen`.
+
 `tools/ce_menus.py` writes every file in `ce/` and `menus.json` again,
 the settings screens too (it runs `tools/port_settings.py`'s):
 

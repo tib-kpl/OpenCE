@@ -1502,6 +1502,7 @@
   "The host refused: your Discord account is in the game": "Ce compte Discord est déjà présent dans la partie.",
   "Press a key, a mouse button or turn the wheel...\\nEscape or a controller's B cancels, Delete clears it.": "Appuyez sur une touche ou un bouton...\\nÉchap ou B annule, Suppr efface.",
   "SORT": "TRIER",
+  "R STICK: SORT": "STICK D : TRI",
   "LINK:": "ASSOCIER :",
   "Preferred Xbox artwork for automatic detection.\\nRequires High-Res HUD in Graphics.": "Style Xbox en détection automatique.\\nNécessite le HUD haute définition.",
   "Scan it with your phone for the invite link. B: back": "Scannez pour obtenir le lien. B : retour",

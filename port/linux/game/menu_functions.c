@@ -6870,17 +6870,6 @@ static boolean list_focused_tab(struct widget_instance *screen)
 		(long)strlen(list->focused_child->name) - 15), "op_browser_mode");
 }
 
-/* halo_linux_source_fixups.h: the server browser's list sorts with the
-d-pad's up and down (its stick goes through the rows) */
-unsigned char ui_widget_port_dpad_updown_taken(void *instance)
-{
-	struct widget_instance *widget = instance;
-	size_t length = widget && widget->name ? strlen(widget->name) : 0;
-
-	return multiplayer.mode == _multiplayer_mode_server_browser && length >= 20 &&
-		!strcmp(widget->name + length - 20, "join_game_items_list");
-}
-
 /* the server browser's buttons by the controller's, whatever row has the
 focus (tools/port_settings.py: the north refreshes, the west opens the
 filters, the shoulders change the source tab); nothing while a panel is up
