@@ -652,6 +652,10 @@ SCREENS["audio_settings/sound_processing"] = {
          None),
         ("STEREO DOPPLER:", "audio.stereo_doppler", ON_OFF,
          "Shift stereo sounds' pitch as they come and go,\nas 3D sounds' is. The Xbox played them flat.", None),
+        # (AAudio's low latency path, which screen recorders cannot hear on a phone where it
+        # goes straight to the hardware: dsound_sdl.c's audio_realtime_read)
+        ("REALTIME AUDIO:", "audio.realtime", ON_OFF,
+         "Uses realtime audio to reduce latency.\nMay affect screen recordings.", "android"),
     ],
 }
 _audio["rows"] = [row for row in _audio["rows"] if row[1] not in _processing]

@@ -458,6 +458,10 @@ static const struct config_setting config_settings[] =
 		"Shift the pitch of a stereo sound placed in the world (an engine, a\n"
 		"rocket's flight) as it comes towards or goes away from the player, as\n"
 		"3D sounds are; false plays them at their own pitch, as the Xbox did." },
+	{ "audio.realtime", _config_boolean, "true", "HALO_AUDIO_REALTIME", _environment_value, _platform_android,
+		"Play through AAudio's low latency path (on a phone that has it, straight to\n"
+		"the hardware, past the system's mixer); false goes through the mixer,\n"
+		"where screen recorders take the app's sound." },
 	{ "audio.voice_chat", _config_string, "\"push_to_talk\"", "HALO_VOICE_CHAT", _environment_value, _platform_all,
 		"Talking in network games' voice chat: \"push_to_talk\" (while\n"
 		"controls.push_to_talk is held; the microphone opens the first time),\n"
