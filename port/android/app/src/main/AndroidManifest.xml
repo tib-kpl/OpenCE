@@ -100,13 +100,15 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- in a process of its own, with a fresh Java heap (HaloApplication) -->
+        <!-- a fresh Java heap (HaloApplication), in the launcher's task so
+             the handoff does not look like opening a second application -->
         <activity
             android:name=".HaloActivity"
             android:process=":game"
             android:exported="false"
             android:alwaysRetainTaskState="true"
-            android:launchMode="singleInstance"
+            android:launchMode="singleTop"
+            android:theme="@style/HaloGameTheme"
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="false"
             android:preferMinimalPostProcessing="true"

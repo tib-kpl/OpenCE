@@ -2,6 +2,7 @@ package com.halo.decomp;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.widget.ScrollView;
@@ -317,8 +318,13 @@ public class LauncherActivity extends Activity {
             return;
         gameStarted = true;
         MenuTranslation.sync(this, dataRoot);
-        startActivity(new Intent(this, HaloActivity.class));
+        // Keep one task and reuse its game when an invite or shortcut opens
+        // this launcher over it. The process remains separate for the guest.
+        Intent game = new Intent(this, HaloActivity.class);
+        game.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        startActivity(game, ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle());
         finish();
+        overridePendingTransition(0, 0);
     }
 
     /* ---------- a profiled run's folder (debug.profile_run) */
