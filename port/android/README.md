@@ -552,6 +552,15 @@ again.
   step shows a colour that changes and waits for a controller: push A if
   the picture is right, Y if it is upside down, B to end.
 
+### Dynamic light occlusion
+
+In Video Setup > Dynamic Lighting, Light Occlusion stops added lights at
+walls and vehicles. With Vulkan, `display.occlusion_lights` (environment
+variable `HALO_OCCLUSION_LIGHTS`) controls how many lights trace rays per
+frame: 8, 6 (the default), or 4. A lower count helps slower phones; lights
+beyond the budget keep their last occlusion field until their turn. The
+change applies immediately. Added lights and Light Occlusion default to off.
+
 ## Internet play
 
 Internet play operates as on Linux, but without Discord. When the game

@@ -27,7 +27,8 @@ format or simulation rules.
 
 ## Verification
 
-- Both Android guest images and the native host build with NDK 28.2.
+- Both Android guest images and the native host build in debug and optimized
+  release configurations with NDK 28.2.
 - The release APK builds with the French assets and the fork's updater identity.
 - The broad engine/Android/host suite initially passed 1,971 tests, with
   10 skips. Six old Vulkan visibility tests were then adapted to the atomic
