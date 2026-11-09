@@ -24,8 +24,10 @@ failed-start reporting still run before entering the game.
 
 Network version is corrected to 41, shared by OpenCE and SlipstreamCE. The
 earlier integration had unnecessarily isolated this fork as version 42:
-its recorded wire format is the same. Hosts of a different protocol and
-hosts using the old lockstep netcode are still refused.
+its recorded wire format is the same. New clients accept both 41 and the
+historical 42 in discovery, sorting and joining, while advertising 41.
+Other protocols and hosts using the old lockstep netcode are still refused.
+An old version-42 client must update to gain this compatibility itself.
 Existing replay files marked 42 remain readable; that exception applies to
 recordings only, not to live multiplayer joins.
 
@@ -48,8 +50,8 @@ Direct Link modes.
 - The 67 build-graph, layout, touch-menu and repository-identity tests pass.
 - Java touch-layout, gyroscope, controller-chord and shortcut checks pass.
 - French menu generation reports no untranslated text.
-- The multiplayer correction passes 57 targeted checks: controller focus in
-  Internet/LAN/Direct Link, version-41 joins and incompatible-host refusals,
+- The multiplayer correction passes 59 targeted checks: controller focus in
+  Internet/LAN/Direct Link, version-41/legacy-42 joins and incompatible-host refusals,
   the recorded wire format, tactile menus and replay compatibility.
 - Linux game units compile; the full Linux build stops at the local missing
   SDL3 headers. No Android device was connected for visual startup testing.

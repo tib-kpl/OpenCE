@@ -13,7 +13,8 @@ from harness import CHECK_FAILED, build, constant, enum_with, function, mutated,
 
 def generated(fault=None):
     header = read('port/linux/src/p2p.h')
-    version = constant(read('port/linux/include/halo_port_limits.h'), 'HALO_PORT_NETWORK_VERSION')
+    limits = read('port/linux/include/halo_port_limits.h')
+    version = constant(limits, 'HALO_PORT_NETWORK_VERSION')
     enums = '\n'.join([f'#define HALO_PORT_NETWORK_VERSION {version}',
                        enum_with(header, 'P2P_LISTING_NAME_SIZE = 32'),
                        enum_with(header, 'P2P_LOBBY_SOURCE_ALL'),
@@ -25,7 +26,8 @@ def generated(fault=None):
     source = read('port/linux/src/p2p_lobby.c')
     names = re.search(r'static const char \*const sort_names\[NUMBER_OF_P2P_LOBBY_SORTS\] =.*?\};', source,
                       re.S).group(0)
-    code = '\n'.join([names, function(source, 'p2p_lobby_filter'), function(source, 'text_order'),
+    code = '\n'.join([function(limits, 'halo_port_network_version_compatible'), names,
+                      function(source, 'p2p_lobby_filter'), function(source, 'text_order'),
                       function(source, 'sort_order'), function(source, 'sort_group'),
                       function(source, 'p2p_lobby_sort'),
                       function(source, 'p2p_lobby_sort_parse'), function(source, 'p2p_lobby_sort_text')])

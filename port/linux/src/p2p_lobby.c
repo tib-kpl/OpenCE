@@ -875,7 +875,7 @@ static int listing_wanted(const unsigned char *payload, int size, int retained, 
 
 	if (!listing_read(payload, size, &listing))
 		return 0;
-	if (listing.version != HALO_PORT_NETWORK_VERSION)
+	if (!halo_port_network_version_compatible(listing.version))
 	{
 		if (listing.version > HALO_PORT_NETWORK_VERSION && !(listing.flags & _listing_closed))
 			hidden_heard(key_hash, _hidden_newer);
@@ -907,7 +907,7 @@ static void update_browsing(void)
 		/* (listing_wanted let it in; its key and its time are checked
 		again here, where its signature is: the time it was queued at may
 		have run out) */
-		if (!listing_read(queued.payload, queued.size, &listing) || listing.version != HALO_PORT_NETWORK_VERSION ||
+		if (!listing_read(queued.payload, queued.size, &listing) || !halo_port_network_version_compatible(listing.version) ||
 			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE) ||
 			!listing_current(&listing, queued.retained))
 		{
@@ -1453,7 +1453,7 @@ version last, and by ping, those whose ping is not known yet (not timed, or
 a password's, whose host is not) after those whose is */
 static int sort_group(const struct p2p_listing *game, int order)
 {
-	if (game->network_version != HALO_PORT_NETWORK_VERSION)
+	if (!halo_port_network_version_compatible(game->network_version))
 		return 2;
 	return order == P2P_LOBBY_SORT_PING && game->ping < 0;
 }

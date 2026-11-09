@@ -334,8 +334,12 @@ replays and visual changes. Its wire fields and message fingerprints remained
 those of version 41, which both OpenCE and SlipstreamCE use. That unnecessary
 boundary is removed: this fork advertises version 41 again. Replay recording
 observes the existing messages, and ragdolls are drawn locally; neither needs
-a new multiplayer protocol. The version and distributed-netcode checks still
-refuse incompatible hosts.
+a new multiplayer protocol. New builds advertise 41 and accept hosts using
+41 or this fork's historical 42 alias, in LAN and internet lists alike. This
+exception is tied to protocol 41; it does not carry into a later protocol.
+Other versions and the old lockstep netcode are still refused. An old,
+unmodified version-42 client keeps its own check and needs updating before
+it can join a version-41 host.
 
 `port/linux/network_format.txt` records the wire format of the current
 version (`tools/network_format.py`): `test_linux_port.py` fails when the

@@ -69,6 +69,14 @@ Raise it with any change to what the machines send each other. */
 /* Replay recording uses the existing messages; it does not introduce a
 new multiplayer protocol. Keep the shared OpenCE/SlipstreamCE version. */
 #define HALO_PORT_NETWORK_VERSION 41
+/* The French fork briefly advertised the same wire format as version 42.
+Accept that historical alias only while this build uses version 41. A real
+protocol upgrade must not inherit the alias. */
+static __inline int halo_port_network_version_compatible(unsigned int version)
+{
+	return version == HALO_PORT_NETWORK_VERSION ||
+		(HALO_PORT_NETWORK_VERSION == 41 && version == 42);
+}
 /* ... the advertisement's reserved bytes: the version (a little-endian word),
 then flags, then the game's kind (an OpenCE gametype's mode, and Hardcore:
 port/linux/game/game_modes.h's game_modes_kind), for the server browser */

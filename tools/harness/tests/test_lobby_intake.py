@@ -21,12 +21,13 @@ def size(source, name):
 def generated(fault=None):
     source = read('port/linux/src/p2p_lobby.c')
     headers = read('port/linux/src/p2p_internal.h') + read('port/linux/src/p2p.h')
-    version = re.search(r"#define HALO_PORT_NETWORK_VERSION (\d+)", read('port/linux/include/halo_port_limits.h'))
+    limits = read('port/linux/include/halo_port_limits.h')
+    version = re.search(r"#define HALO_PORT_NETWORK_VERSION (\d+)", limits)
     config = ''.join(f'#define {name} {size(headers, name)}\n' for name in SIZES)
     config += f'#define HALO_PORT_NETWORK_VERSION {version.group(1)}\n'
     # (the file's constants: the listing's format and sizes, the windows and the queue's places)
     config += re.search(r"^enum\n\{\n\tLISTING_FORMAT.*?^\};\n", source, re.M | re.S).group(0)
-    code = '\n'.join([structure(source, 'listing')] +
+    code = '\n'.join([function(limits, 'halo_port_network_version_compatible'), structure(source, 'listing')] +
                      [function(source, name) for name in ('sanitize', 'get_long', 'get_text', 'listing_read',
                                                           'listing_current', 'listing_wanted')])
     if fault:
@@ -44,7 +45,7 @@ def test_case(case):
     # every listing of this version let in, however old
     ('return listing_current(&listing, retained);', 'return 1;'),
     # every version let in
-    ('if (listing.version != HALO_PORT_NETWORK_VERSION)', 'if (0)'),
+    ('if (!halo_port_network_version_compatible(listing.version))', 'if (0)'),
 ])
 def test_negative_control(fault):
     status, output = run(build('lobby_intake', generated(fault)), 'burst')
