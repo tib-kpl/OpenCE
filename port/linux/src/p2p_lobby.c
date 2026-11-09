@@ -240,9 +240,6 @@ static struct
 	PROBE_HOLD from it for the queue) */
 	unsigned long browse_time;
 	int browse_ended;
-	/* when the browser opened or was refreshed (the probes wait at most
-	PROBE_HOLD from it for the queue) */
-	unsigned long browse_time;
 	int query_wanted;
 	struct queued queue[MAXIMUM_QUEUED];
 	int queue_count;
@@ -1183,7 +1180,6 @@ void p2p_lobby_browse(int on)
 		lobby.browsing = on;
 		lobby.browse_time = p2p_now();
 		lobby.browse_ended = !on;
-		lobby.browse_time = p2p_now();
 		if (!on)
 		{
 			memset(lobby.games, 0, sizeof(lobby.games));

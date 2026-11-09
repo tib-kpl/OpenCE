@@ -2101,24 +2101,6 @@ a count of one of the flare's own tests has come (xgpu_visibility_test_counted, 
 
 #define VISIBILITY_TEST_SLOTS 4096
 
-<<<<<<< HEAD
-uint32_t host_vk_visibility(uint32_t index, uint32_t counted_out);
-
-static BOOL visibility_pending[VISIBILITY_TEST_SLOTS];
-static uint64_t visibility_ended[VISIBILITY_TEST_SLOTS];
-static uint64_t visibility_counted[VISIBILITY_TEST_SLOTS];
-
-/* xgpu.h: a reused flare slot reads only its new owner's tests. */
-unsigned long long xgpu_visibility_tests_ended(unsigned long index)
-{
-	return visibility_ended[index % VISIBILITY_TEST_SLOTS];
-}
-
-unsigned long long xgpu_visibility_test_counted(unsigned long index)
-{
-	return visibility_counted[index % VISIBILITY_TEST_SLOTS];
-}
-=======
 /* the slot's latest count (the low 32 bits) and the low 32 bits of the number of the test it is from (the high, 0 for none) */
 uint64_t host_vk_visibility(uint32_t index);
 
@@ -2126,7 +2108,6 @@ static BOOL visibility_pending[VISIBILITY_TEST_SLOTS];
 /* the tests ended at each slot, and the number of the one whose count GetVisibilityTestResult last gave there (0: none) */
 static ULONGLONG visibility_ended[VISIBILITY_TEST_SLOTS];
 static ULONGLONG visibility_counted[VISIBILITY_TEST_SLOTS];
->>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
@@ -2146,11 +2127,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	index %= VISIBILITY_TEST_SLOTS;
 	command = stream_command(VK_COMMAND_VISIBILITY_END, sizeof(*command));
 	command->index = (uint32_t)index;
-<<<<<<< HEAD
-	command->test = ++visibility_ended[index];
-=======
 	command->test = (uint32_t)++visibility_ended[index];
->>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 	/* the target's pixels to a game pixel: the count is of the game's pixels (visibility_unscaled in d3d8_gl.c), which the game
 	divides by its own test's area (lens flares, rasterizer_lights.c), a split-screen window's or the screen's alike */
 	/* (multisampled, the host counts samples) */
@@ -2170,10 +2147,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 			*result = 0;
 		return S_OK;
 	}
-<<<<<<< HEAD
-	if (result)
-		*result = host_vk_visibility((uint32_t)index, (uint32_t)(uintptr_t)&visibility_counted[index]);
-=======
 	{
 		uint64_t latest = host_vk_visibility((uint32_t)index);
 		uint32_t test = (uint32_t)(latest >> 32);
@@ -2184,7 +2157,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		if (test)
 			visibility_counted[index] = visibility_ended[index] - (uint32_t)((uint32_t)visibility_ended[index] - test);
 	}
->>>>>>> c53cebb67 (Merge OpenCE main: lens flare slots, z bias slope, Doppler, cut fades, dead zones)
 	return S_OK;
 }
 

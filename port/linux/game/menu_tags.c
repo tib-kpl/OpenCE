@@ -2455,7 +2455,7 @@ static void pause_campaign_patch(struct cache_file_tag_instance *instances)
 		if (!strncmp(config_string("game.language"), "fr", 2))
 		{
 			char const *text = "POINT DE CONTRÔLE";
-			void *strings = string_list_build(&text, NULL, 1, NULL);
+			void *strings = string_list_build(&text, 1);
 			struct ui_widget_definition *button = tag_get(UI_WIDGET_DEFINITION_TAG, rows[revert].widget_tag.index);
 			struct ui_widget_definition const *resume = tag_get(UI_WIDGET_DEFINITION_TAG, rows[0].widget_tag.index);
 			long text_tag;

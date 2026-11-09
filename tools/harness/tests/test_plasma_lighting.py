@@ -81,4 +81,3 @@ def test_no_scale_passes_what_the_view_test_assumes():
 def test_the_view_test_uses_the_limit():
     body = function(read('source/objects/object_lights.c'), 'light_port_can_reach_view')
     assert 'PLASMA_LIGHTING_MAXIMUM_SCALE' in body and 'render_frustum_sphere_visible' in body
-

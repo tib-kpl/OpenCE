@@ -23,8 +23,8 @@ def test_case(case):
 
 
 @pytest.mark.parametrize('fault,case', [
-    (('V.counted[test->index] = test->test;', 'V.counted[test->index] = 0;'), 'reused'),
-    (('V.counted[test->index] = test->test;', 'if (samples) V.counted[test->index] = test->test;'), 'zero'),
+    (('(uint64_t)test->number << 32', '(uint64_t)0 << 32'), 'reused'),
+    (('__atomic_store_n(&V.latest[test->index],', 'if (samples) __atomic_store_n(&V.latest[test->index],'), 'zero'),
     (('samples / test->area', 'samples * test->area'), 'scaled'),
 ])
 def test_negative_control(fault, case):
