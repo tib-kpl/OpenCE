@@ -206,6 +206,7 @@ int main(int argc, char **argv)
 			CHECK(plasma_lighting_selected(3), "pistol projectile attachment selected");
 			render_interpolation_frame_end();
 			CHECK(!plasma_lighting_selected(3), "pistol light expires with render frame");
+			CHECK(!interpolation_drawing, "frame end clears interpolation drawing");
 			CHECK(datum_try_and_get(light_data, 1)->flags == (i ? 7 : 0), "pistol authored flags restored");
 		}
 		tag_name = "weapons\\plasma pistol\\muzzle flash";
