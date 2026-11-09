@@ -1604,29 +1604,32 @@ static BOOL menu_buttons_swapped(BOOL menus)
 
 /* the bottom and right face buttons held when the menus' swap of them starts or ends count as up until let go of:
 the right button that chose the level is not the game's B, a melee, at its first frame (as keys_held_over_switch) */
-static void face_buttons_held_over_swap(SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
+__attribute__((unused)) static void face_buttons_held_over_swap(int port, SDL_Gamepad *gamepad, BOOL swap, BOOL *held_back)
 {
-	static int swapped = -1;
-	static BOOL held_south, held_east;
+	/* (each port's: a split screen player's menu swaps theirs alone) */
+	static int swapped[PORT_COUNT] = { -1, -1, -1, -1 };
+	static BOOL held_south[PORT_COUNT], held_east[PORT_COUNT];
 	BOOL south = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
 	BOOL east = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
 
-	if (swapped != (int)swap)
+	if (port < 0 || port >= PORT_COUNT)
+		return;
+	if (swapped[port] != (int)swap)
 	{
-		if (swapped >= 0)
+		if (swapped[port] >= 0)
 		{
-			held_south = south;
-			held_east = east;
+			held_south[port] = south;
+			held_east[port] = east;
 		}
-		swapped = (int)swap;
+		swapped[port] = (int)swap;
 	}
 	if (!south)
-		held_south = FALSE;
+		held_south[port] = FALSE;
 	if (!east)
-		held_east = FALSE;
-	if (held_south)
+		held_east[port] = FALSE;
+	if (held_south[port])
 		held_back[SDL_GAMEPAD_BUTTON_SOUTH] = TRUE;
-	if (held_east)
+	if (held_east[port])
 		held_back[SDL_GAMEPAD_BUTTON_EAST] = TRUE;
 }
 
