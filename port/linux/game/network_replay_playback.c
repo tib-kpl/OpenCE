@@ -1179,6 +1179,11 @@ boolean network_replay_watch(
 boolean network_replay_network_version_playable(
 	unsigned long network_version)
 {
+	/* The French fork's earlier builds recorded the unchanged version-41
+	   messages under 42. Keep those files playable after correcting the
+	   multiplayer version; live joins still require an exact match. */
+	if (network_version == 42)
+		return TRUE;
 	return network_version >= REPLAY_OLDEST_NETWORK_VERSION && network_version <= HALO_PORT_NETWORK_VERSION;
 }
 
