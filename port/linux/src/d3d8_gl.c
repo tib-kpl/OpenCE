@@ -5613,6 +5613,21 @@ static void index_extent(const WORD *indices, unsigned long count, unsigned long
 	*maximum = high;
 }
 
+/* The local visibility fields are implemented by Vulkan and deko3d.
+   OpenGL keeps the stock lighting when a field is requested. */
+int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
+{
+	(void)texture;
+	(void)pixels;
+	(void)reach;
+	return 0;
+}
+
+void halo_field_texture_forget(const void *texture)
+{
+	(void)texture;
+}
+
 #ifdef HALO_ANDROID
 /* ---------- static geometry
 
@@ -5813,21 +5828,6 @@ void xgpu_static_range_remove(const void *start, int indices)
 
 /* (the OpenGL renderer keeps its ranges until the game lets each go, as it
 always has) */
-/* The local visibility fields are implemented by Vulkan and deko3d.
-   OpenGL keeps the stock lighting when a field is requested. */
-int halo_field_texture_write(const void *texture, const unsigned long *pixels, float reach)
-{
-	(void)texture;
-	(void)pixels;
-	(void)reach;
-	return 0;
-}
-
-void halo_field_texture_forget(const void *texture)
-{
-	(void)texture;
-}
-
 void xgpu_static_forget_all(void)
 {
 }
