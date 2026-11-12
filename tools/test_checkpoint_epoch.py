@@ -248,6 +248,7 @@ static struct {long recorder;} distributed_machines={NONE};
 static long game_time_get(void){return 100;}
 static void build_message_header(message_header *h,word size,int type,int version){*h=size;(void)type;(void)version;}
 static short distributed_client_machines(long *ids,short n){assert(n==4);ids[0]=1;return 1;}
+static short distributed_viewing_machines(long *ids,short n){return distributed_client_machines(ids,n);}
 static void distributed_batch_add(short sender,void const *message,word size,word entry){
  const struct distributed_message_header *h=message;
  (void)sender;(void)entry;assert(size>=12 && h->checkpoint_epoch==distributed_checkpoint_epoch);wire_calls++;

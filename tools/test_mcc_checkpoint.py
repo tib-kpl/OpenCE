@@ -169,8 +169,7 @@ static unsigned char live[GAME_STATE_SIZE], saved[GAME_STATE_SIZE];
 #define PORT_IMAGE_SHIFT 0UL
 #define PORT_WINDOW_BASE 0x80000000UL
 struct game_state_relocation {void *image;unsigned long window_from,window_delta,image_delta;};
-static int game_state_image_relocate(struct game_state_relocation *relocation) {fprintf(stderr,"relocation asked: window %08lx image %08lx
-",relocation->window_from,relocation->image_delta);return 0;}
+static int game_state_image_relocate(struct game_state_relocation *relocation) {fprintf(stderr,"relocation asked: window %08lx image %08lx\n",relocation->window_from,relocation->image_delta);return 0;}
 static struct {void *base_address;long cpu_allocation_size;int saved_game_valid;struct game_state_header *header;} game_state_globals;
 enum {_game_state_allocation_data,_game_state_allocation_memory_pool,_game_state_allocation_lruv_cache};
 struct game_state_allocation {int kind;void *address;long maximum_count,element_size,size;};
@@ -240,8 +239,7 @@ int game_state_write_core(char const *name,void const *data,long size) {
     (void)name;memcpy(saved,data,size);writes++;return 1;
 }
 void console_printf(int flag,char const *format,...) {(void)flag;(void)format;}
-int game_state_image_refuse(char const *name,char const *reason) {fprintf(stderr,"refused: %s %s
-",name,reason);return 0;}
+int game_state_image_refuse(char const *name,char const *reason) {fprintf(stderr,"refused: %s %s\n",name,reason);return 0;}
 static boolean checkpoint_native_data_valid(byte *image,struct data_array *data,short count,short size);
 int game_state_image_data_valid(void *image,void *address,long count,long size) {
     return real_units_mode ? checkpoint_native_data_valid(image,address,(short)count,(short)size) : native_valid;
