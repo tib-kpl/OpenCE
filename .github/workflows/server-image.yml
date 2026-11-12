@@ -20,13 +20,8 @@ name: Server image
 #   cosign verify ghcr.io/opencommunityedition/opence-server:latest \
 #     --certificate-identity-regexp '^https://github\.com/OpenCommunityEdition/OpenCE/\.github/workflows/server-image\.yml@' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+# (this fork: by hand only, so that its Build is the one workflow that runs on a push)
 on:
-  workflow_run:
-    workflows: [Build]
-    types: [completed]
-    branches: [main]
-  schedule:
-    - cron: "23 5 * * 1"
   workflow_dispatch:
     inputs:
       release:
