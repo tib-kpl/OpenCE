@@ -114,7 +114,7 @@ def checkpoint_tool(tmp_path_factory):
     (work / "saved games/game_state.h").write_text(
         "#pragma once\n#include <stdint.h>\nstruct game_state_header {uint32_t allocation_checksum;"
         "char map_name[256],build_number[32];short player_count,difficulty;"
-        "uint32_t cache_file_checksum,layout_address,image_shift,unused[5],checksum;};\n")
+        "uint32_t cache_file_checksum;unsigned long layout_address,image_shift;uint32_t unused[5],checksum;};\n")
     data_header = (ROOT / "source/memory/data.h").read_text()
     (work / "memory/data.h").write_text("#pragma once\n#define TAG_STRING_LENGTH 31\n" + "\n".join(
         re.search(r"struct " + name + r"\s*\{.*?\n\};", data_header, re.S).group()
