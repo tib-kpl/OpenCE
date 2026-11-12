@@ -1214,6 +1214,7 @@
 		<string text="GUN TURRET:"/>
 		<string text="VEHICLE RESPAWN TIME:"/>
 		<string text="SIDE:"/>
+		<string text="VEHICLE RIDING:"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_option_labels">
 		<string text="MASTER VOLUME:"/>
@@ -1401,7 +1402,6 @@
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_descriptions">
 		<string text="Rename this profile.\n\n\nProfile:"/>
-		<string text="VEHICLE RIDING:"/>
 		<string text="Choose the keys and mouse\nbuttons for each action.\n\nProfile:"/>
 		<string text="Set this profile's controller\nsensitivity and layouts.\n\nProfile:"/>
 		<string text="Adjust the mouse's sensitivity\nand aiming.\n\nProfile:"/>

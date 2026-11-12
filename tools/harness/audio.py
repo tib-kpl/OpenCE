@@ -50,6 +50,9 @@ def mixer_source(source=None):
     text = source if source is not None else read("port/linux/src/dsound_sdl.c")
     for name in ("dsound_xbox_types.h", "dsound_xbox_hrtf.inl", "dsound_xbox_reverb.inl", "dsound_xbox_lfe.inl"):
         text = text.replace(f'#include "{name}"', read("port/linux/src/" + name))
+    # (the fork mixes 256 frames a chunk, for the Switch's game thread; the tests' signals, and the DSP they measure,
+    # are made around the 1024 of OpenCE, and nothing they check depends on the chunk: test_chunk_size_is_kept guards it)
+    text = text.replace("#define MIX_CHUNK_FRAMES 256", "#define MIX_CHUNK_FRAMES 1024")
     return text
 
 
