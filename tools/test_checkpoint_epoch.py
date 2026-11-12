@@ -244,6 +244,7 @@ def test_outgoing_snapshot_boundary(tmp_path):
     code = generated() + enum_with(header, "_distributed_to_clients")
     code += structure(source, "distributed_packer") + r'''
 static int wire_calls;
+static struct {long recorder;} distributed_machines={NONE};
 static long game_time_get(void){return 100;}
 static void build_message_header(message_header *h,word size,int type,int version){*h=size;(void)type;(void)version;}
 static short distributed_client_machines(long *ids,short n){assert(n==4);ids[0]=1;return 1;}
