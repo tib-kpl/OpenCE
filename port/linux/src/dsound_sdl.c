@@ -2940,8 +2940,10 @@ HRESULT WINAPI IDirectSoundBuffer_SetBufferData(LPDIRECTSOUNDBUFFER buffer, LPVO
 		return DSERR_INVALIDCALL;
 	if (size)
 	{
-		samples = record->adpcm ? decode_adpcm(data, size, record->channels, &frames) :
-			decode_pcm(data, size, record->channels, &frames);
+		unsigned long capacity = 0;
+
+		samples = record->adpcm ? decode_adpcm(data, size, record->channels, &frames, NULL, &capacity) :
+			decode_pcm(data, size, record->channels, &frames, NULL, &capacity);
 		if (!samples)
 			return E_OUTOFMEMORY;
 	}
