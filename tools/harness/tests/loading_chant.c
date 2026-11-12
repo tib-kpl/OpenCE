@@ -1,6 +1,7 @@
 /* The real mixer and buffer API with no device; locks checked on one thread. */
 #include <assert.h>
 #include <math.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

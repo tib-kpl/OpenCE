@@ -2290,6 +2290,12 @@ void android_ce_texture_unbind(const void *resource)
 			device.textures[stage] = NULL;
 }
 
+/* MCC's resources unload before a later draw replaces every texture stage. */
+void xgpu_mcc_texture_unbind(DWORD const *resource)
+{
+	android_ce_texture_unbind(resource);
+}
+
 void WINAPI D3DDevice_SetPalette(DWORD stage, D3DPalette *palette)
 {
 	if (stage < D3DTSS_MAXSTAGES)

@@ -1120,6 +1120,14 @@ static BOOL hud_image_failed(long asset)
 
 	return !hud_image(asset, &levels);
 }
+/* port: MCC maps' textures are uploaded by the OpenGL renderer only; the Vulkan
+one refuses them, so an MCC bitmap has no texture here */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, struct xgpu_texture_description const *description,
+	void const *pixels, unsigned long bytes, D3DCOLOR const *palette)
+{
+	(void)texture; (void)target; (void)description; (void)pixels; (void)bytes; (void)palette;
+	return FALSE;
+}
 #endif
 
 /* whether its image is there to draw */
@@ -1220,6 +1228,14 @@ static BOOL hud_image_ready(long asset)
 	return FALSE;
 }
 
+/* port: MCC maps' textures are uploaded by the OpenGL renderer only; the Vulkan
+one refuses them, so an MCC bitmap has no texture here */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, struct xgpu_texture_description const *description,
+	void const *pixels, unsigned long bytes, D3DCOLOR const *palette)
+{
+	(void)texture; (void)target; (void)description; (void)pixels; (void)bytes; (void)palette;
+	return FALSE;
+}
 #endif
 
 /* an entry's image and description: its replacement's, if it has one (as
@@ -1286,6 +1302,14 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 		description->hires = TRUE;
 		return id;
 	}
+/* port: MCC maps' textures are uploaded by the OpenGL renderer only; the Vulkan
+one refuses them, so an MCC bitmap has no texture here */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, struct xgpu_texture_description const *description,
+	void const *pixels, unsigned long bytes, D3DCOLOR const *palette)
+{
+	(void)texture; (void)target; (void)description; (void)pixels; (void)bytes; (void)palette;
+	return FALSE;
+}
 #endif
 	(void)levels;
 	(void)id;
@@ -1731,5 +1755,13 @@ void android_ce_texture_gpu_forget(const void *resource)
 		else
 			link = &entry->next;
 	}
+}
+/* port: MCC maps' textures are uploaded by the OpenGL renderer only; the Vulkan
+one refuses them, so an MCC bitmap has no texture here */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, struct xgpu_texture_description const *description,
+	void const *pixels, unsigned long bytes, D3DCOLOR const *palette)
+{
+	(void)texture; (void)target; (void)description; (void)pixels; (void)bytes; (void)palette;
+	return FALSE;
 }
 #endif
