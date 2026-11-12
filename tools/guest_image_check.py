@@ -192,6 +192,16 @@ def main() -> int:
         problems = instruction_problems(args.image, arch, args.objdump)
     for problem in problems[:50]:
         print(f"{args.image}: {problem}", file=sys.stderr)
+    if problems and args.map and any("is outside" in problem for problem in problems):
+        # (what made the image too large: the biggest input sections of the link's map)
+        import re
+        sizes = []
+        for line in args.map.read_text(errors="replace").splitlines():
+            found = re.match(r"\s*[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s{2,}(\S.*)", line)
+            if found and int(found.group(1), 16) >= 0x40000:
+                sizes.append((int(found.group(1), 16), found.group(2).strip()))
+        for size, name in sorted(sizes, reverse=True)[:25]:
+            print(f"{size:#x} {name}", file=sys.stderr)
     if problems:
         return 1
     args.stamp.write_text("")

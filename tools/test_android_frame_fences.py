@@ -23,8 +23,7 @@ def frame_fences(tmp_path_factory):
     # Keep both the synchronization and the unsynchronized upload real.
     # (up to the desktop OpenGL section: the debug logger after it needs more of GL than the fake has)
     fences = host[host.index("#define FRAME_FENCE_SLOTS"):host.index("/* ---------- desktop OpenGL")]
-    (work / "frame_fences.inc").write_text("int host_renderer_vulkan;
-" + fences)
+    (work / "frame_fences.inc").write_text("int host_renderer_vulkan;\n" + fences)
     executable = work / ("test.exe" if os.name == "nt" else "test")
     # This is host code (64-bit on Android), not the ILP32 game guest.
     target = ["-fuse-ld=lld"] if os.name == "nt" else []
