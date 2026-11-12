@@ -34,8 +34,9 @@ which must agree). The host reserves the range before it places the window
 or the guest's own pools take any of it.
 
 AArch64: below the range Halo Custom Edition maps' tag data is linked to
-(below), with room to spare for the largest image (the Vulkan one, 40 MB,
-ending by 0x3e820000): at 0x40000000, where it was linked before, it covered
+(below), with room for the largest image (the Vulkan one, which has outgrown
+the 64 MB it was first given: the image starts at 0x38000000, 128 MB below
+0x40000000): at 0x40000000, where it was linked before, it covered
 that range, and Custom Edition maps could not run. Not above it: at
 0x42000000 the image reached 0x43a00000, where a Switch's loader module
 sits, and the Switch's host cannot move the image. Where the Java runtime
@@ -50,12 +51,12 @@ above it is reached through registers. Its hosts load it here always. */
 #if defined(__x86_64__)
 #define HALO_GUEST_IMAGE_BASE 0x70000000u
 #else
-#define HALO_GUEST_IMAGE_BASE 0x3c000000u
+#define HALO_GUEST_IMAGE_BASE 0x38000000u
 #endif
 /* the most the image may take from there (the loader refuses a larger one:
 host_image_validate); on AArch64 it ends at 0x40000000, below Custom
 Edition's tag data */
-#define HALO_GUEST_IMAGE_RESERVE 0x04000000u
+#define HALO_GUEST_IMAGE_RESERVE 0x08000000u
 
 /* Custom Edition's tag cache (port/linux/game/cache_file_formats.h's
 	CUSTOM_EDITION_TAG_CACHE_ADDRESS and _BYTES), which the guest reserves at

@@ -748,6 +748,8 @@ static double block_difference(const float *a, const float *b, unsigned long cou
 
 /* each scene in each partition against the twin's (480 frames a call):
 differences[scene][partition] for the output and the room send */
+static unsigned long decode_capacity;
+
 static void block_figures(double differences[BLOCK_SCENES][BLOCK_PARTITIONS][2])
 {
 	float *output[2], *room[2];
@@ -916,7 +918,7 @@ int main(int argc, char **argv)
 		static unsigned char blocks[400 * 72];
 		short expected[64 * 2];
 		unsigned long frames, channels, block, n;
-		short *decoded = decode_adpcm(adpcm_stereo_block, 72, 2, &frames);
+		short *decoded = decode_adpcm(adpcm_stereo_block, 72, 2, &frames, NULL, &decode_capacity);
 		unsigned char mono[36];
 
 		CHECK(decoded && frames == 64, "a stereo block is %lu frames, not 64", frames);
@@ -930,7 +932,7 @@ int main(int argc, char **argv)
 		mono[3] = 0;
 		for (n = 4; n < 36; n++)
 			mono[n] = (unsigned char)((n * 73 + 41) & 0xff);
-		decoded = decode_adpcm(mono, 36, 1, &frames);
+		decoded = decode_adpcm(mono, 36, 1, &frames, NULL, &decode_capacity);
 		CHECK(decoded && frames == 64, "a mono block is %lu frames, not 64", frames);
 		for (n = 0; n < 64; n++)
 			CHECK(decoded[n] == adpcm_mono_frames[n], "mono frame %lu: %d, not %d", n, decoded[n], adpcm_mono_frames[n]);
@@ -943,7 +945,7 @@ int main(int argc, char **argv)
 			unsigned long count = sizeof(blocks) / (36 * channels);
 
 			/* (and a part block at the end, which is not played) */
-			decoded = decode_adpcm(blocks, sizeof(blocks) - 7, channels, &frames);
+			decoded = decode_adpcm(blocks, sizeof(blocks) - 7, channels, &frames, NULL, &decode_capacity);
 			CHECK(frames == (count - 1) * 64, "%lu channels: %lu frames of %lu blocks and a part", channels, frames,
 				count);
 			for (block = 0; block + 1 < count; block++)

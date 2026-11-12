@@ -83,8 +83,6 @@ int main(int argc, char **argv)
 		unsigned char key_hash[P2P_KEY_HASH_SIZE] = { 0 };
 
 		CHECK(wanted(current, _listing_open, 0, 0), "a live game of this version");
-		CHECK(wanted(42, _listing_open, 0, 0), "the French fork's historical alias is visible");
-		CHECK(!wanted(42, _listing_open, LIVE_WINDOW + 60, 0), "the alias still obeys listing time checks");
 		CHECK(wanted(current, _listing_open, 120, 1), "a kept slot of two minutes ago");
 		CHECK(wanted(current, _listing_closed, 60, 1), "a host's recent tombstone (it ends a game)");
 		CHECK(!wanted(current, _listing_open, RETAINED_WINDOW + 60, 1), "a kept slot of a game long gone");

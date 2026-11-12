@@ -24,6 +24,8 @@ static int mcc;
 static real drawn_width, drawn_height, drawn_origin_y;
 static short name_bottom;
 #define mcc_cache_tags_loaded() mcc
+/* (the fork's line of sight check: every name is in sight here) */
+#define hud_player_name_in_sight_this_tick(player, unit, position) 1
 #define bitmap_group_get(index) (&test_group)
 #define player_get(index) (&test_player)
 #define unit_get(index) (&unit)

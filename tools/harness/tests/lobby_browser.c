@@ -141,7 +141,6 @@ int main(int argc, char **argv)
 		p2p_lobby_sort(games, count, P2P_LOBBY_SORT_SERVERS, 0);
 		CHECK(order_is(expected, count), "dedicated servers first, then the most players, then by name");
 	} else CASE("sort_each_way") {
-		games[0].network_version = 42;
 		static const char *const names[] = { "alpha player", "Bravo dedicated", "Charlie empty", "delta full",
 			"Echo dedicated empty" };
 		static const char *const names_reversed[] = { "Echo dedicated empty", "delta full", "Charlie empty",
