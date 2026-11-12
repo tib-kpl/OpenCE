@@ -58,6 +58,11 @@ static unsigned long distributed_host_time_received;
 static struct {int received,sent;} distributed_statistics;
 static struct {unsigned long heard;} distributed_round_trips[4];
 static int game_connection(void){return connection;}
+/* (the fork's replays: nothing is recording here) */
+enum {_network_replay_reliable=2,_network_replay_reliable_to_machine};
+static boolean network_replay_skips_message(byte type){(void)type;return FALSE;}
+static void network_replay_stop(void){}
+static void network_replay_record(int kind,void const *message,unsigned long size){(void)kind;(void)message;(void)size;}
 static int game_in_progress(void){return in_game;}
 static int mcc_cache_tags_loaded(void){return mcc;}
 static int network_connection_last_read_was_unreliable(void){return unreliable;}
@@ -307,7 +312,7 @@ static int distributed_sends[2],distributed_host_states[2],distributed_host_acti
 static int distributed_sent_statistics[2],distributed_statistics_cursor,distributed_statistics_due;
 static long distributed_game_state_checksum,distributed_game_state_time,distributed_host_update_number;
 static long distributed_sent_structure_bsp_index,distributed_pickup_count;
-static struct {boolean valid;} distributed_machines;
+static struct {boolean valid;long recorder;} distributed_machines;
 static struct {long flags,unit_index,vehicle_index,seat_index;} distributed_sent_units[2];
 static long distributed_player_machines[2];
 static struct {long taken_time[2],taken_host_time[2],input_time[2];} distributed_divergence;

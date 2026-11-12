@@ -218,6 +218,9 @@ static void effects_discard_gameplay(void) {effect_cleanups++;}
 static int network_game_distributed_client(void) {return client;}
 static int network_coop_active(void) {return coop;}
 static long game_time_get(void) {return now;}
+/* (the fork's ragdolls and replay playback: none here) */
+static boolean biped_ragdoll_active(long object_index) {(void)object_index;return FALSE;}
+static void network_replay_playback_damage(long object_index, long owner_player_index, long owner_object_index, real_point3d const *origin) {(void)object_index;(void)owner_player_index;(void)owner_object_index;(void)origin;}
 static int game_engine_running(void) {return 0;}
 static int game_engine_has_teams(void) {return 0;}
 static void *game_engine_get_variant(void) {return &variant;}

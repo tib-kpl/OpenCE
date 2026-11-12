@@ -114,7 +114,7 @@ def checkpoint_tool(tmp_path_factory):
     (work / "saved games/game_state.h").write_text(
         "#pragma once\n#include <stdint.h>\nstruct game_state_header {uint32_t allocation_checksum;"
         "char map_name[256],build_number[32];short player_count,difficulty;"
-        "uint32_t cache_file_checksum,unused[7],checksum;};\n")
+        "uint32_t cache_file_checksum,layout_address,image_shift,unused[5],checksum;};\n")
     data_header = (ROOT / "source/memory/data.h").read_text()
     (work / "memory/data.h").write_text("#pragma once\n#define TAG_STRING_LENGTH 31\n" + "\n".join(
         re.search(r"struct " + name + r"\s*\{.*?\n\};", data_header, re.S).group()
@@ -165,7 +165,12 @@ static int real_grenades_restore(void const *in,uint32_t bytes);
 static int loaded=1, malformed=0, reject_handles=0, captures=0, restores=0, writes=0;
 static uint32_t payload_size=16;
 static unsigned char live[GAME_STATE_SIZE], saved[GAME_STATE_SIZE];
-static struct {void *base_address;long cpu_allocation_size;int saved_game_valid;} game_state_globals;
+/* (the fork's game state header carries where the state and the image were written: halo_port_window.h) */
+#define PORT_IMAGE_SHIFT 0UL
+#define PORT_WINDOW_BASE 0x80000000UL
+struct game_state_relocation {void *image;unsigned long window_from,window_delta,image_delta;};
+static int game_state_image_relocate(struct game_state_relocation *relocation) {(void)relocation;return 0;}
+static struct {void *base_address;long cpu_allocation_size;int saved_game_valid;struct game_state_header *header;} game_state_globals;
 enum {_game_state_allocation_data,_game_state_allocation_memory_pool,_game_state_allocation_lruv_cache};
 struct game_state_allocation {int kind;void *address;long maximum_count,element_size,size;};
 static struct game_state_allocation game_state_allocations[1];
@@ -317,6 +322,7 @@ int main(int argc,char **argv) {
     int result=0;
     struct game_state_header *header=(void *)live,*incoming=(void *)saved;
     if(argc<2||argc>3)return 2;
+    game_state_globals.header=header;
     if(!strcmp(argv[1],"crc")) {
         unsigned long i,bytes;
         unsigned char *data;
@@ -329,7 +335,7 @@ int main(int argc,char **argv) {
         printf("%08x\n",mcc_checkpoint_checksum(data,(uint32_t)bytes));free(data);return 0;
     }
     memset(live,0xA5,sizeof(live));
-    memset(header,0,sizeof(*header));strcpy(header->map_name,"mcc_maps\\one\\a10");
+    memset(header,0,sizeof(*header));header->layout_address=(unsigned long)live;strcpy(header->map_name,"mcc_maps\\one\\a10");
     header->cache_file_checksum=0x12345678;
     object_header_data=(void *)(live+512);
     memset(object_header_data,0,sizeof(*object_header_data));

@@ -80,7 +80,7 @@ void validation_free(void *p) {
               if sys.platform == "win32" else ["-m32"])
     command = [compiler, *target, "-std=gnu99", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                "-Wno-multichar", "-fsanitize=undefined", "-fsanitize-trap=undefined",
-               f"-I{directory}", f"-I{GAME}", str(GAME / "mcc_tag_validate.c"),
+               f"-I{directory}", f"-I{GAME}", f"-I{ROOT / 'port/linux/include'}", str(GAME / "mcc_tag_validate.c"),
                str(GAME / "tag_validate.c"), str(ROOT / "tools/harness/tests/mcc_tag_validation.c"), str(allocator),
                "-o", str(binary)]
     if hud:

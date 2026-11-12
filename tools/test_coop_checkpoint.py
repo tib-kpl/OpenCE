@@ -220,6 +220,7 @@ def test_recovery_retires_history_without_losing_object_ownership(tmp_path):
 #define HALO_PORT_MAXIMUM_NETWORK_MACHINES 2
 static long objects_host_told[3]={10,11,12},objects_client_has[3]={10,11,12};
 static int objects_client_checkpoint_pending[3];
+static unsigned long objects_recorder_states[3];
 static long objects_host_told_count=3,objects_host_resting_cursor=2;
 static int objects_host_state_moving[3]={1,1,1};
 static long objects_host_rest_times[3]={99,99,99};
