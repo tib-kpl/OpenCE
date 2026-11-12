@@ -190,7 +190,9 @@ struct nv2a_pixel_shader_key
 	stock shader, whose key and hash this leaves as they were). The Vulkan
 	renderer's: under deko3d only vertex shaders have the variant. */
 	unsigned char plasma_model;
-	unsigned char ce_meter_padding[2];
+	/* MCC environment lightmap pass only; part of the compiled shader key. */
+	unsigned char mcc_bump_attenuation;
+	unsigned char ce_meter_padding[1];
 };
 
 /* what a model lighting program's variant adds (plasma_model_shader.c):
@@ -258,6 +260,15 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 void xgpu_texture_cache_begin_frame(void);
 /* (debug.gpu_stats) a texture of this many bytes uploaded to GL (d3d8_gl.c) */
 void xgpu_statistics_texture_upload(unsigned long bytes);
+
+/* MCC-owned immutable resources never enter the guest physical texture cache. */
+BOOL xgpu_mcc_texture_get(DWORD const *resource, D3DCOLOR const *palette,
+	GLuint *texture, GLenum *target, struct xgpu_texture_description *description);
+BOOL xgpu_mcc_texture_describe(DWORD const *resource, struct xgpu_texture_description *description);
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target,
+	struct xgpu_texture_description const *description, void const *pixels,
+	unsigned long bytes, D3DCOLOR const *palette);
+void xgpu_mcc_texture_unbind(DWORD const *resource);
 
 /* ---------- render targets */
 

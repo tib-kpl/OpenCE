@@ -4,4 +4,5 @@
     <string name="shortcut_import">Import disc image</string>
     <string name="shortcut_graphics">Graphics</string>
     <string name="graphics_launcher">Halo Graphics</string>
+    <string name="mcc_import_label">Import MCC maps</string>
 </resources>

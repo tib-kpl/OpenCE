@@ -488,6 +488,9 @@ public class LauncherActivity extends Activity {
                 intent.setType("*/*");
                 startActivityForResult(intent, PICK_IMAGE);
             });
+        setupUi.row(t("Importer des cartes MCC", "Import MCC maps"),
+                t("Cartes de The Master Chief Collection", "Maps from The Master Chief Collection"), false, "",
+                () -> startActivity(new Intent(this, MccImportActivity.class)));
         TextView description = setupUi.label(t("Tous les disques Xbox de Halo: Combat Evolved sont pris en charge. "
             + "L’import copie les fichiers dans le stockage de l’application (environ 1,8 Go). Vous pourrez ensuite retirer l’image disque.",
             "All Xbox Halo: Combat Evolved discs are supported. Import copies the files into the app's storage (about 1.8 GB). You can remove the disc image afterwards."), 13, HaloSettingsUi.MUTED);

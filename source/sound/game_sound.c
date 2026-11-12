@@ -921,11 +921,12 @@ void game_sound_set_mouth_aperture(
 	return;
 }
 
-/* The native ports draw several frames per game tick (port/linux/game/
+/* port: the native ports draw several frames per game tick (port/linux/game/
 render_interpolation.c), and the sound manager refreshes every sound each
-frame; on the Xbox, frames and ticks were one. A sound's obstruction, a
-collision test from the camera, is computed once per tick and reused by the
-tick's other frames.
+frame; on the Xbox, frames and ticks were one. Sounds whose positions share
+a slot share one collision test for the tick. Each sound's own result for
+the tick is kept in sound_manager.c, so a full mixer does not crowd this
+table into testing again every frame.
 port: and by the next ticks', up to OBSTRUCTION_CACHE_TICKS (a tenth of a
 second), while the sound has not moved and the camera has moved less than a
 fiftieth of the way to it (a few centimetres at the least): a still sound heard
