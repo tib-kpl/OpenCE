@@ -43,6 +43,10 @@ const char *config_string(const char *p) {(void)p;return "";}
 int steam_workshop_windows_roots(char paths[][STEAM_WORKSHOP_PATH_SIZE],int n) {(void)paths;(void)n;return 0;}
 #endif
 '''
+    # (xbox_files.c's translate_elsewhere also asks whether names differ by case and whether game.maps.path moves a folder:
+    # this layout is the plain one on a case-sensitive file system, nothing moved)
+    driver += ("#define FILE_SYSTEM_HAS_CASE %d\n"
+               "static const char *moved_folder(const char *name) {(void)name;return NULL;}\n") % (sys.platform != "win32")
     native = (SRC / "xbox_files.c").read_text()
     driver += "\n".join(function(native, name) for name in
                          ("trim_separators", "names_match", "translate_workshop", "translate_elsewhere", "platform_translate_path"))
