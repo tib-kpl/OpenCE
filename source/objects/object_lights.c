@@ -197,6 +197,8 @@ symbols in this file:
 /* port: port/linux/src (halo.log) */
 void platform_log(const char *format, ...);
 
+#include "overshield_effect.h" /* port: port/linux/game/overshield_effect.c */
+
 /* ---------- constants */
 
 enum
@@ -737,6 +739,7 @@ void lights_dispose(
 	rocket_lighting_forget(); /* port: partition and light storage are being discarded */
 	plasma_falloff_dispose(); /* port: release optional resources on shutdown too */
 	shield_glow_reset(); /* port: discard shield and overshield render state */
+	overshield_effect_reset(); /* port: queued identities and model heights belong to this map. */
 	cluster_partition_delete(&light_cluster_partition);
 
 	return;
@@ -944,6 +947,7 @@ void lights_initialize_for_new_map(
 	plasma_lighting_reset(); /* port: discard render-only attachment identities */
 	plasma_falloff_dispose(); /* port: release the previous map's optional texture */
 	shield_glow_reset(); /* port: discard handles from the previous light array */
+	overshield_effect_reset(); /* port: queued identities and model heights belong to this map. */
 	data_make_valid(light_data);
 	lights_game_globals->render_lights = TRUE;
 	cluster_partition_make_valid(&light_cluster_partition);
@@ -962,6 +966,7 @@ void lights_dispose_from_old_map(
 	plasma_lighting_reset(); /* port: no attachment identities cross map loads */
 	plasma_falloff_dispose(); /* port: release feature-owned attenuation */
 	shield_glow_reset(); /* port: release feature state before invalidating map lights */
+	overshield_effect_reset(); /* port: queued identities and model heights belong to this map. */
 	data_make_invalid(light_data);
 	cluster_partition_make_invalid(&light_cluster_partition);
 
