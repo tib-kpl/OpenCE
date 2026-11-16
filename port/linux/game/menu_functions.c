@@ -10226,8 +10226,7 @@ static void lobby_update(struct widget_instance *list)
 		usnprintf(text, NUMBEROF(text) - 1, L"%s%s%s%s\r\n%s\r\n%d of %d players\r\n%s%s", authored ? author : L"",
 			authored ? L"\r\n" : L"", name, gametype,
 			kind ? kind : engine_names[PIN(game->variant.game_engine_index, 0, 5)], lobby_player_count,
-			game->maximum_players, authored ? L"" : L"
-",
+			game->maximum_players, authored ? L"" : L"\r\n",
 			seconds > 0 ? L"Starting in:" : (game->machine_count < 2 && lobby_player_count < 2) || dedicated ?
 				L"Waiting for players" : L"");
 		text[NUMBEROF(text) - 1] = 0;
