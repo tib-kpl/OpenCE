@@ -894,9 +894,12 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     host_cflags = " ".join([
         "-O2", "-g", "-fPIC", "-Wall", "-Wno-unused-function", "-D_GNU_SOURCE",
         f"-I{PORT_DIR}/include", f"-I{PORT_DIR}/host", f"-I{SDL_DIR}/include", f"-I{LINUX_DIR}/src",
-        f"-I{TOML_DIR}", f"-I{GLSLANG_DIR}", f"-I{BUILD / 'host'}", f"-I{ZLIB_DIR}",
+        f"-I{TOML_DIR}", f"-I{GLSLANG_DIR}", f"-I{BUILD / 'host'}", f"-I{ZLIB_DIR}", f"-I{MBEDTLS_DIR / 'include'}",
         # the folder of the SPIR-V cache is named for the compiler (host_vk_shaders.c)
         f"-DHOST_VK_GLSLANG_TAG='\"{GLSLANG_TAG}\"'",
+        # (Mbed TLS's settings, as the library is built with them below: its
+        # contexts are bigger with threading, and steam_crypto.c makes them)
+        "-DMBEDTLS_THREADING_C", "-DMBEDTLS_THREADING_PTHREAD",
     ])
     # the probe's report names the build it is from (host_vk_probe.c includes probe_build.h): written at every
     # build, not at configure time, and restat so that an unchanged name recompiles nothing
@@ -918,7 +921,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     ]
     for source in host_sources:
         obj = host_obj_dir / (source.name + ".o")
-        n.build(outputs=obj, rule="android_host_cc", inputs=source, variables={"cflags": host_cflags},
+        # (the Steam client's chunk unpacker: the LZMA SDK's and Zstandard's
+        n.build(outputs=obj, rule="android_host_cc", inputs=source,
+                variables={"cflags": host_cflags + (" -w" if source.name == "steam_unpack.c" else "")},
                 implicit=[build_stamp] if source.name == "host_vk_probe.c" else None)
         host_objects.append(obj)
     # internet play's UPnP (posix_upnp.c, with port/third_party/miniupnpc),
@@ -935,8 +940,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     # port/third_party/mbedtls), as the other posix_*.c in the host
     # (with its locks: internet play's thread and the server browser's master
     # servers' both use it, as on Linux)
-    mbedtls_cflags = " ".join([host_cflags, f"-I{MBEDTLS_DIR / 'include'}", f"-I{MBEDTLS_DIR / 'library'}",
-                               "-DMBEDTLS_THREADING_C", "-DMBEDTLS_THREADING_PTHREAD"])
+    mbedtls_cflags = " ".join([host_cflags, f"-I{MBEDTLS_DIR / 'library'}"])
     # (and the server browser's requests to the master servers: posix_update.c's,
     # host_https.c)
     for source in [LINUX_DIR / "src" / "posix_dtls.c", LINUX_DIR / "src" / "posix_update.c",
@@ -947,7 +951,8 @@ def generate_android_build(n: Writer, sln: Any) -> None:
                 variables={"cflags": mbedtls_cflags + (" -w" if source.parent.parent == MBEDTLS_DIR else "")})
         host_objects.append(obj)
     # the port's zlib, its names z_ (zlib_prefixed.h), for the Vulkan renderer's high-res HUD sheets the host decodes
-    # (host_vk_hud.c), as the guest has its own
+    # (host_vk_hud.c) and the Steam client's zip chunks and checksums (steam_unpack.c, steam_cm.c), as the guest has
+    # its own
     for name in ZLIB_SOURCES:
         obj = host_obj_dir / ("zlib_" + name + ".o")
         n.build(outputs=obj, rule="android_host_cc", inputs=ZLIB_DIR / name,
