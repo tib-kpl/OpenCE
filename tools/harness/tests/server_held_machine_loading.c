@@ -47,7 +47,6 @@ struct network_game
 	struct { boolean auto_team_balance; } variant_options;
 	struct network_machine machines[MAXIMUM_NETWORK_MACHINE_COUNT];
 	struct network_player players[MAXIMUM_NETWORK_PLAYER_COUNT];
-	short player_count; /* port: the fork's idle task reads it */
 };
 
 struct network_connection { int unused; };
@@ -198,11 +197,8 @@ static boolean network_game_server_send_message_to_all_machines(struct network_g
 
 static void network_game_server_release_map_fetchers(struct network_game_server *s);
 
-/* port: the fork's idle task also starts a countdown on a machine alone (not under test here) */
-enum { _network_game_server_countdown_event_player_joined };
-static short network_game_server_get_client_machine_count(struct network_game_server *s) { (void)s; return 1; }
-static boolean network_game_should_accept_remote_connections(void) { return TRUE; }
-static void network_game_server_update_countdown(struct network_game_server *s, short event) { (void)s; (void)event; }
+/* port: the fork's solo countdown (not under test here) */
+static void network_game_server_start_solo_countdown(struct network_game_server *s) { (void)s; }
 
 #include "under_test.inc"
 

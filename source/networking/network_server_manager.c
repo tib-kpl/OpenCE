@@ -4651,6 +4651,23 @@ void network_game_server_update_countdown(
 	return;
 }
 
+/* port: a game on this machine alone counts down once its players are in.
+Nothing else sends the event that begins it. */
+static void network_game_server_start_solo_countdown(
+	struct network_game_server *server)
+{
+	boolean one_machine =
+		network_game_server_get_client_machine_count(server) <= 1;
+
+	if (!network_game_should_accept_remote_connections() ||
+		(one_machine && server->game.player_count >= 2))
+	{
+		network_game_server_update_countdown(
+			server,
+			_network_game_server_countdown_event_player_joined);
+	}
+}
+
 /* port: the lobby takes changes (players, machines' and players' settings):
 not once the game has started, which every machine loads from the settings
 sent with its start */
@@ -5737,21 +5754,8 @@ static boolean network_game_server_idle_pregame_tasks(
 		}
 		else
 		{
-			/* port: a game on this machine alone counts down once its
-			players are in. Nothing else sends the event that begins it. */
 			if (!server->countdown_state.paused && server_ok_to_countdown(server))
-			{
-				boolean one_machine =
-					network_game_server_get_client_machine_count(server) <= 1;
-
-				if (!network_game_should_accept_remote_connections() ||
-					(one_machine && server->game.player_count >= 2))
-				{
-					network_game_server_update_countdown(
-						server,
-						_network_game_server_countdown_event_player_joined);
-				}
-			}
+				network_game_server_start_solo_countdown(server); /* port */
 			if ((unsigned long)now - (unsigned long)server->time_of_last_keep_alive >
 				5UL * MILLISECONDS_PER_SECOND)
 			{
