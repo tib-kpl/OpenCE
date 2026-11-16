@@ -9383,6 +9383,158 @@ static void news_wrap(struct news_window *window, char const *text)
 			paragraph += cut;
 			while (paragraph < line_end && *paragraph == ' ')
 				paragraph++;
+		}
+	}
+}
+
+/* the top line, kept within the lines */
+static void news_scroll(struct news_window *window, long by)
+{
+	long last = MAX(0, window->count - NEWS_ROWS);
+
+	window->first = PIN(window->first + by, 0, last);
+}
+
+/* a window's rows, the widgets named line, from its top line */
+static void news_rows_update(struct widget_instance *screen, struct news_window const *window, char const *line_name)
+{
+	wchar_t text[NEWS_LINE_LENGTH];
+	long row;
+
+	for (row = 0; row < NEWS_ROWS; row++)
+	{
+		struct widget_instance *line = named(screen, line_name, row);
+		long index = window->first + row;
+		long character;
+
+		if (!line)
+			continue;
+		text[0] = 0;
+		if (index < window->count)
+		{
+			for (character = 0; window->lines[index][character] && character < NEWS_LINE_LENGTH - 1; character++)
+				text[character] = (wchar_t)(unsigned char)window->lines[index][character];
+			text[character] = 0;
+		}
+		text_set_length(line, text, NEWS_LINE_LENGTH);
+	}
+}
+
+/* "port news init" */
+static boolean news_initialize(void)
+{
+	/* (the release's notes asked for, the first time: news_fetch) */
+	if (!news_fetch.started)
+	{
+		pthread_t thread;
+
+		news_fetch.started = TRUE;
+		if (pthread_create(&thread, NULL, news_fetch_main, NULL) == 0)
+			pthread_detach(thread);
+		else
+			news_fetch.done = TRUE;
+	}
+	news_screen.first = 0;
+	news_wrap(&news_screen, news_text());
+	return TRUE;
+}
+
+/* "port news update": wrapped again once the rows' font is known, then the
+rows, the title and the footer from the top line */
+static void news_update(struct widget_instance *screen)
+{
+	wchar_t text[NEWS_LINE_LENGTH];
+	long row;
+
+	/* (the release's notes come: wrapped in place of the build's own) */
+	{
+		boolean came;
+
+		pthread_mutex_lock(&news_fetch.lock);
+		came = news_fetch.text && !news_fetch.wrapped;
+		news_fetch.wrapped |= came;
+		pthread_mutex_unlock(&news_fetch.lock);
+		if (came)
+		{
+			news_screen.first = 0;
+			news_screen.wrapped_font = NONE;
+		}
+	}
+	if (news_screen.font != news_screen.wrapped_font || news_screen.width != news_screen.wrapped_width)
+	{
+		news_wrap(&news_screen, news_text());
+		news_scroll(&news_screen, 0);
+	}
+	news_rows_update(screen, &news_screen, "news_line");
+	{
+		char title[96];
+
+		if (news_screen.title[0])
+			snprintf(title, sizeof(title), "NEWS: %s", news_screen.title);
+		else
+			snprintf(title, sizeof(title), "NEWS");
+		for (row = 0; title[row] && row < (long)NUMBEROF(text) - 1; row++)
+			text[row] = (wchar_t)toupper((unsigned char)title[row]);
+		text[row] = 0;
+		text_set(named(screen, "news_title", 0), text);
+	}
+	/* (the scroll arrows and "Scroll" while there is more than the panel
+	holds) */
+	{
+		boolean scrolls = news_screen.count > NEWS_ROWS;
+
+		visible_set(named(screen, "dpad_up_butn_news", 0), scrolls);
+		visible_set(named(screen, "dpad_down_butn_news", 0), scrolls);
+		visible_set(named(screen, "news_scroll_text", 0), scrolls);
+	}
+	if (!news_screen.count)
+	{
+		boolean asking;
+
+		pthread_mutex_lock(&news_fetch.lock);
+		asking = news_fetch.started && !news_fetch.done;
+		pthread_mutex_unlock(&news_fetch.lock);
+		text_set_length(named(screen, "news_line", 0), asking ? L"Getting the news..." : L"No news in this build.",
+			NEWS_LINE_LENGTH);
+	}
+}
+
+/* "port credits init" */
+static boolean credits_initialize(void)
+{
+	credits_screen.first = 0;
+	news_wrap(&credits_screen, (char const *)halo_credits_words);
+	return TRUE;
+}
+
+/* "port credits update": wrapped again once the rows' font is known, then
+the rows and the title */
+static void credits_update(struct widget_instance *screen)
+{
+	wchar_t text[NEWS_LINE_LENGTH];
+	long index;
+
+	if (credits_screen.font != credits_screen.wrapped_font || credits_screen.width != credits_screen.wrapped_width)
+	{
+		news_wrap(&credits_screen, (char const *)halo_credits_words);
+		news_scroll(&credits_screen, 0);
+	}
+	news_rows_update(screen, &credits_screen, "credits_line");
+	for (index = 0; credits_screen.title[index] && index < (long)NUMBEROF(text) - 1; index++)
+		text[index] = (wchar_t)(unsigned char)credits_screen.title[index];
+	text[index] = 0;
+	text_set(named(screen, "credits_title", 0), text);
+}
+
+/* "port news close" (B, Back, X) and "port credits close" (B, Back): back to
+where it was opened from */
+static boolean news_close(struct widget_instance *widget, boolean *widget_deleted)
+{
+	ui_widget_port_go_back(widget);
+	*widget_deleted = TRUE;
+	return TRUE;
+}
+
 /* ---------- the Steam Workshop (Settings > Network Setup > STEAM WORKSHOP:
 the host's port/android/host/steam_downloads.c through steam_screen.c,
 tools/port_settings.py's _steam_workshop; from Halo Content Evolved's):
@@ -9659,149 +9811,6 @@ static void steam_update(struct widget_instance *list)
 	}
 }
 
-/* the top line, kept within the lines */
-static void news_scroll(struct news_window *window, long by)
-{
-	long last = MAX(0, window->count - NEWS_ROWS);
-
-	window->first = PIN(window->first + by, 0, last);
-}
-
-/* a window's rows, the widgets named line, from its top line */
-static void news_rows_update(struct widget_instance *screen, struct news_window const *window, char const *line_name)
-{
-	wchar_t text[NEWS_LINE_LENGTH];
-	long row;
-
-	for (row = 0; row < NEWS_ROWS; row++)
-	{
-		struct widget_instance *line = named(screen, line_name, row);
-		long index = window->first + row;
-		long character;
-
-		if (!line)
-			continue;
-		text[0] = 0;
-		if (index < window->count)
-		{
-			for (character = 0; window->lines[index][character] && character < NEWS_LINE_LENGTH - 1; character++)
-				text[character] = (wchar_t)(unsigned char)window->lines[index][character];
-			text[character] = 0;
-		}
-		text_set_length(line, text, NEWS_LINE_LENGTH);
-	}
-}
-
-/* "port news init" */
-static boolean news_initialize(void)
-{
-	/* (the release's notes asked for, the first time: news_fetch) */
-	if (!news_fetch.started)
-	{
-		pthread_t thread;
-
-		news_fetch.started = TRUE;
-		if (pthread_create(&thread, NULL, news_fetch_main, NULL) == 0)
-			pthread_detach(thread);
-		else
-			news_fetch.done = TRUE;
-	}
-	news_screen.first = 0;
-	news_wrap(&news_screen, news_text());
-	return TRUE;
-}
-
-/* "port news update": wrapped again once the rows' font is known, then the
-rows, the title and the footer from the top line */
-static void news_update(struct widget_instance *screen)
-{
-	wchar_t text[NEWS_LINE_LENGTH];
-	long row;
-
-	/* (the release's notes come: wrapped in place of the build's own) */
-	{
-		boolean came;
-
-		pthread_mutex_lock(&news_fetch.lock);
-		came = news_fetch.text && !news_fetch.wrapped;
-		news_fetch.wrapped |= came;
-		pthread_mutex_unlock(&news_fetch.lock);
-		if (came)
-		{
-			news_screen.first = 0;
-			news_screen.wrapped_font = NONE;
-		}
-	}
-	if (news_screen.font != news_screen.wrapped_font || news_screen.width != news_screen.wrapped_width)
-	{
-		news_wrap(&news_screen, news_text());
-		news_scroll(&news_screen, 0);
-	}
-	news_rows_update(screen, &news_screen, "news_line");
-	{
-		char title[96];
-
-		if (news_screen.title[0])
-			snprintf(title, sizeof(title), "NEWS: %s", news_screen.title);
-		else
-			snprintf(title, sizeof(title), "NEWS");
-		for (row = 0; title[row] && row < (long)NUMBEROF(text) - 1; row++)
-			text[row] = (wchar_t)toupper((unsigned char)title[row]);
-		text[row] = 0;
-		text_set(named(screen, "news_title", 0), text);
-	}
-	/* (the scroll arrows and "Scroll" while there is more than the panel
-	holds) */
-	{
-		boolean scrolls = news_screen.count > NEWS_ROWS;
-
-		visible_set(named(screen, "dpad_up_butn_news", 0), scrolls);
-		visible_set(named(screen, "dpad_down_butn_news", 0), scrolls);
-		visible_set(named(screen, "news_scroll_text", 0), scrolls);
-	}
-	if (!news_screen.count)
-	{
-		boolean asking;
-
-		pthread_mutex_lock(&news_fetch.lock);
-		asking = news_fetch.started && !news_fetch.done;
-		pthread_mutex_unlock(&news_fetch.lock);
-		text_set_length(named(screen, "news_line", 0), asking ? L"Getting the news..." : L"No news in this build.",
-			NEWS_LINE_LENGTH);
-	}
-}
-
-/* "port credits init" */
-static boolean credits_initialize(void)
-{
-	credits_screen.first = 0;
-	news_wrap(&credits_screen, (char const *)halo_credits_words);
-	return TRUE;
-}
-
-/* "port credits update": wrapped again once the rows' font is known, then
-the rows and the title */
-static void credits_update(struct widget_instance *screen)
-{
-	wchar_t text[NEWS_LINE_LENGTH];
-	long index;
-
-	if (credits_screen.font != credits_screen.wrapped_font || credits_screen.width != credits_screen.wrapped_width)
-	{
-		news_wrap(&credits_screen, (char const *)halo_credits_words);
-		news_scroll(&credits_screen, 0);
-	}
-	news_rows_update(screen, &credits_screen, "credits_line");
-	for (index = 0; credits_screen.title[index] && index < (long)NUMBEROF(text) - 1; index++)
-		text[index] = (wchar_t)(unsigned char)credits_screen.title[index];
-	text[index] = 0;
-	text_set(named(screen, "credits_title", 0), text);
-}
-
-/* "port news close" (B, Back, X) and "port credits close" (B, Back): back to
-where it was opened from */
-static boolean news_close(struct widget_instance *widget, boolean *widget_deleted)
-{
 /* "port steam choose" (A on a row) */
 static boolean steam_choose(struct widget_instance *widget)
 {
