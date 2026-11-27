@@ -12,10 +12,7 @@ game. The platform layer cannot see the game's types, so it asks here
 #include "input/input.h"
 #include "input/input_abstraction.h"
 #include "interface/ui_widget.h"
-<<<<<<< HEAD
 #include "network_replay.h"
-=======
->>>>>>> ac60d13a8 (Show a SKIP button on Android's touchscreen during a cinematic, and let a co-op client's tap vote)
 #include "network_coop.h"
 
 /* asks whether a cinematic is playing that A would skip
