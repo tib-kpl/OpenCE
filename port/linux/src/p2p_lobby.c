@@ -325,12 +325,42 @@ static int put_text(unsigned char *bytes, const char *text, int maximum)
 	return 1 + length;
 }
 
+/* (p2p.h: the host's advertisement's version, and its listing's) */
+unsigned int network_version_advertised(int mcc)
+{
+	long chosen = config_integer("network.advertise_version");
+	unsigned int version = HALO_PORT_NETWORK_VERSION_ADVERTISED;
+
+	if (chosen > 0 && chosen <= 0xFFFF && HALO_PORT_NETWORK_VERSION_PLAYS(chosen, 0))
+		version = (unsigned int)chosen;
+	if (mcc && !HALO_PORT_NETWORK_VERSION_PLAYS(version, 1))
+		version = HALO_PORT_NETWORK_VERSION;
+	return version;
+}
+
+/* whether a map is an MCC map's level: "mcc_maps", then a separator, in
+either case (as port/linux/game/mcc_cache.c's mcc_level_name has it) */
+static int listing_mcc_map(const char *map)
+{
+	static const char prefix[] = "mcc_maps";
+	size_t index;
+
+	for (index = 0; index < sizeof(prefix) - 1; index++)
+	{
+		if ((map[index] >= 'A' && map[index] <= 'Z' ? map[index] + 'a' - 'A' : map[index]) != prefix[index])
+			return 0;
+	}
+	return map[index] == '\\' || map[index] == '/';
+}
+
 /* the listing of the game hosted, signed: flags (_listing_closed for a
 tombstone), with the invite's token */
 static int listing_make_token(unsigned char *bytes, int flags, const unsigned char *token)
 {
 	unsigned char *signed_part = bytes;
 	unsigned char data[sizeof(signature_label) - 1 + MAXIMUM_LISTING_SIZE];
+	/* (the version advertised: network.advertise_version's) */
+	unsigned int version = network_version_advertised(listing_mcc_map(lobby.map));
 	int size = 0;
 
 	if (lobby.has_password && !(flags & _listing_closed))
@@ -340,8 +370,8 @@ static int listing_make_token(unsigned char *bytes, int flags, const unsigned ch
 	bytes[size++] = 'H';
 	bytes[size++] = 'L';
 	bytes[size++] = LISTING_FORMAT;
-	bytes[size++] = (unsigned char)(HALO_PORT_NETWORK_VERSION >> 8);
-	bytes[size++] = (unsigned char)HALO_PORT_NETWORK_VERSION;
+	bytes[size++] = (unsigned char)(version >> 8);
+	bytes[size++] = (unsigned char)version;
 	bytes[size++] = (unsigned char)flags;
 	put_long(bytes + size, ++lobby.sequence);
 	size += 4;
@@ -875,7 +905,7 @@ static int listing_wanted(const unsigned char *payload, int size, int retained, 
 
 	if (!listing_read(payload, size, &listing))
 		return 0;
-	if (!halo_port_network_version_compatible(listing.version))
+	if (!HALO_PORT_NETWORK_VERSION_PLAYS(listing.version, 0))
 	{
 		if (listing.version > HALO_PORT_NETWORK_VERSION && !(listing.flags & _listing_closed))
 			hidden_heard(key_hash, _hidden_newer);
@@ -907,7 +937,7 @@ static void update_browsing(void)
 		/* (listing_wanted let it in; its key and its time are checked
 		again here, where its signature is: the time it was queued at may
 		have run out) */
-		if (!listing_read(queued.payload, queued.size, &listing) || !halo_port_network_version_compatible(listing.version) ||
+		if (!listing_read(queued.payload, queued.size, &listing) || !HALO_PORT_NETWORK_VERSION_PLAYS(listing.version, 0) ||
 			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE) ||
 			!listing_current(&listing, queued.retained))
 		{
@@ -1360,7 +1390,7 @@ int p2p_lobby_brokers_reached(void)
 
 static const char *const sort_names[NUMBER_OF_P2P_LOBBY_SORTS] =
 {
-	"servers", "players", "name", "map", "type", "locked", "ping",
+	"dedicated", "players", "name", "map", "type", "locked", "ping",
 };
 
 int p2p_lobby_filter(struct p2p_listing *games, int count, const struct p2p_lobby_choices *choices,
@@ -1433,7 +1463,7 @@ static int sort_order(const struct p2p_listing *first, const struct p2p_listing 
 		/* (those with none known go after these: p2p_lobby_sort) */
 		difference = first->ping - second->ping;
 		break;
-	case P2P_LOBBY_SORT_SERVERS:
+	case P2P_LOBBY_SORT_DEDICATED:
 		/* (as p2p_lobby_games has them: then those joining has not failed,
 		and the open ones) */
 		difference = second->dedicated - first->dedicated;
@@ -1453,7 +1483,7 @@ version last, and by ping, those whose ping is not known yet (not timed, or
 a password's, whose host is not) after those whose is */
 static int sort_group(const struct p2p_listing *game, int order)
 {
-	if (!halo_port_network_version_compatible(game->network_version))
+	if (!HALO_PORT_NETWORK_VERSION_PLAYS(game->network_version, 0))
 		return 2;
 	return order == P2P_LOBBY_SORT_PING && game->ping < 0;
 }

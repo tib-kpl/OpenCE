@@ -908,6 +908,13 @@ static const struct config_setting config_settings[] =
 		"The server browser: public games are listed through the signalling\n"
 		"brokers, and Join Game > Server Browser shows them. False lists no\n"
 		"game of this machine's and shows none." },
+	{ "network.advertise_version", _config_integer, "0", "HALO_NET_ADVERTISE_VERSION", _environment_value,
+		_platform_all,
+		"When you host: the network version your game says it is of. 0: this\n"
+		"build's. Builds from before this setting join only a host of their own\n"
+		"version: an older one this build plays with (43) lets that version's\n"
+		"players join, and turns away those of this version; this build and\n"
+		"later ones join either. An MCC map's game says 44 at least." },
 	{ "network.host_public", _config_boolean, "true", "HALO_NET_HOST_PUBLIC", _environment_value, _platform_all,
 		"Whether a new game of Create Game > Internet starts as PUBLIC (listed\n"
 		"in everyone's server browser: anyone can see and join it) or, false,\n"
@@ -1115,9 +1122,12 @@ static const struct config_setting config_settings[] =
 	{ "network.browser_sort", _config_string, "\"players\"", "HALO_NET_BROWSER_SORT", _environment_value,
 		_platform_all,
 		"The server browser's order: \"players\" (the most players first),\n"
-		"\"servers\" (dedicated servers first, then by players), \"name\", \"map\",\n"
-		"\"type\", \"locked\" (a password's first) or \"ping\" (the lowest first,\n"
-		"those not timed yet last); \"-\" before one reverses it\n"
+		"\"dedicated\" (dedicated servers first, then by players), \"name\", \"map\",
+"
+		"\"type\", \"locked\" (a password's first) or \"ping\" (the lowest first,
+"
+		"those not timed yet last); \"-\" before one reverses it
+"
 		"(\"-players\"). A column title sorts by it, and again the other way." },
 	{ "network.stun_servers", _config_string, "\"stun.l.google.com:19302,stun.cloudflare.com:3478\"",
 		"HALO_NET_STUN", _environment_value, _platform_all,

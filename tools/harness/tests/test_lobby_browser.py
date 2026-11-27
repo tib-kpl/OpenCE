@@ -13,20 +13,21 @@ from harness import CHECK_FAILED, build, constant, enum_with, function, mutated,
 
 def generated(fault=None):
     header = read('port/linux/src/p2p.h')
-    limits = read('port/linux/include/halo_port_limits.h')
-    version = constant(limits, 'HALO_PORT_NETWORK_VERSION')
-    enums = '\n'.join([f'#define HALO_PORT_NETWORK_VERSION {version}',
+    version = constant(read('port/linux/include/halo_port_limits.h'), 'HALO_PORT_NETWORK_VERSION')
+    ranges = re.findall(r'^#define HALO_PORT_NETWORK_VERSION_\w+(?:.*\\\n)*.*',
+                        read('port/linux/include/halo_port_limits.h'), re.M)
+    enums = '\n'.join([f'#define HALO_PORT_NETWORK_VERSION {version}'] + ranges + [
                        enum_with(header, 'P2P_LISTING_NAME_SIZE = 32'),
                        enum_with(header, 'P2P_LOBBY_SOURCE_ALL'),
                        enum_with(header, 'P2P_LOBBY_MAPS_YES'),
                        enum_with(header, 'P2P_LOBBY_MAP_INSTALLED'),
-                       enum_with(header, 'P2P_LOBBY_SORT_SERVERS'),
+                       enum_with(header, 'P2P_LOBBY_SORT_DEDICATED'),
                        structure(header, 'p2p_listing'),
                        structure(header, 'p2p_lobby_choices')]) + '\n'
     source = read('port/linux/src/p2p_lobby.c')
     names = re.search(r'static const char \*const sort_names\[NUMBER_OF_P2P_LOBBY_SORTS\] =.*?\};', source,
                       re.S).group(0)
-    code = '\n'.join([function(limits, 'halo_port_network_version_compatible'), names,
+    code = '\n'.join([names,
                       function(source, 'p2p_lobby_filter'), function(source, 'text_order'),
                       function(source, 'sort_order'), function(source, 'sort_group'),
                       function(source, 'p2p_lobby_sort'),
@@ -36,7 +37,7 @@ def generated(fault=None):
     return (('enums.inc', enums), ('under_test.inc', code))
 
 
-CASES = ['source', 'empty_full', 'game_type', 'maps', 'servers_order', 'sort_each_way', 'other_version',
+CASES = ['source', 'empty_full', 'game_type', 'maps', 'dedicated_first', 'sort_each_way', 'other_version', 'older_in_range',
          'sort_text', 'ping_order']
 
 
@@ -52,13 +53,17 @@ def test_case(case):
     (('game->player_count >= game->maximum_player_count', 'game->player_count > game->maximum_player_count'),
      'empty_full'),
     (('state == P2P_LOBBY_MAP_MISSING))', 'state != P2P_LOBBY_MAP_INSTALLED))'), 'maps'),
-    (('difference = second->dedicated - first->dedicated;', 'difference = 0;'), 'servers_order'),
+    (('difference = second->dedicated - first->dedicated;', 'difference = 0;'), 'dedicated_first'),
     (('(reverse ? -difference : difference) <= 0', 'difference <= 0'), 'sort_each_way'),
     (('before_group != group ? before_group < group :', 'before_group != group ? before_group > group :'),
      'other_version'),
     (('return order == P2P_LOBBY_SORT_PING && game->ping < 0;', 'return 0;'), 'ping_order'),
     (('difference = first->ping - second->ping;', 'difference = second->ping - first->ping;'), 'ping_order'),
     (('*reverse = text && *text == \'-\';', '*reverse = 0;'), 'sort_text'),
+    (('\treturn P2P_LOBBY_SORT_PLAYERS;', '\treturn P2P_LOBBY_SORT_DEDICATED;'), 'sort_text'),
+    (('"dedicated", "players",', '"servers", "players",'), 'sort_text'),
+    (('int other_version = !HALO_PORT_NETWORK_VERSION_PLAYS(game.network_version, 0);',
+      'int other_version = game.network_version != HALO_PORT_NETWORK_VERSION;'), 'older_in_range'),
 ])
 def test_negative_control(fault, case):
     status, output = run(build('lobby_browser', generated(fault)), case)
