@@ -62,8 +62,8 @@ def test_case(case):
     (('*reverse = text && *text == \'-\';', '*reverse = 0;'), 'sort_text'),
     (('\treturn P2P_LOBBY_SORT_PLAYERS;', '\treturn P2P_LOBBY_SORT_DEDICATED;'), 'sort_text'),
     (('"dedicated", "players",', '"servers", "players",'), 'sort_text'),
-    (('int other_version = !HALO_PORT_NETWORK_VERSION_PLAYS(game.network_version, 0);',
-      'int other_version = game.network_version != HALO_PORT_NETWORK_VERSION;'), 'older_in_range'),
+    (('if (!HALO_PORT_NETWORK_VERSION_PLAYS(game->network_version, 0))',
+      'if (game->network_version != HALO_PORT_NETWORK_VERSION)'), 'older_in_range'),
 ])
 def test_negative_control(fault, case):
     status, output = run(build('lobby_browser', generated(fault)), case)
