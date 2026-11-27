@@ -1122,12 +1122,9 @@ static const struct config_setting config_settings[] =
 	{ "network.browser_sort", _config_string, "\"players\"", "HALO_NET_BROWSER_SORT", _environment_value,
 		_platform_all,
 		"The server browser's order: \"players\" (the most players first),\n"
-		"\"dedicated\" (dedicated servers first, then by players), \"name\", \"map\",
-"
-		"\"type\", \"locked\" (a password's first) or \"ping\" (the lowest first,
-"
-		"those not timed yet last); \"-\" before one reverses it
-"
+		"\"dedicated\" (dedicated servers first, then by players), \"name\", \"map\",\n"
+		"\"type\", \"locked\" (a password's first) or \"ping\" (the lowest first,\n"
+		"those not timed yet last); \"-\" before one reverses it\n"
 		"(\"-players\"). A column title sorts by it, and again the other way." },
 	{ "network.stun_servers", _config_string, "\"stun.l.google.com:19302,stun.cloudflare.com:3478\"",
 		"HALO_NET_STUN", _environment_value, _platform_all,
